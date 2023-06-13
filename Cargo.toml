@@ -1,0 +1,15 @@
+[package]
+name = "dtls-coap-test"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+env_logger = "0.10"
+futures-util = "0.3.28"
+lazy_static = "1.4"
+log = "0.4"
+openssl = { version = "0.10", features = ["v111"] }
+tokio = { version = "1.28", features = ["full"] }
+tokio-dtls-stream-sink = { path = "../tokio-dtls-stream-sink" }
