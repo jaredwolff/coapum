@@ -44,15 +44,22 @@ async fn main() {
         Arc::new(DTLSConn::new(conn, config, true, None).await.unwrap());
 
     let mut b = vec![0u8; 1024];
+    let payload = b"fron";
 
     loop {
-        log::info!("Writing: norf");
+        log::info!("Writing: {}", String::from_utf8(payload.to_vec()).unwrap());
 
         let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
         request.set_method(RequestType::Get);
         request.set_path("foo");
-        request.message.payload = b"norf".to_vec();
-        let _ = dtls_conn.send(&request.message.to_bytes().unwrap()).await;
+        request.message.payload = payload.to_vec();
+        match dtls_conn.send(&request.message.to_bytes().unwrap()).await {
+            Ok(n) => log::debug!("Wrote {} bytes", n),
+            Err(e) => {
+                log::error!("Error writing: {}", e);
+                break;
+            }
+        };
 
         if let Ok(n) = dtls_conn.recv(&mut b).await {
             log::debug!("Read {} bytes", n);
@@ -68,7 +75,5 @@ async fn main() {
         }
 
         tokio::time::sleep(Duration::from_secs(1)).await;
-
-        // TODO: check if session is still good
     }
 }
