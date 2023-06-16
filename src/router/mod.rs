@@ -23,12 +23,13 @@ pub type Handler = Arc<
         + Sync,
 >;
 
-#[derive(Eq, Hash, PartialEq)]
+#[derive(Eq, Hash, PartialEq, Debug)]
 pub struct Route {
     path: String,
     method: RequestTypeWrapper,
 }
 
+#[derive(Debug)]
 pub struct RequestTypeWrapper(pub RequestType);
 
 impl RequestTypeWrapper {
@@ -108,12 +109,16 @@ impl Service<CoapRequest<SocketAddr>> for CoapRouter {
 
         match self.routes.get(&route) {
             Some(handler) => {
+                log::debug!("Handler found for route: {:?}", route);
+
                 // Clone the Arc
                 let handler = Arc::clone(handler);
                 // If a matching route handler is found, delegate the request to it
                 Box::pin(async move { handler(request).await })
             }
             None => {
+                log::debug!("No handler found for route: {:?}", route);
+
                 // TODO: If no route handler is found, return a not found error
                 let pkt = Packet::default();
                 let response = CoapResponse::new(&pkt).unwrap();

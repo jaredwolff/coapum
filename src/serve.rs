@@ -24,6 +24,8 @@ pub async fn serve(
     while let Ok((conn, socket_addr)) = listener.accept().await {
         let r = router.clone();
 
+        log::info!("Got a connection from: {}", socket_addr);
+
         tokio::spawn(async move {
             let mut b = vec![0u8; BUF_SIZE];
 
@@ -44,6 +46,8 @@ pub async fn serve(
                         let packet = Packet::from_bytes(&b[0..n]).unwrap();
                         let request = CoapRequest::from_packet(packet, socket_addr);
 
+                        log::debug!("Got request: {:?}", request);
+
                         // Push it into the router
                         let fut = {
                             let mut r = r.lock().unwrap();
@@ -54,8 +58,13 @@ pub async fn serve(
                         let resp = fut.await.unwrap();
                         let bytes = resp.message.to_bytes().unwrap();
 
+                        log::debug!("Got response: {:?}", resp.message);
+
                         // Write it back
-                        let _ = conn.send(&bytes);
+                        match conn.send(&bytes).await {
+                            Ok(n) => log::debug!("Wrote {} bytes", n),
+                            Err(e) => log::error!("Error: {}", e),
+                        };
                     }
                     Err(e) => {
                         log::error!("Error: {}", e);

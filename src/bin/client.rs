@@ -1,5 +1,6 @@
-use std::{sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use coap_lite::{CoapRequest, Packet, RequestType};
 use tokio::net::UdpSocket;
 use webrtc_dtls::{
     cipher_suite::CipherSuiteId,
@@ -42,10 +43,29 @@ async fn main() {
     let dtls_conn: Arc<dyn Conn + Send + Sync> =
         Arc::new(DTLSConn::new(conn, config, true, None).await.unwrap());
 
-    loop {
-        log::info!("Writing norf");
+    let mut b = vec![0u8; 1024];
 
-        dtls_conn.send(b"norf3").await.unwrap();
+    loop {
+        log::info!("Writing: norf");
+
+        let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
+        request.set_method(RequestType::Get);
+        request.set_path("foo");
+        request.message.payload = b"norf".to_vec();
+        let _ = dtls_conn.send(&request.message.to_bytes().unwrap()).await;
+
+        if let Ok(n) = dtls_conn.recv(&mut b).await {
+            log::debug!("Read {} bytes", n);
+
+            let packet = Packet::from_bytes(&b[0..n]).unwrap();
+            let resp = CoapRequest::from_packet(packet, "bob");
+
+            log::debug!("Response: {:?}", resp.message);
+            log::info!(
+                "Received: {}",
+                String::from_utf8(resp.message.payload).unwrap()
+            );
+        }
 
         tokio::time::sleep(Duration::from_secs(1)).await;
 

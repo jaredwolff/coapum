@@ -8,16 +8,26 @@ use webrtc_dtls::{
     Error,
 };
 
-use coapum::router::{wrapper::get, CoapRouter, RouterError};
+use coapum::{
+    router::{wrapper::get, CoapRouter, RouterError},
+    serve,
+};
 
 const IDENTITY: &str = "goobie!";
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6df70b6c5e97c220060e2ea122c4fdd054555827ab229457c366b2dd4817ff38b".as_bytes();
 
 async fn get_foo(req: CoapRequest<SocketAddr>) -> Result<CoapResponse, RouterError> {
-    log::info!("{}", req.get_path());
+    log::info!("Request path: {}", req.get_path());
+    log::info!(
+        "Received: {}",
+        String::from_utf8(req.message.payload).unwrap()
+    );
 
     let pkt = Packet::default();
-    let response = CoapResponse::new(&pkt).unwrap();
+    let mut response = CoapResponse::new(&pkt).unwrap();
+    response.message.payload = b"bar".to_vec();
+
+    log::info!("Writing: bar");
 
     Ok(response)
 }
@@ -29,7 +39,7 @@ async fn main() {
     env_logger::init();
 
     let mut router = CoapRouter::new();
-    router.add_route("/foo", get(get_foo));
+    router.add_route("foo", get(get_foo));
 
     // Setup socket
     let addr = "127.0.0.1:5683";
@@ -46,11 +56,11 @@ async fn main() {
                 Err(Error::ErrClientCertificateNotVerified)
             }
         })),
-        psk_identity_hint: Some("webrtc-rs DTLS server".as_bytes().to_vec()),
+        psk_identity_hint: Some("coapum server".as_bytes().to_vec()),
         cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8],
         extended_master_secret: ExtendedMasterSecretType::Require,
         ..Default::default()
     };
 
-    // crate::serve(addr).await?;
+    let _ = serve::serve(addr.to_string(), cfg, router).await;
 }
