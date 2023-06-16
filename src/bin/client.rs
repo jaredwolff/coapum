@@ -1,6 +1,5 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use coap_lite::{CoapRequest, Packet, RequestType};
 use tokio::net::UdpSocket;
 use webrtc_dtls::{
     cipher_suite::CipherSuiteId,
@@ -9,6 +8,8 @@ use webrtc_dtls::{
     Error,
 };
 use webrtc_util::Conn;
+
+use coapum::{CoapRequest, ContentFormat, Packet, RequestType};
 
 const IDENTITY: &[u8] = "goobie!".as_bytes();
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6df70b6c5e97c220060e2ea122c4fdd054555827ab229457c366b2dd4817ff38b".as_bytes();
@@ -44,17 +45,22 @@ async fn main() {
         Arc::new(DTLSConn::new(conn, config, true, None).await.unwrap());
 
     let mut b = vec![0u8; 1024];
-    let payload = b"fron";
+    let payload_json = "{\"foo\": {\"bar\": 1, \"baz\": [1, 2, 3]}}";
 
     loop {
-        log::info!("Writing: {}", String::from_utf8(payload.to_vec()).unwrap());
+        log::info!("Writing: {}", payload_json);
 
         let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
         request.set_method(RequestType::Get);
-        request.set_path("foo");
-        request.message.payload = payload.to_vec();
+        request.set_path("test");
+        request.message.payload = payload_json.as_bytes().to_vec();
+        request
+            .message
+            .set_content_format(ContentFormat::ApplicationJSON);
         match dtls_conn.send(&request.message.to_bytes().unwrap()).await {
-            Ok(n) => log::debug!("Wrote {} bytes", n),
+            Ok(n) => {
+                log::info!("Wrote {} bytes", n);
+            }
             Err(e) => {
                 log::error!("Error writing: {}", e);
                 break;
@@ -65,13 +71,9 @@ async fn main() {
             log::debug!("Read {} bytes", n);
 
             let packet = Packet::from_bytes(&b[0..n]).unwrap();
-            let resp = CoapRequest::from_packet(packet, "bob");
 
-            log::debug!("Response: {:?}", resp.message);
-            log::info!(
-                "Received: {}",
-                String::from_utf8(resp.message.payload).unwrap()
-            );
+            log::info!("Response: {:?}", String::from_utf8(packet.payload).unwrap());
+            log::info!("Status: {:?}", packet.header.code);
         }
 
         tokio::time::sleep(Duration::from_secs(1)).await;

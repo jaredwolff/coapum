@@ -1,7 +1,4 @@
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
 
 use tower::Service;
 use webrtc_dtls::{config::Config, listener};
@@ -22,58 +19,55 @@ pub async fn serve(
     let router = Arc::new(Mutex::new(router));
 
     loop {
-        match tokio::time::timeout(Duration::from_secs(1), listener.accept()).await {
-            Ok(Ok((conn, socket_addr))) => {
-                let r = router.clone();
+        if let Ok((conn, socket_addr)) = listener.accept().await {
+            let r = router.clone();
 
-                log::info!("Got a connection from: {}", socket_addr);
+            log::info!("Got a connection from: {}", socket_addr);
 
-                tokio::spawn(async move {
-                    let mut b = vec![0u8; BUF_SIZE];
+            // TODO: get the client ID
+            // let client_id = conn.get_client_id().await.unwrap();
 
-                    loop {
-                        match conn.recv(&mut b).await {
-                            Ok(n) => {
-                                let packet = Packet::from_bytes(&b[0..n]).unwrap();
-                                let request = CoapRequest::from_packet(packet, socket_addr);
+            tokio::spawn(async move {
+                let mut b = vec![0u8; BUF_SIZE];
 
-                                log::debug!("Got request: {:?}", request);
+                loop {
+                    match conn.recv(&mut b).await {
+                        Ok(n) => {
+                            let packet = Packet::from_bytes(&b[0..n]).unwrap();
+                            let request = CoapRequest::from_packet(packet, socket_addr);
 
-                                // Push it into the router
-                                let fut = {
-                                    let mut r = r.lock().unwrap();
-                                    r.call(request)
-                                };
+                            log::debug!("Got request: {:?}", request);
 
-                                // Get the response
-                                let resp = fut.await.unwrap();
-                                let bytes = resp.message.to_bytes().unwrap();
+                            // Push it into the router
+                            let fut = {
+                                let mut r = r.lock().unwrap();
+                                r.call(request)
+                            };
 
-                                log::debug!("Got response: {:?}", resp.message);
+                            // Get the response
+                            let resp = fut.await.unwrap();
+                            let bytes = resp.message.to_bytes().unwrap();
 
-                                // Write it back
-                                match conn.send(&bytes).await {
-                                    Ok(n) => log::debug!("Wrote {} bytes", n),
-                                    Err(e) => {
-                                        log::error!("Error: {}", e);
-                                        break;
-                                    }
-                                };
-                            }
-                            Err(e) => {
-                                log::error!("Error: {}", e);
-                                break;
-                            }
+                            log::debug!("Got response: {:?}", resp.message);
+
+                            // Write it back
+                            match conn.send(&bytes).await {
+                                Ok(n) => log::debug!("Wrote {} bytes", n),
+                                Err(e) => {
+                                    log::error!("Error: {}", e);
+                                    break;
+                                }
+                            };
+                        }
+                        Err(e) => {
+                            log::error!("Error: {}", e);
+                            break;
                         }
                     }
+                }
 
-                    conn.close().await.unwrap();
-                });
-            }
-            Ok(Err(e)) => {
-                log::error!("Error accepting connection: {}", e);
-            }
-            Err(_) => continue,
+                conn.close().await.unwrap();
+            });
         }
     }
 }

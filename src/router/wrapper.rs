@@ -21,3 +21,14 @@ where
         method: RequestType::Get,
     }
 }
+
+pub fn put<F, Fut>(f: F) -> RouteHandler
+where
+    F: Fn(CoapRequest<SocketAddr>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+{
+    RouteHandler {
+        handler: Arc::new(move |req: CoapRequest<SocketAddr>| Box::pin(f(req))),
+        method: RequestType::Get,
+    }
+}

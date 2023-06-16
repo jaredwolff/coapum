@@ -1,7 +1,5 @@
 use std::{self, net::SocketAddr, sync::Arc};
 
-use coap_lite::{CoapRequest, CoapResponse, Packet};
-
 use webrtc_dtls::{
     cipher_suite::CipherSuiteId,
     config::{Config, ExtendedMasterSecretType},
@@ -10,25 +8,25 @@ use webrtc_dtls::{
 
 use coapum::{
     router::{wrapper::get, CoapRouter, RouterError},
-    serve,
+    serve, {CoapRequest, CoapResponse, Packet, ResponseType},
 };
 
 const IDENTITY: &str = "goobie!";
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6df70b6c5e97c220060e2ea122c4fdd054555827ab229457c366b2dd4817ff38b".as_bytes();
 
-async fn get_foo(req: CoapRequest<SocketAddr>) -> Result<CoapResponse, RouterError> {
-    log::info!("Request path: {}", req.get_path());
+async fn test(req: CoapRequest<SocketAddr>) -> Result<CoapResponse, RouterError> {
     log::info!(
-        "Received: {}",
+        "Got request: {}",
         String::from_utf8(req.message.payload).unwrap()
     );
 
     let pkt = Packet::default();
     let mut response = CoapResponse::new(&pkt).unwrap();
-    response.message.payload = b"bar".to_vec();
+    let json = "{\"resp\":\"OK\"}";
+    response.message.payload = json.as_bytes().to_vec();
+    response.set_status(ResponseType::Valid);
 
-    log::info!("Writing: bar");
-
+    log::info!("Writing: {}", json);
     Ok(response)
 }
 
@@ -39,7 +37,7 @@ async fn main() {
     env_logger::init();
 
     let mut router = CoapRouter::new();
-    router.add_route("foo", get(get_foo));
+    router.add("test", get(test));
 
     // Setup socket
     let addr = "127.0.0.1:5683";

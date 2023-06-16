@@ -10,11 +10,12 @@ coap-lite = "0.11.2"
 env_logger = "0.10"
 futures = "0.3.28"
 log = "0.4"
+route-recognizer = "0.3.1"
 tokio = { version = "1.28", features = ["full"] }
 tower = { version = "0.4.13", features = [
     "tokio",
     "tokio-stream",
     "tokio-util",
 ] }
-webrtc-dtls = "0.7.2"
-webrtc-util = "0.7.0"
+webrtc-dtls = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/psk-decrypt-error" }
+webrtc-util = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/psk-decrypt-error" }
