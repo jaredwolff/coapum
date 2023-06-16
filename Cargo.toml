@@ -1,17 +1,20 @@
 [package]
-name = "dtls-coap-test"
+name = "coapum"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+coap-lite = "0.11.2"
 env_logger = "0.10"
-futures-util = "0.3.28"
-lazy_static = "1.4"
+futures = "0.3.28"
 log = "0.4"
-# openssl = { version = "0.10", features = ["v111"] }
 tokio = { version = "1.28", features = ["full"] }
+tower = { version = "0.4.13", features = [
+    "tokio",
+    "tokio-stream",
+    "tokio-util",
+] }
 webrtc-dtls = "0.7.2"
 webrtc-util = "0.7.0"
-# tokio-dtls-stream-sink = { path = "../tokio-dtls-stream-sink" }
