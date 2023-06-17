@@ -14,7 +14,7 @@ use coapum::{
 const IDENTITY: &str = "goobie!";
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6df70b6c5e97c220060e2ea122c4fdd054555827ab229457c366b2dd4817ff38b".as_bytes();
 
-async fn test(req: CoapRequest<SocketAddr>) -> Result<CoapResponse, RouterError> {
+async fn test<S>(req: CoapRequest<SocketAddr>, _state: S) -> Result<CoapResponse, RouterError> {
     log::info!(
         "Got request: {}",
         String::from_utf8(req.message.payload).unwrap()

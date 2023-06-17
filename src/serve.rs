@@ -10,11 +10,14 @@ use crate::router::CoapRouter;
 
 const BUF_SIZE: usize = 8192;
 
-pub async fn serve(
+pub async fn serve<S>(
     addr: String,
     config: Config,
-    router: CoapRouter,
-) -> Result<(), Box<dyn std::error::Error>> {
+    router: CoapRouter<S>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    S: Send + Sync + 'static, // The shared state needs to be Send and Sync to be shared across threads
+{
     let listener = Arc::new(listener::listen(addr.clone(), config).await.unwrap());
     let router = Arc::new(Mutex::new(router));
 
