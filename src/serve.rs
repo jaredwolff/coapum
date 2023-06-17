@@ -22,13 +22,17 @@ where
     let router = Arc::new(Mutex::new(router));
 
     loop {
-        if let Ok((conn, socket_addr)) = listener.accept().await {
+        if let Ok((conn, state, socket_addr)) = listener.accept().await {
             let r = router.clone();
 
             log::info!("Got a connection from: {}", socket_addr);
 
-            // TODO: get the client ID
-            // let client_id = conn.get_client_id().await.unwrap();
+            // Get PSK Identity and use it as the Client's ID
+            if let Some(s) = state {
+                if let Some(s) = s.psk_identity() {
+                    log::info!("PSK Identity: {}", String::from_utf8(s).unwrap());
+                }
+            }
 
             tokio::spawn(async move {
                 let mut b = vec![0u8; BUF_SIZE];

@@ -17,5 +17,5 @@ tower = { version = "0.4.13", features = [
     "tokio-stream",
     "tokio-util",
 ] }
-webrtc-dtls = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/psk-decrypt-error" }
-webrtc-util = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/psk-decrypt-error" }
+webrtc-dtls = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/get-psk-identity" }
+webrtc-util = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/get-psk-identity" }

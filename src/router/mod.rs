@@ -28,6 +28,12 @@ pub struct CoapRouter<S = ()> {
 
 impl CoapRouter<()> {
     pub fn new() -> Self {
+        Default::default()
+    }
+}
+
+impl Default for CoapRouter<()> {
+    fn default() -> Self {
         Self {
             inner: Router::new(),
             state: Arc::new(Mutex::new(())),
@@ -39,7 +45,7 @@ impl<S> CoapRouter<S>
 where
     S: Send,
 {
-    pub fn with_state(state: S) -> Self {
+    pub fn new_with_state(state: S) -> Self {
         Self {
             inner: Router::new(),
             state: Arc::new(Mutex::new(state)),

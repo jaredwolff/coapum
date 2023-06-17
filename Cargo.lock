@@ -1639,7 +1639,7 @@ dependencies = [
 [[package]]
 name = "webrtc-dtls"
 version = "0.7.2"
-source = "git+https://github.com/jaredwolff/webrtc.git?branch=jared/psk-decrypt-error#33871ae0cd858550cc456d7b2059c1f3ae66cdc9"
+source = "git+https://github.com/jaredwolff/webrtc.git?branch=jared/get-psk-identity#945e98af8e7ceb0b09e780d3c1ff0e6f9b311a77"
 dependencies = [
  "aes 0.6.0",
  "aes-gcm",
@@ -1675,7 +1675,7 @@ dependencies = [
 [[package]]
 name = "webrtc-util"
 version = "0.7.0"
-source = "git+https://github.com/jaredwolff/webrtc.git?branch=jared/psk-decrypt-error#33871ae0cd858550cc456d7b2059c1f3ae66cdc9"
+source = "git+https://github.com/jaredwolff/webrtc.git?branch=jared/get-psk-identity#945e98af8e7ceb0b09e780d3c1ff0e6f9b311a77"
 dependencies = [
  "async-trait",
  "bitflags",
