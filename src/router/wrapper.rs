@@ -36,3 +36,16 @@ where
         method: RequestType::Get,
     }
 }
+
+pub fn delete<S, F, Fut>(f: F) -> RouteHandler<S>
+where
+    F: Fn(CoapRequest<SocketAddr>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+{
+    RouteHandler {
+        handler: Arc::new(move |req: CoapRequest<SocketAddr>, state: Arc<Mutex<S>>| {
+            Box::pin(f(req, state))
+        }),
+        method: RequestType::Delete,
+    }
+}
