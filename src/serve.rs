@@ -54,6 +54,10 @@ where
                             request.identity = identity.clone();
 
                             log::debug!("Got request: {:?}", request);
+                            log::debug!(
+                                "Payload: {}",
+                                String::from_utf8(request.message.payload.to_vec()).unwrap(),
+                            );
 
                             // Push it into the router
                             let fut = {

@@ -62,13 +62,18 @@ where
             Ok(matched) => {
                 let handler = matched.handler();
 
+                log::debug!("Matched route: {:?}", matched);
+
                 if handler.method == *r.get_method() {
                     Some(handler.handler.clone())
                 } else {
                     None
                 }
             }
-            Err(_) => None,
+            Err(e) => {
+                log::warn!("Unable to recognize. Err: {}", e);
+                None
+            }
         }
     }
 }
