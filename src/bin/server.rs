@@ -7,17 +7,18 @@ use webrtc_dtls::{
 };
 
 use coapum::{
-    router::{wrapper::get, CoapRouter, RouterError},
-    serve, {CoapRequest, CoapResponse, Packet, ResponseType},
+    router::{wrapper::get, CoapRouter, CoapumRequest, RouterError},
+    serve, {CoapResponse, Packet, ResponseType},
 };
 
 const IDENTITY: &str = "goobie!";
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6df70b6c5e97c220060e2ea122c4fdd054555827ab229457c366b2dd4817ff38b".as_bytes();
 
-async fn test<S>(req: CoapRequest<SocketAddr>, _state: S) -> Result<CoapResponse, RouterError> {
+async fn test<S>(r: CoapumRequest<SocketAddr>, _state: S) -> Result<CoapResponse, RouterError> {
     log::info!(
-        "Got request: {}",
-        String::from_utf8(req.message.payload).unwrap()
+        "Got request: {} from: {}",
+        String::from_utf8(r.message.payload).unwrap(),
+        String::from_utf8(r.identity).unwrap()
     );
 
     let pkt = Packet::default();
@@ -43,6 +44,8 @@ async fn main() {
     let addr = "127.0.0.1:5683";
     let cfg = Config {
         psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
+            // TODO: actually look this up somewhere
+
             println!(
                 "Client's hint: {}",
                 String::from_utf8(hint.to_vec()).unwrap()

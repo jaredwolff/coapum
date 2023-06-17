@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 
 use tower::Service;
 use webrtc_dtls::{config::Config, listener};
@@ -6,7 +9,7 @@ use webrtc_util::conn::Listener;
 
 use coap_lite::{CoapRequest, Packet};
 
-use crate::router::CoapRouter;
+use crate::router::{CoapRouter, CoapumRequest};
 
 const BUF_SIZE: usize = 8192;
 
@@ -27,9 +30,12 @@ where
 
             log::info!("Got a connection from: {}", socket_addr);
 
+            let mut identity = Vec::new();
+
             // Get PSK Identity and use it as the Client's ID
             if let Some(s) = state {
                 if let Some(s) = s.psk_identity() {
+                    identity = s.clone();
                     log::info!("PSK Identity: {}", String::from_utf8(s).unwrap());
                 }
             }
@@ -42,6 +48,10 @@ where
                         Ok(n) => {
                             let packet = Packet::from_bytes(&b[0..n]).unwrap();
                             let request = CoapRequest::from_packet(packet, socket_addr);
+
+                            // Convert to wrapper
+                            let mut request: CoapumRequest<SocketAddr> = request.into();
+                            request.identity = identity.clone();
 
                             log::debug!("Got request: {:?}", request);
 

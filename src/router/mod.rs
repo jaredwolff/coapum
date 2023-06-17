@@ -1,9 +1,10 @@
-use coap_lite::{CoapRequest, CoapResponse, Packet};
+use coap_lite::{CoapRequest, CoapResponse, Packet, RequestType};
 use route_recognizer::Router;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::vec;
 use tower::Service;
 
 use self::wrapper::RouteHandler;
@@ -14,7 +15,7 @@ pub type RouterError = Box<(dyn std::error::Error + Send + Sync + 'static)>;
 
 pub type Handler<S> = Arc<
     dyn Fn(
-            CoapRequest<SocketAddr>,
+            CoapumRequest<SocketAddr>,
             Arc<Mutex<S>>,
         ) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>>
         + Send
@@ -56,12 +57,12 @@ where
         self.inner.add(route, handler);
     }
 
-    pub fn lookup(&self, request: &CoapRequest<SocketAddr>) -> Option<Handler<S>> {
-        match self.inner.recognize(&request.get_path()) {
+    pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Handler<S>> {
+        match self.inner.recognize(&r.get_path()) {
             Ok(matched) => {
                 let handler = matched.handler();
 
-                if handler.method == *request.get_method() {
+                if handler.method == *r.get_method() {
                     Some(handler.handler.clone())
                 } else {
                     None
@@ -72,7 +73,43 @@ where
     }
 }
 
-impl<S> Service<CoapRequest<SocketAddr>> for CoapRouter<S>
+#[derive(Debug)]
+pub struct CoapumRequest<Endpoint> {
+    pub message: Packet,
+    code: RequestType,
+    path: String,
+    pub response: Option<CoapResponse>,
+    pub source: Option<Endpoint>,
+    pub identity: Vec<u8>,
+}
+
+impl<Endpoint> From<CoapRequest<Endpoint>> for CoapumRequest<Endpoint> {
+    fn from(req: CoapRequest<Endpoint>) -> Self {
+        let path = req.get_path().clone();
+        let code = *req.get_method();
+
+        Self {
+            message: req.message,
+            response: req.response,
+            source: req.source,
+            path,
+            code,
+            identity: vec![],
+        }
+    }
+}
+
+impl<Endpoint> CoapumRequest<Endpoint> {
+    pub fn get_path(&self) -> String {
+        self.path.clone()
+    }
+
+    pub fn get_method(&self) -> &RequestType {
+        &self.code
+    }
+}
+
+impl<S> Service<CoapumRequest<SocketAddr>> for CoapRouter<S>
 where
     S: Send + Sync + 'static,
 {
@@ -89,7 +126,7 @@ where
         std::task::Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: CoapRequest<SocketAddr>) -> Self::Future {
+    fn call(&mut self, request: CoapumRequest<SocketAddr>) -> Self::Future {
         let state = self.state.clone(); // Clone the state so it can be moved into the async block
 
         match self.lookup(&request) {
