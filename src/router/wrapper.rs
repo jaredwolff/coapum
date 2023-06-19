@@ -45,6 +45,19 @@ where
     }
 }
 
+pub fn post<S, F, Fut>(f: F) -> RouteHandler<S>
+where
+    F: Fn(CoapumRequest<SocketAddr>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+{
+    RouteHandler {
+        handler: Arc::new(
+            move |req: CoapumRequest<SocketAddr>, state: Arc<Mutex<S>>| Box::pin(f(req, state)),
+        ),
+        method: RequestType::Post,
+    }
+}
+
 pub fn delete<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(CoapumRequest<SocketAddr>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
