@@ -12,7 +12,7 @@ use coapum::{
 };
 
 const IDENTITY: &str = "goobie!";
-const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6df70b6c5e97c220060e2ea122c4fdd054555827ab229457c366b2dd4817ff38b".as_bytes();
+const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
 async fn test<S>(r: CoapumRequest<SocketAddr>, _state: S) -> Result<CoapResponse, RouterError> {
     log::info!(
@@ -41,7 +41,7 @@ async fn main() {
     router.add("test", get(test));
 
     // Setup socket
-    let addr = "127.0.0.1:5683";
+    let addr = "127.0.0.1:5684";
     let cfg = Config {
         psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
             // TODO: actually look this up somewhere
@@ -58,7 +58,7 @@ async fn main() {
             }
         })),
         psk_identity_hint: Some("coapum server".as_bytes().to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8],
+        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
         extended_master_secret: ExtendedMasterSecretType::Require,
         ..Default::default()
     };

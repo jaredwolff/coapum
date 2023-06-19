@@ -12,7 +12,7 @@ use webrtc_util::Conn;
 use coapum::{CoapRequest, ContentFormat, Packet, RequestType};
 
 const IDENTITY: &[u8] = "goobie!".as_bytes();
-const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6df70b6c5e97c220060e2ea122c4fdd054555827ab229457c366b2dd4817ff38b".as_bytes();
+const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
 #[tokio::main]
 async fn main() {
@@ -22,7 +22,7 @@ async fn main() {
 
     // Setup socket
     let addr = "127.0.0.1:0";
-    let saddr = "127.0.0.1:5683";
+    let saddr = "127.0.0.1:5684";
 
     let conn = Arc::new(UdpSocket::bind(addr).await.unwrap());
     conn.connect(saddr).await.unwrap();
@@ -37,7 +37,7 @@ async fn main() {
             Ok(PSK.to_vec())
         })),
         psk_identity_hint: Some(IDENTITY.to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8],
+        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
         extended_master_secret: ExtendedMasterSecretType::Require,
         ..Default::default()
     };

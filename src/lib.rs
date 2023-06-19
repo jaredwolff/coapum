@@ -1,6 +1,5 @@
 pub mod router;
 pub mod serve;
-pub mod services;
 
 pub use coap_lite::{
     CoapRequest, CoapResponse, ContentFormat, MessageClass, Packet, RequestType, ResponseType,
