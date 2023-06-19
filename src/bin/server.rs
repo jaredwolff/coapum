@@ -33,9 +33,9 @@ async fn test<S>(r: CoapumRequest<SocketAddr>, _state: S) -> Result<CoapResponse
 
 #[tokio::main]
 async fn main() {
-    println!("Server!");
-
     env_logger::init();
+
+    log::info!("Server!");
 
     let mut router = CoapRouter::new();
     router.add("test", get(test));
@@ -46,7 +46,7 @@ async fn main() {
         psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
             // TODO: actually look this up somewhere
 
-            println!(
+            log::info!(
                 "Client's hint: {}",
                 String::from_utf8(hint.to_vec()).unwrap()
             );

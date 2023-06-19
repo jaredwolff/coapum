@@ -16,9 +16,9 @@ const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6df70b6c5e97c220060e2ea122c4f
 
 #[tokio::main]
 async fn main() {
-    println!("Client!");
-
     env_logger::init();
+
+    log::info!("Client!");
 
     // Setup socket
     let addr = "127.0.0.1:0";
@@ -30,7 +30,7 @@ async fn main() {
     // Setup SSL context for PSK
     let config = Config {
         psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
-            println!(
+            log::info!(
                 "Server's hint: {}",
                 String::from_utf8(hint.to_vec()).unwrap()
             );

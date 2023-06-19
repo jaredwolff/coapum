@@ -41,7 +41,7 @@ where
         handler: Arc::new(
             move |req: CoapumRequest<SocketAddr>, state: Arc<Mutex<S>>| Box::pin(f(req, state)),
         ),
-        method: RequestType::Get,
+        method: RequestType::Put,
     }
 }
 
