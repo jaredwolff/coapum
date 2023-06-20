@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::sync::{
     mpsc::{channel, Sender},
@@ -17,10 +17,10 @@ const BUF_SIZE: usize = 8192;
 async fn receive<S>(
     conn: Arc<dyn Conn + Send + Sync>,
     socket_addr: SocketAddr,
-    r: Arc<Mutex<CoapRouter<S>>>,
+    r: &mut CoapRouter<S>,
     identity: Vec<u8>,
 ) where
-    S: Send + Sync + 'static,
+    S: Debug + Clone + Send + Sync + 'static,
 {
     let mut b = vec![0u8; BUF_SIZE];
 
@@ -52,16 +52,17 @@ async fn receive<S>(
                 String::from_utf8(request.message.payload.to_vec()).unwrap(),
             );
 
-            // Push it into the router
-            let fut = {
-                let mut r = r.lock().await;
-                r.call(request)
+            // Call the service
+            let resp = match r.call(request).await {
+                Ok(r) => r,
+                Err(e) => {
+                    log::error!("Fatal Error: {}", e);
+                    return;
+                }
             };
 
             // Get the response
-            let resp = fut.await.unwrap();
             let bytes = resp.message.to_bytes().unwrap();
-
             log::debug!("Got response: {:?}", resp.message);
 
             // Write it back
@@ -84,19 +85,17 @@ pub async fn serve<S>(
     router: CoapRouter<S>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    S: Send + Sync + 'static, // The shared state needs to be Send and Sync to be shared across threads
+    S: Debug + Clone + Send + Sync + 'static, // The shared state needs to be Send and Sync to be shared across threads
 {
     let listener = Arc::new(listener::listen(addr.clone(), config).await.unwrap());
-    let router = Arc::new(Mutex::new(router));
     let connections: Arc<Mutex<HashMap<Vec<u8>, Sender<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
     loop {
         if let Ok((conn, state, socket_addr)) = listener.accept().await {
-            let r = router.clone();
-
             log::info!("Got a connection from: {}", socket_addr);
 
+            let mut router = router.clone();
             let mut identity = Vec::new();
 
             // Get PSK Identity and use it as the Client's ID
@@ -124,7 +123,7 @@ where
                 loop {
                     tokio::select! {
                         _ = async {
-                            receive(conn.clone(), socket_addr, r.clone(), identity.clone()).await
+                            receive(conn.clone(), socket_addr, &mut router, identity.clone()).await
                         } => {}
                         _ = rx.recv() => {
                             log::info!("Terminating connection with: {}", socket_addr);

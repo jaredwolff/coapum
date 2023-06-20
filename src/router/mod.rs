@@ -3,17 +3,21 @@ use coap_lite::{
 };
 use route_recognizer::Router;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::fmt::Debug;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::vec;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
 use tower::Service;
 
 use crate::extractor::cbor::CborPayload;
+use crate::extractor::handle_payload_extraction;
 use crate::extractor::json::JsonPayload;
 use crate::extractor::raw::RawPayload;
-use crate::extractor::FromCoapumRequest;
 
 use self::wrapper::RouteHandler;
 
@@ -36,9 +40,14 @@ pub type Handler<S> = Arc<
         + Sync,
 >;
 
-pub struct CoapRouter<S = ()> {
+#[derive(Clone)]
+pub struct CoapRouter<S = ()>
+where
+    S: Clone + Debug,
+{
     inner: Router<RouteHandler<S>>,
-    state: Arc<Mutex<S>>, // Shared state
+    state: Arc<Mutex<S>>,                        // Shared state
+    observers: HashMap<String, Sender<Vec<u8>>>, // Observers <path,channel>
 }
 
 impl CoapRouter<()> {
@@ -52,18 +61,20 @@ impl Default for CoapRouter<()> {
         Self {
             inner: Router::new(),
             state: Arc::new(Mutex::new(())),
+            observers: HashMap::new(),
         }
     }
 }
 
 impl<S> CoapRouter<S>
 where
-    S: Send,
+    S: Send + Clone + Debug,
 {
     pub fn new_with_state(state: S) -> Self {
         Self {
             inner: Router::new(),
             state: Arc::new(Mutex::new(state)),
+            observers: HashMap::new(),
         }
     }
 
@@ -141,7 +152,7 @@ impl<Endpoint> CoapumRequest<Endpoint> {
     }
 }
 
-fn create_error_response(
+pub fn create_error_response(
     req: &CoapumRequest<SocketAddr>,
     rtype: ResponseType,
 ) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>> {
@@ -154,26 +165,9 @@ fn create_error_response(
     Box::pin(async move { Ok(response) })
 }
 
-fn handle_payload_extraction<T, S>(
-    request: &CoapumRequest<SocketAddr>,
-    handler: Handler<S>,
-    state: Arc<Mutex<S>>,
-) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>>
-where
-    T: FromCoapumRequest<Error = std::io::Error> + Request + Send + 'static,
-{
-    match T::from_coap_request(request) {
-        Ok(payload) => Box::pin(handler(Box::new(payload), state)),
-        Err(e) => {
-            log::warn!("Unable to parse payload: {}", e);
-            create_error_response(request, ResponseType::UnsupportedContentFormat)
-        }
-    }
-}
-
 impl<S> Service<CoapumRequest<SocketAddr>> for CoapRouter<S>
 where
-    S: Send + Sync + 'static,
+    S: Debug + Send + Clone + Sync + 'static,
 {
     type Response = CoapResponse;
     type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -220,10 +214,8 @@ where
                     request.get_path()
                 );
 
-                // TODO: If no route handler is found, return a not found error
-                let pkt = Packet::default();
-                let response = CoapResponse::new(&pkt).unwrap();
-                Box::pin(async move { Ok(response) })
+                // If no route handler is found, return a not found error
+                create_error_response(&request, ResponseType::BadRequest)
             }
         }
     }

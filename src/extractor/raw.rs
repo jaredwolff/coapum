@@ -1,9 +1,6 @@
 use std::net::SocketAddr;
 
-use crate::{
-    helper,
-    router::{CoapumRequest, Request},
-};
+use crate::router::{CoapumRequest, Request};
 use coap_lite::Packet;
 use serde_json::Value;
 
