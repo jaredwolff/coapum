@@ -1,4 +1,4 @@
-use std::{self, net::SocketAddr, sync::Arc};
+use std::{self, sync::Arc};
 
 use webrtc_dtls::{
     cipher_suite::CipherSuiteId,
@@ -7,19 +7,15 @@ use webrtc_dtls::{
 };
 
 use coapum::{
-    router::{wrapper::get, CoapRouter, CoapumRequest, RouterError},
+    router::{wrapper::get, CoapRouter, Request, RouterError},
     serve, {CoapResponse, Packet, ResponseType},
 };
 
 const IDENTITY: &str = "goobie!";
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
-async fn test<S>(r: CoapumRequest<SocketAddr>, _state: S) -> Result<CoapResponse, RouterError> {
-    log::info!(
-        "Got request: {} from: {}",
-        String::from_utf8(r.message.payload).unwrap(),
-        String::from_utf8(r.identity).unwrap()
-    );
+async fn test<S>(payload: Box<dyn Request>, _state: S) -> Result<CoapResponse, RouterError> {
+    log::info!("Got json payload: {}", payload.get_value());
 
     let pkt = Packet::default();
     let mut response = CoapResponse::new(&pkt).unwrap();

@@ -1,11 +1,9 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::{
+    mpsc::{channel, Sender},
+    Mutex,
+};
 use tower::Service;
 use webrtc_dtls::{config::Config, listener};
 use webrtc_util::{conn::Listener, Conn};
@@ -48,7 +46,7 @@ async fn receive<S>(
             let mut request: CoapumRequest<SocketAddr> = request.into();
             request.identity = identity.clone();
 
-            log::debug!("Got request: {:?}", request);
+            log::debug!("Got {} bytes: {:?}", n, request);
             log::debug!(
                 "Payload: {}",
                 String::from_utf8(request.message.payload.to_vec()).unwrap(),
@@ -56,7 +54,7 @@ async fn receive<S>(
 
             // Push it into the router
             let fut = {
-                let mut r = r.lock().unwrap();
+                let mut r = r.lock().await;
                 r.call(request)
             };
 
@@ -71,13 +69,11 @@ async fn receive<S>(
                 Ok(n) => log::debug!("Wrote {} bytes", n),
                 Err(e) => {
                     log::error!("Error: {}", e);
-                    return;
                 }
             };
         }
         Err(e) => {
             log::error!("Error: {}", e);
-            return;
         }
     }
 }
@@ -114,7 +110,7 @@ where
             let cons = connections.clone();
 
             // Check for old connection and terminate it
-            if let Some(tx) = cons.lock().unwrap().get(&identity) {
+            if let Some(tx) = cons.lock().await.get(&identity) {
                 log::info!("Terminating old connection with: {}", socket_addr);
                 tx.send(()).await.unwrap(); // Signal the old connection to terminate
             }
@@ -123,7 +119,7 @@ where
                 let (tx, mut rx) = channel::<()>(1);
 
                 // Insert the channel
-                cons.lock().unwrap().insert(identity.clone(), tx);
+                cons.lock().await.insert(identity.clone(), tx);
 
                 loop {
                     tokio::select! {
