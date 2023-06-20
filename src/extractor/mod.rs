@@ -4,6 +4,7 @@ use crate::router::CoapumRequest;
 
 pub mod cbor;
 pub mod json;
+pub mod raw;
 
 pub trait FromCoapumRequest {
     type Error;

@@ -1,4 +1,6 @@
-use coap_lite::{CoapRequest, CoapResponse, ContentFormat, ObserveOption, Packet, RequestType};
+use coap_lite::{
+    CoapRequest, CoapResponse, ContentFormat, ObserveOption, Packet, RequestType, ResponseType,
+};
 use route_recognizer::Router;
 use serde_json::Value;
 use std::future::Future;
@@ -10,6 +12,7 @@ use tower::Service;
 
 use crate::extractor::cbor::CborPayload;
 use crate::extractor::json::JsonPayload;
+use crate::extractor::raw::RawPayload;
 use crate::extractor::FromCoapumRequest;
 
 use self::wrapper::RouteHandler;
@@ -138,10 +141,16 @@ impl<Endpoint> CoapumRequest<Endpoint> {
     }
 }
 
-fn create_default_response(
+fn create_error_response(
+    req: &CoapumRequest<SocketAddr>,
+    rtype: ResponseType,
 ) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>> {
     let pkt = Packet::default();
-    let response = CoapResponse::new(&pkt).unwrap();
+    let mut response = CoapResponse::new(&pkt).unwrap();
+    response.message.header.message_id = req.message.header.message_id;
+    response.message.set_token(req.message.get_token().to_vec());
+    response.set_status(rtype);
+
     Box::pin(async move { Ok(response) })
 }
 
@@ -157,7 +166,7 @@ where
         Ok(payload) => Box::pin(handler(Box::new(payload), state)),
         Err(e) => {
             log::warn!("Unable to parse payload: {}", e);
-            create_default_response()
+            create_error_response(request, ResponseType::UnsupportedContentFormat)
         }
     }
 }
@@ -196,14 +205,12 @@ where
                         ContentFormat::ApplicationCBOR => {
                             handle_payload_extraction::<CborPayload, S>(&request, handler, state)
                         }
-                        _ => {
-                            log::error!("Unsupported content format");
-                            create_default_response()
-                        }
+                        // All other unsupported formats for extraction
+                        _ => handle_payload_extraction::<RawPayload, S>(&request, handler, state),
                     }
                 } else {
                     log::error!("Unsupported content format");
-                    create_default_response()
+                    create_error_response(&request, ResponseType::UnsupportedContentFormat)
                 }
             }
             None => {
