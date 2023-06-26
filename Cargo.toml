@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["sled-observer"]
+sled-observer = ["sled"]
 
 [dependencies]
+async-trait = "0.1.68"
 ciborium = "0.2.1"
 coap-lite = "0.11.2"
 env_logger = "0.10"
@@ -21,3 +25,10 @@ tower = { version = "0.4.13", features = [
 ] }
 webrtc-dtls = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/get-psk-identity" }
 webrtc-util = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/get-psk-identity" }
+
+# Optional
+sled = { version = "0.34.7", optional = true }
+lazy_static = { version = "1.4.0", optional = true }
+
+# webrtc-dtls = { path = "../webrtc/dtls" }
+# webrtc-util = { path = "../webrtc/util" }

@@ -18,8 +18,9 @@ use crate::extractor::cbor::CborPayload;
 use crate::extractor::handle_payload_extraction;
 use crate::extractor::json::JsonPayload;
 use crate::extractor::raw::RawPayload;
+use crate::observer::Observer;
 
-use self::wrapper::RouteHandler;
+use self::wrapper::{RequestTypeWrapper, RouteHandler};
 
 pub mod wrapper;
 
@@ -27,8 +28,7 @@ pub type RouterError = Box<(dyn std::error::Error + Send + Sync + 'static)>;
 
 pub trait Request: Send {
     fn get_value(&self) -> &Value;
-    fn get_raw(&self) -> &Packet;
-    fn get_identity(&self) -> &Vec<u8>;
+    fn get_raw(&self) -> &CoapumRequest<SocketAddr>;
 }
 
 pub type Handler<S> = Arc<
@@ -41,45 +41,59 @@ pub type Handler<S> = Arc<
 >;
 
 #[derive(Clone)]
-pub struct CoapRouter<S = ()>
+pub struct CoapRouter<O = (), S = ()>
 where
     S: Clone + Debug,
+    O: Observer,
 {
-    inner: Router<RouteHandler<S>>,
-    state: Arc<Mutex<S>>,                        // Shared state
-    observers: HashMap<String, Sender<Vec<u8>>>, // Observers <path,channel>
+    inner: Router<HashMap<RequestTypeWrapper, RouteHandler<S>>>,
+    state: Arc<Mutex<S>>, // Shared state
+    db: O,
 }
 
-impl CoapRouter<()> {
-    pub fn new() -> Self {
-        Default::default()
-    }
-}
-
-impl Default for CoapRouter<()> {
-    fn default() -> Self {
-        Self {
-            inner: Router::new(),
-            state: Arc::new(Mutex::new(())),
-            observers: HashMap::new(),
-        }
-    }
-}
-
-impl<S> CoapRouter<S>
+impl<O, S> CoapRouter<O, S>
 where
     S: Send + Clone + Debug,
+    O: Observer + Send + Sync + Clone + 'static,
 {
-    pub fn new_with_state(state: S) -> Self {
+    pub fn new(state: S, db: O) -> Self {
         Self {
             inner: Router::new(),
             state: Arc::new(Mutex::new(state)),
-            observers: HashMap::new(),
+            db,
         }
     }
 
+    pub async fn register_observer(&mut self, path: String, sender: Arc<Sender<Value>>) {
+        self.db.register(path, sender).await;
+    }
+
+    pub async fn unregister_observer(&mut self, path: String) {
+        self.db.unregister(path).await;
+    }
+
+    pub async fn backend_write(&mut self, path: String, payload: Value) {
+        self.db.write(path, payload).await;
+    }
+
+    pub async fn backend_read(&mut self, path: String) -> Option<Value> {
+        self.db.read(path).await
+    }
+
     pub fn add(&mut self, route: &str, handler: RouteHandler<S>) {
-        self.inner.add(route, handler);
+        // Check if route already exists
+        match self.inner.recognize(route) {
+            Ok(r) => {
+                let mut r = (**r.handler()).clone();
+                r.insert(handler.method.into(), handler);
+                self.inner.add(route, r);
+            }
+            Err(_) => {
+                let mut r = HashMap::new();
+                r.insert(handler.method.into(), handler);
+                self.inner.add(route, r);
+            }
+        };
     }
 
     pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Handler<S>> {
@@ -87,12 +101,18 @@ where
             Ok(matched) => {
                 let handler = matched.handler();
 
-                log::debug!("Matched route: {:?}", matched);
+                let reqtype: RequestTypeWrapper = r.get_method().into();
 
-                if handler.method == *r.get_method() {
-                    Some(handler.handler.clone())
-                } else {
-                    None
+                log::debug!("Matched route: {:?}", matched);
+                match handler.get(&reqtype) {
+                    Some(h) => {
+                        log::debug!("Matched handler: {:?}", h);
+                        Some(h.handler.clone())
+                    }
+                    None => {
+                        log::debug!("No handler found");
+                        None
+                    }
                 }
             }
             Err(e) => {
@@ -103,7 +123,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CoapumRequest<Endpoint> {
     pub message: Packet,
     code: RequestType,
@@ -165,9 +185,10 @@ pub fn create_error_response(
     Box::pin(async move { Ok(response) })
 }
 
-impl<S> Service<CoapumRequest<SocketAddr>> for CoapRouter<S>
+impl<O, S> Service<CoapumRequest<SocketAddr>> for CoapRouter<O, S>
 where
     S: Debug + Send + Clone + Sync + 'static,
+    O: Observer + Send + Sync + Clone + 'static,
 {
     type Response = CoapResponse;
     type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -187,7 +208,8 @@ where
 
         match self.lookup(&request) {
             Some(handler) => {
-                log::debug!("Handler found for route: {:?}", request.get_path());
+                let path = request.get_path();
+                log::debug!("Handler found for route: {:?}", &path);
 
                 if let Some(format) = &request.message.get_content_format() {
                     log::info!("Content format: {:?}", format);
@@ -203,8 +225,8 @@ where
                         _ => handle_payload_extraction::<RawPayload, S>(&request, handler, state),
                     }
                 } else {
-                    log::error!("Unsupported content format");
-                    create_error_response(&request, ResponseType::UnsupportedContentFormat)
+                    log::debug!("Content format not declared");
+                    handle_payload_extraction::<RawPayload, S>(&request, handler, state)
                 }
             }
             None => {

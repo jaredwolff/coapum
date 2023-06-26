@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
+use serde_json::Value;
 use tokio::sync::{
     mpsc::{channel, Sender},
     Mutex,
@@ -8,19 +9,24 @@ use tower::Service;
 use webrtc_dtls::{config::Config, listener};
 use webrtc_util::{conn::Listener, Conn};
 
-use coap_lite::{CoapRequest, Packet};
+use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType};
 
-use crate::router::{CoapRouter, CoapumRequest};
+use crate::{
+    observer::Observer,
+    router::{CoapRouter, CoapumRequest},
+};
 
 const BUF_SIZE: usize = 8192;
 
-async fn receive<S>(
+async fn receive<O, S>(
     conn: Arc<dyn Conn + Send + Sync>,
     socket_addr: SocketAddr,
-    r: &mut CoapRouter<S>,
+    r: &mut CoapRouter<O, S>,
     identity: Vec<u8>,
+    obs_tx: Arc<Sender<Value>>,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
 {
     let mut b = vec![0u8; BUF_SIZE];
 
@@ -52,6 +58,24 @@ async fn receive<S>(
                 String::from_utf8(request.message.payload.to_vec()).unwrap(),
             );
 
+            // Get path
+            let path = request.get_path().clone();
+            let observe_flag = request.get_observe_flag().clone();
+            let method = request.get_method().clone();
+
+            // Handle observations
+            match (observe_flag, method) {
+                (Some(ObserveOption::Register), RequestType::Get) => {
+                    // register
+                    r.register_observer(path, obs_tx.clone()).await;
+                }
+                (Some(ObserveOption::Deregister), RequestType::Delete) => {
+                    // unregister
+                    r.unregister_observer(path).await;
+                }
+                _ => {}
+            };
+
             // Call the service
             let resp = match r.call(request).await {
                 Ok(r) => r,
@@ -79,13 +103,14 @@ async fn receive<S>(
     }
 }
 
-pub async fn serve<S>(
+pub async fn serve<O, S>(
     addr: String,
     config: Config,
-    router: CoapRouter<S>,
+    router: CoapRouter<O, S>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: Debug + Clone + Send + Sync + 'static, // The shared state needs to be Send and Sync to be shared across threads
+    O: Observer + Send + Sync + 'static,
 {
     let listener = Arc::new(listener::listen(addr.clone(), config).await.unwrap());
     let connections: Arc<Mutex<HashMap<Vec<u8>, Sender<()>>>> =
@@ -117,13 +142,28 @@ where
             tokio::spawn(async move {
                 let (tx, mut rx) = channel::<()>(1);
 
+                // Observers
+                let (obs_tx, mut obs_rx) = channel::<Value>(10);
+                let obs_tx = Arc::new(obs_tx);
+
                 // Insert the channel
                 cons.lock().await.insert(identity.clone(), tx);
 
                 loop {
                     tokio::select! {
+                        notify = obs_rx.recv() => {
+                            if let Some(notify) = notify {
+                                log::info!("Sending data to: {}", socket_addr);
+                                // match conn.send(&notify.message.to_bytes().unwrap()).await{
+                                //     Ok(n) => log::debug!("Wrote {} notification bytes", n),
+                                //     Err(e) => {
+                                //         log::error!("Error: {}", e);
+                                //     }
+                                // }
+                            }
+                        }
                         _ = async {
-                            receive(conn.clone(), socket_addr, &mut router, identity.clone()).await
+                            receive(conn.clone(), socket_addr, &mut router, identity.clone(), obs_tx.clone()).await
                         } => {}
                         _ = rx.recv() => {
                             log::info!("Terminating connection with: {}", socket_addr);

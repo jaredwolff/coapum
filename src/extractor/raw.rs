@@ -1,15 +1,13 @@
 use std::net::SocketAddr;
 
 use crate::router::{CoapumRequest, Request};
-use coap_lite::Packet;
 use serde_json::Value;
 
 use super::FromCoapumRequest;
 
 pub struct RawPayload {
     pub value: Value,
-    pub raw: Packet,
-    pub identity: Vec<u8>,
+    pub raw: CoapumRequest<SocketAddr>,
 }
 
 impl FromCoapumRequest for RawPayload {
@@ -17,13 +15,8 @@ impl FromCoapumRequest for RawPayload {
 
     fn from_coap_request(request: &CoapumRequest<SocketAddr>) -> Result<Self, Self::Error> {
         let value = Value::Null;
-        let raw = request.message.clone();
-        let identity = request.identity.clone();
-        Ok(RawPayload {
-            value,
-            raw,
-            identity,
-        })
+        let raw = request.clone();
+        Ok(RawPayload { value, raw })
     }
 }
 
@@ -32,11 +25,7 @@ impl Request for RawPayload {
         &self.value
     }
 
-    fn get_raw(&self) -> &Packet {
+    fn get_raw(&self) -> &CoapumRequest<SocketAddr> {
         &self.raw
-    }
-
-    fn get_identity(&self) -> &Vec<u8> {
-        &self.identity
     }
 }
