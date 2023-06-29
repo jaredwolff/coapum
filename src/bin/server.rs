@@ -6,6 +6,8 @@ use webrtc_dtls::{
     Error,
 };
 
+use coapum::observer::sled::SledObserver;
+
 use coapum::{
     router::{wrapper::get, CoapRouter, Request, RouterError},
     serve, {CoapResponse, Packet, ResponseType},
@@ -33,7 +35,9 @@ async fn main() {
 
     log::info!("Server!");
 
-    let mut router = CoapRouter::new();
+    let obs = SledObserver::new("coapum.db");
+
+    let mut router = CoapRouter::new((), obs);
     router.add("test", get(test));
 
     // Setup socket

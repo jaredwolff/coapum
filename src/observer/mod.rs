@@ -7,10 +7,33 @@ use tokio::sync::mpsc::Sender;
 #[cfg(feature = "sled-observer")]
 pub mod sled;
 
+#[derive(Debug, Clone)]
+pub struct ObserverValue {
+    pub value: Value,
+    pub path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObserverRequest<E> {
+    pub value: Value,
+    pub path: String,
+    pub source: E,
+}
+
+impl ObserverValue {
+    pub fn to_request<E>(self, source: E) -> ObserverRequest<E> {
+        ObserverRequest {
+            value: self.value,
+            path: self.path,
+            source: source,
+        }
+    }
+}
+
 #[async_trait]
 pub trait Observer: Clone {
     async fn set_id(&mut self, id: String);
-    async fn register(&mut self, path: String, sender: Arc<Sender<Value>>);
+    async fn register(&mut self, path: String, sender: Arc<Sender<ObserverValue>>);
     async fn unregister(&mut self, path: String);
     async fn unregister_all(&mut self);
     async fn write(&mut self, path: String, payload: Value);
@@ -21,7 +44,7 @@ pub trait Observer: Clone {
 #[async_trait]
 impl Observer for () {
     async fn set_id(&mut self, _id: String) {}
-    async fn register(&mut self, _path: String, _sender: Arc<Sender<Value>>) {}
+    async fn register(&mut self, _path: String, _sender: Arc<Sender<ObserverValue>>) {}
     async fn unregister(&mut self, _path: String) {}
     async fn unregister_all(&mut self) {}
     async fn write(&mut self, _path: String, _payload: Value) {}

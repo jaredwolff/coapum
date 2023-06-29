@@ -1,107 +1,21 @@
 use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
-use serde_json::Value;
 use tokio::sync::{
     mpsc::{channel, Sender},
     Mutex,
 };
 use tower::Service;
 use webrtc_dtls::{config::Config, listener};
-use webrtc_util::{conn::Listener, Conn};
+use webrtc_util::conn::Listener;
 
-use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType};
+use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType, ResponseType};
 
 use crate::{
-    observer::Observer,
+    observer::{Observer, ObserverValue},
     router::{CoapRouter, CoapumRequest},
 };
 
 const BUF_SIZE: usize = 8192;
-
-async fn receive<O, S>(
-    conn: Arc<dyn Conn + Send + Sync>,
-    socket_addr: SocketAddr,
-    r: &mut CoapRouter<O, S>,
-    identity: Vec<u8>,
-    obs_tx: Arc<Sender<Value>>,
-) where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
-{
-    let mut b = vec![0u8; BUF_SIZE];
-
-    // Set timeout to 1 hour
-    // TODO: Make this configurable
-    let recv = tokio::time::timeout(Duration::from_secs(60 * 60), conn.recv(&mut b)).await;
-
-    // Timeout handling
-    let recv = match recv {
-        Ok(r) => r,
-        Err(e) => {
-            log::error!("Timeout! Err: {}", e);
-            return;
-        }
-    };
-
-    match recv {
-        Ok(n) => {
-            let packet = Packet::from_bytes(&b[0..n]).unwrap();
-            let request = CoapRequest::from_packet(packet, socket_addr);
-
-            // Convert to wrapper
-            let mut request: CoapumRequest<SocketAddr> = request.into();
-            request.identity = identity.clone();
-
-            log::debug!("Got {} bytes: {:?}", n, request);
-            log::debug!(
-                "Payload: {}",
-                String::from_utf8(request.message.payload.to_vec()).unwrap(),
-            );
-
-            // Get path
-            let path = request.get_path().clone();
-            let observe_flag = request.get_observe_flag().clone();
-            let method = request.get_method().clone();
-
-            // Handle observations
-            match (observe_flag, method) {
-                (Some(ObserveOption::Register), RequestType::Get) => {
-                    // register
-                    r.register_observer(path, obs_tx.clone()).await;
-                }
-                (Some(ObserveOption::Deregister), RequestType::Delete) => {
-                    // unregister
-                    r.unregister_observer(path).await;
-                }
-                _ => {}
-            };
-
-            // Call the service
-            let resp = match r.call(request).await {
-                Ok(r) => r,
-                Err(e) => {
-                    log::error!("Fatal Error: {}", e);
-                    return;
-                }
-            };
-
-            // Get the response
-            let bytes = resp.message.to_bytes().unwrap();
-            log::debug!("Got response: {:?}", resp.message);
-
-            // Write it back
-            match conn.send(&bytes).await {
-                Ok(n) => log::debug!("Wrote {} bytes", n),
-                Err(e) => {
-                    log::error!("Error: {}", e);
-                }
-            };
-        }
-        Err(e) => {
-            log::error!("Error: {}", e);
-        }
-    }
-}
 
 pub async fn serve<O, S>(
     addr: String,
@@ -122,6 +36,7 @@ where
 
             let mut router = router.clone();
             let mut identity = Vec::new();
+            let socket_addr = socket_addr.clone();
 
             // Get PSK Identity and use it as the Client's ID
             if let Some(s) = state {
@@ -135,7 +50,6 @@ where
 
             // Check for old connection and terminate it
             if let Some(tx) = cons.lock().await.get(&identity) {
-                log::info!("Terminating old connection with: {}", socket_addr);
                 tx.send(()).await.unwrap(); // Signal the old connection to terminate
             }
 
@@ -143,28 +57,108 @@ where
                 let (tx, mut rx) = channel::<()>(1);
 
                 // Observers
-                let (obs_tx, mut obs_rx) = channel::<Value>(10);
+                let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
                 let obs_tx = Arc::new(obs_tx);
 
                 // Insert the channel
                 cons.lock().await.insert(identity.clone(), tx);
 
+                // Buffer
+                let mut b = vec![0u8; BUF_SIZE];
+
                 loop {
                     tokio::select! {
+                        // Handling observer..
                         notify = obs_rx.recv() => {
-                            if let Some(notify) = notify {
-                                log::info!("Sending data to: {}", socket_addr);
-                                // match conn.send(&notify.message.to_bytes().unwrap()).await{
-                                //     Ok(n) => log::debug!("Wrote {} notification bytes", n),
-                                //     Err(e) => {
-                                //         log::error!("Error: {}", e);
-                                //     }
-                                // }
+                            if let Some(value) = notify {
+
+                                log::info!("Got notification: {:?}", value);
+
+                                // Convert to request
+                                let req = value.to_request(socket_addr);
+
+                                // Formulate request from Value (i.e. create JSON payload)
+                                match router.call(req).await{
+                                    Ok(resp)=> {
+
+                                        // Check to make sure we don't send error messages since this is server internal
+                                        if *resp.get_status() == ResponseType::BadRequest {
+                                            log::error!("Error: {:?}", resp.message);
+                                            continue;
+                                        }
+
+                                        // Then send..
+                                        log::info!("Sending data to: {}", socket_addr);
+                                        match conn.send(&resp.message.to_bytes().unwrap()).await{
+                                            Ok(n) => log::debug!("Wrote {} notification bytes", n),
+                                            Err(e) => {
+                                                log::error!("Error: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => log::error!("Error: {}", e)
+                                };
                             }
                         }
-                        _ = async {
-                            receive(conn.clone(), socket_addr, &mut router, identity.clone(), obs_tx.clone()).await
-                        } => {}
+                        recv = tokio::time::timeout(Duration::from_secs(60 * 60), conn.recv(&mut b)) => {
+
+                            // Check for timeout
+                            let recv = match recv {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    log::error!("Timeout! Err: {}", e);
+                                    break;
+                                }
+                            };
+
+                            if let Ok(n) = recv {
+                                let packet = Packet::from_bytes(&b[..n]).unwrap();
+                                let request = CoapRequest::from_packet(packet, socket_addr);
+
+                                // Convert to wrapper
+                                let mut request: CoapumRequest<SocketAddr> = request.into();
+                                request.identity = identity.clone();
+
+                                // Get path
+                                let path = request.get_path().clone();
+                                let observe_flag = request.get_observe_flag().clone();
+                                let method = request.get_method().clone();
+
+                                // Handle observations
+                                match (observe_flag, method) {
+                                    (Some(ObserveOption::Register), RequestType::Get) => {
+                                        // register
+                                        router.register_observer(path, obs_tx.clone()).await;
+                                    }
+                                    (Some(ObserveOption::Deregister), RequestType::Delete) => {
+                                        // unregister
+                                        router.unregister_observer(path).await;
+                                    }
+                                    _ => {}
+                                };
+
+                                // Call the service
+                                match router.call(request).await
+                                {
+                                    Ok(resp) => {
+                                      // Get the response
+                                      let bytes = resp.message.to_bytes().unwrap();
+                                      log::debug!("Got response: {:?}", resp.message);
+
+                                      // Write it back
+                                      match conn.send(&bytes).await {
+                                          Ok(n) => log::debug!("Wrote {} bytes", n),
+                                          Err(e) => {
+                                              log::error!("Error: {}", e);
+                                          }
+                                      };
+                                    }
+                                    Err(e)=> {
+                                        log::error!("Error: {}", e);
+                                    }
+                                }
+                            }
+                        }
                         _ = rx.recv() => {
                             log::info!("Terminating connection with: {}", socket_addr);
                             break;

@@ -18,7 +18,7 @@ use crate::extractor::cbor::CborPayload;
 use crate::extractor::handle_payload_extraction;
 use crate::extractor::json::JsonPayload;
 use crate::extractor::raw::RawPayload;
-use crate::observer::Observer;
+use crate::observer::{Observer, ObserverRequest, ObserverValue};
 
 use self::wrapper::{RequestTypeWrapper, RouteHandler};
 
@@ -64,7 +64,7 @@ where
         }
     }
 
-    pub async fn register_observer(&mut self, path: String, sender: Arc<Sender<Value>>) {
+    pub async fn register_observer(&mut self, path: String, sender: Arc<Sender<ObserverValue>>) {
         self.db.register(path, sender).await;
     }
 
@@ -94,6 +94,33 @@ where
                 self.inner.add(route, r);
             }
         };
+    }
+
+    pub fn lookup_observer_handler(&self, path: &str) -> Option<Handler<S>> {
+        match self.inner.recognize(path) {
+            Ok(matched) => {
+                let handler = matched.handler();
+
+                // If it's an observe, get by default
+                let reqtype: RequestTypeWrapper = RequestType::Get.into();
+
+                log::debug!("Matched route: {:?}", matched);
+                match handler.get(&reqtype) {
+                    Some(h) => {
+                        log::debug!("Matched handler: {:?}", h);
+                        Some(h.handler.clone())
+                    }
+                    None => {
+                        log::debug!("No handler found");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Unable to recognize. Err: {}", e);
+                None
+            }
+        }
     }
 
     pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Handler<S>> {
@@ -172,6 +199,16 @@ impl<Endpoint> CoapumRequest<Endpoint> {
     }
 }
 
+pub fn create_observer_error_response(
+    rtype: ResponseType,
+) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>> {
+    let pkt = Packet::default();
+    let mut response = CoapResponse::new(&pkt).unwrap();
+    response.set_status(rtype);
+
+    Box::pin(async move { Ok(response) })
+}
+
 pub fn create_error_response(
     req: &CoapumRequest<SocketAddr>,
     rtype: ResponseType,
@@ -238,6 +275,51 @@ where
 
                 // If no route handler is found, return a not found error
                 create_error_response(&request, ResponseType::BadRequest)
+            }
+        }
+    }
+}
+
+impl<O, S> Service<ObserverRequest<SocketAddr>> for CoapRouter<O, S>
+where
+    S: Debug + Send + Clone + Sync + 'static,
+    O: Observer + Send + Sync + Clone + 'static,
+{
+    type Response = CoapResponse;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future =
+        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        // Assume that the router is always ready.
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: ObserverRequest<SocketAddr>) -> Self::Future {
+        let state = self.state.clone(); // Clone the state so it can be moved into the async block
+
+        match self.lookup_observer_handler(&request.path) {
+            Some(handler) => {
+                log::debug!("Handler found for route: {:?}", &request.path);
+
+                let packet = Packet::default();
+                let raw = CoapRequest::from_packet(packet, request.source);
+
+                let payload = JsonPayload {
+                    value: request.value,
+                    raw: raw.into(),
+                };
+
+                handler(Box::new(payload), state)
+            }
+            None => {
+                log::error!("No observer handler found for: {}", request.path);
+
+                // If no route handler is found, return a not found error
+                create_observer_error_response(ResponseType::BadRequest)
             }
         }
     }

@@ -7,14 +7,14 @@ use tokio::sync::{
     RwLock,
 };
 
-use super::Observer;
+use super::{Observer, ObserverValue};
 
 #[derive(Clone)]
 pub struct SledObserver {
     pub db: sled::Db,
     id: String,
     channel: Option<Sender<()>>,
-    channels: Arc<RwLock<HashMap<String, Arc<Sender<Value>>>>>,
+    channels: Arc<RwLock<HashMap<String, Arc<Sender<ObserverValue>>>>>,
 }
 
 impl SledObserver {
@@ -34,7 +34,7 @@ impl Observer for SledObserver {
         self.id = id;
     }
 
-    async fn register(&mut self, path: String, sender: Arc<Sender<Value>>) {
+    async fn register(&mut self, path: String, sender: Arc<Sender<ObserverValue>>) {
         // Add to channels
         self.channels.write().await.insert(path.clone(), sender);
 
@@ -79,8 +79,14 @@ impl Observer for SledObserver {
 
                                             // Get the pointed value
                                             if let Some(value) = value.pointer(&path) {
+
+                                                let out = ObserverValue{
+                                                    value: value.clone(),
+                                                    path: path.clone()
+                                                };
+
                                                 // Send the value..
-                                                let _ = sender.send(value.clone()).await;
+                                                let _ = sender.send(out).await;
                                             }
 
                                         }
@@ -281,11 +287,12 @@ mod tests {
         observer.clear().await;
 
         // Channel and register
-        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ObserverValue>(10);
 
         let fut = tokio::spawn(async move {
             if let Some(r) = rx.recv().await {
-                assert_eq!(r, json!({"test_key": "test_value"}));
+                assert_eq!(r.value, json!({"test_key": "test_value"}));
+                assert_eq!(r.path, "/observe_and_write".to_string());
             }
         });
 
