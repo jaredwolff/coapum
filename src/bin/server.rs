@@ -42,10 +42,8 @@ async fn main() {
 
     // Setup socket
     let addr = "127.0.0.1:5684";
-    let cfg = Config {
+    let dtls_cfg = Config {
         psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
-            // TODO: actually look this up somewhere
-
             log::info!(
                 "Client's hint: {}",
                 String::from_utf8(hint.to_vec()).unwrap()
@@ -60,6 +58,12 @@ async fn main() {
         psk_identity_hint: Some("coapum server".as_bytes().to_vec()),
         cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
         extended_master_secret: ExtendedMasterSecretType::Require,
+        ..Default::default()
+    };
+
+    // Server config
+    let cfg = coapum::config::Config {
+        dtls_cfg,
         ..Default::default()
     };
 

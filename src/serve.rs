@@ -5,12 +5,13 @@ use tokio::sync::{
     Mutex,
 };
 use tower::Service;
-use webrtc_dtls::{config::Config, listener};
+use webrtc_dtls::listener;
 use webrtc_util::conn::Listener;
 
 use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType, ResponseType};
 
 use crate::{
+    config::Config,
     observer::{Observer, ObserverValue},
     router::{CoapRouter, CoapumRequest},
 };
@@ -26,7 +27,11 @@ where
     S: Debug + Clone + Send + Sync + 'static, // The shared state needs to be Send and Sync to be shared across threads
     O: Observer + Send + Sync + 'static,
 {
-    let listener = Arc::new(listener::listen(addr.clone(), config).await.unwrap());
+    let listener = Arc::new(
+        listener::listen(addr.clone(), config.dtls_cfg)
+            .await
+            .unwrap(),
+    );
     let connections: Arc<Mutex<HashMap<Vec<u8>, Sender<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
@@ -37,6 +42,7 @@ where
             let mut router = router.clone();
             let mut identity = Vec::new();
             let socket_addr = socket_addr.clone();
+            let timeout = config.timeout;
 
             // Get PSK Identity and use it as the Client's ID
             if let Some(s) = state {
@@ -100,7 +106,7 @@ where
                                 };
                             }
                         }
-                        recv = tokio::time::timeout(Duration::from_secs(10), conn.recv(&mut b)) => {
+                        recv = tokio::time::timeout(Duration::from_secs(timeout), conn.recv(&mut b)) => {
 
                             // Check for timeout
                             let recv = match recv {
