@@ -25,7 +25,7 @@ impl ObserverValue {
         ObserverRequest {
             value: self.value,
             path: self.path,
-            source: source,
+            source,
         }
     }
 }

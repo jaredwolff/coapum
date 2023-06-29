@@ -124,7 +124,7 @@ where
     }
 
     pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Handler<S>> {
-        match self.inner.recognize(&r.get_path()) {
+        match self.inner.recognize(r.get_path()) {
             Ok(matched) => {
                 let handler = matched.handler();
 
@@ -186,8 +186,8 @@ impl<Endpoint> From<CoapRequest<Endpoint>> for CoapumRequest<Endpoint> {
 }
 
 impl<Endpoint> CoapumRequest<Endpoint> {
-    pub fn get_path(&self) -> String {
-        self.path.clone()
+    pub fn get_path(&self) -> &String {
+        &self.path
     }
 
     pub fn get_method(&self) -> &RequestType {

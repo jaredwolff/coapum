@@ -29,3 +29,58 @@ impl Request for RawPayload {
         &self.raw
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
+    use coap_lite::Packet;
+
+    use super::*;
+    use crate::CoapRequest;
+
+    #[test]
+    fn test_from_coap_request() {
+        let mut pkt = Packet::new();
+        pkt.payload = "Test".as_bytes().to_vec();
+
+        let request = CoapRequest::from_packet(
+            pkt,
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0)),
+        );
+        let raw_payload = RawPayload::from_coap_request(&request.into()).unwrap();
+
+        assert_eq!(raw_payload.value, Value::Null);
+    }
+
+    #[test]
+    fn test_get_value() {
+        let request = CoapRequest::from_packet(
+            Packet::new(),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0)),
+        );
+
+        let raw_payload = RawPayload {
+            value: Value::Null,
+            raw: request.into(),
+        };
+        assert_eq!(*raw_payload.get_value(), Value::Null);
+    }
+
+    #[test]
+    fn test_get_raw() {
+        let mut pkt = Packet::new();
+        pkt.payload = "Test".as_bytes().to_vec();
+
+        let request = CoapRequest::from_packet(
+            pkt,
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0)),
+        );
+        let raw_payload = RawPayload::from_coap_request(&request.into()).unwrap();
+
+        assert_eq!(
+            raw_payload.get_raw().message.payload,
+            "Test".as_bytes().to_vec()
+        );
+    }
+}

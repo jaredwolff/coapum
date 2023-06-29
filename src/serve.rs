@@ -41,7 +41,6 @@ where
 
             let mut router = router.clone();
             let mut identity = Vec::new();
-            let socket_addr = socket_addr.clone();
             let timeout = config.timeout;
 
             // Get PSK Identity and use it as the Client's ID
@@ -130,8 +129,8 @@ where
 
                                 // Get path
                                 let path = request.get_path().clone();
-                                let observe_flag = request.get_observe_flag().clone();
-                                let method = request.get_method().clone();
+                                let observe_flag = *request.get_observe_flag();
+                                let method = *request.get_method();
 
                                 // Handle observations
                                 match (observe_flag, method) {

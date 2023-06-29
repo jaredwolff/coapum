@@ -78,7 +78,7 @@ impl Observer for SledObserver {
                                         for (path,sender) in channels.read().await.iter() {
 
                                             // Get the pointed value
-                                            if let Some(value) = value.pointer(&path) {
+                                            if let Some(value) = value.pointer(path) {
 
                                                 let out = ObserverValue{
                                                     value: value.clone(),
@@ -148,7 +148,7 @@ impl Observer for SledObserver {
 
             match value {
                 Ok(value) => {
-                    let mut merged_value = value.clone();
+                    let mut merged_value = value;
 
                     // Perform merge
                     super::merge_json(&mut merged_value, &new_value);
