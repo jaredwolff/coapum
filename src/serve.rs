@@ -50,7 +50,7 @@ where
 
             // Check for old connection and terminate it
             if let Some(tx) = cons.lock().await.get(&identity) {
-                tx.send(()).await.unwrap(); // Signal the old connection to terminate
+                let _ = tx.send(()).await; // Signal the old connection to terminate
             }
 
             tokio::spawn(async move {
@@ -100,13 +100,16 @@ where
                                 };
                             }
                         }
-                        recv = tokio::time::timeout(Duration::from_secs(60 * 60), conn.recv(&mut b)) => {
+                        recv = tokio::time::timeout(Duration::from_secs(10), conn.recv(&mut b)) => {
 
                             // Check for timeout
                             let recv = match recv {
                                 Ok(r) => r,
                                 Err(e) => {
                                     log::error!("Timeout! Err: {}", e);
+
+                                    // Since we timed out remove:
+                                    let _ = cons.lock().await.remove(&identity);
                                     break;
                                 }
                             };
@@ -165,6 +168,8 @@ where
                         }
                     }
                 }
+
+                log::info!("Terminated: {}", &socket_addr);
             });
         }
     }
