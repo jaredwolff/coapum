@@ -54,8 +54,10 @@ where
             let cons = connections.clone();
 
             // Check for old connection and terminate it
-            if let Some(tx) = cons.lock().await.get(&identity) {
-                let _ = tx.send(()).await; // Signal the old connection to terminate
+            {
+                if let Some(tx) = cons.lock().await.get(&identity) {
+                    let _ = tx.send(()).await; // Signal the old connection to terminate
+                }
             }
 
             tokio::spawn(async move {
@@ -66,7 +68,9 @@ where
                 let obs_tx = Arc::new(obs_tx);
 
                 // Insert the channel
-                cons.lock().await.insert(identity.clone(), tx);
+                {
+                    cons.lock().await.insert(identity.clone(), tx);
+                }
 
                 // Buffer
                 let mut b = vec![0u8; BUF_SIZE];
