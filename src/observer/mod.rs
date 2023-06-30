@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde_json::{map::Entry, Value};
 use tokio::sync::mpsc::Sender;
 
+pub mod memory;
 #[cfg(feature = "sled-observer")]
 pub mod sled;
 
