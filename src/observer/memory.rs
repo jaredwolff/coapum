@@ -74,8 +74,10 @@ impl Observer for MemObserver {
             new_value
         };
 
+        let channels = { self.channels.read().await };
+
         // Callback if there were differences
-        for (path, sender) in self.channels.read().await.iter() {
+        for (path, sender) in channels.iter() {
             let current_value = current_value.pointer(path);
             let incoming_value = value.pointer(path);
 

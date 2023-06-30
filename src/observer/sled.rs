@@ -36,7 +36,9 @@ impl Observer for SledObserver {
 
     async fn register(&mut self, path: String, sender: Arc<Sender<ObserverValue>>) {
         // Add to channels
-        self.channels.write().await.insert(path.clone(), sender);
+        {
+            self.channels.write().await.insert(path.clone(), sender);
+        }
 
         // Check if task exists. Theree should only be one per observer
         if self.channel.is_none() {
@@ -74,8 +76,13 @@ impl Observer for SledObserver {
                                 // Make sure the value is valid JSON
                                 match value {
                                     Ok(value) => {
+
+                                        let channels = {
+                                            channels.read().await
+                                        };
+
                                         // Iterate through all subscribed channels
-                                        for (path,sender) in channels.read().await.iter() {
+                                        for (path,sender) in channels.iter() {
 
                                             // Get the pointed value
                                             if let Some(value) = value.pointer(path) {
@@ -108,10 +115,14 @@ impl Observer for SledObserver {
 
     async fn unregister(&mut self, path: String) {
         // Remove single entry
-        self.channels.write().await.remove(&path);
+        {
+            self.channels.write().await.remove(&path);
+        }
+
+        let channels = { self.channels.read().await };
 
         // If channels is empty stop task
-        if self.channels.read().await.is_empty() {
+        if channels.is_empty() {
             if let Some(channel) = &self.channel {
                 let _ = channel.send(()).await;
             }
@@ -122,7 +133,9 @@ impl Observer for SledObserver {
 
     async fn unregister_all(&mut self) {
         // Remove all entries
-        self.channels.write().await.clear();
+        {
+            self.channels.write().await.clear();
+        }
 
         // Cancel task
         if let Some(channel) = &self.channel {
