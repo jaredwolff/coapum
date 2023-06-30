@@ -108,7 +108,7 @@ where
                 match handler.get(&reqtype) {
                     Some(h) => {
                         log::debug!("Matched handler: {:?}", h);
-                        Some(h.handler.clone())
+                        h.observe_handler.clone()
                     }
                     None => {
                         log::debug!("No handler found");
