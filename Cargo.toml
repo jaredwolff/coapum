@@ -28,7 +28,9 @@ webrtc-util = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jare
 
 # Optional
 sled = { version = "0.34.7", optional = true }
-lazy_static = { version = "1.4.0", optional = true }
 
 # webrtc-dtls = { path = "../webrtc/dtls" }
 # webrtc-util = { path = "../webrtc/util" }
+
+[dev-dependencies]
+lazy_static = { version = "1.4.0" }

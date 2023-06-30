@@ -41,7 +41,7 @@ pub type Handler<S> = Arc<
 >;
 
 #[derive(Clone)]
-pub struct CoapRouter<O = (), S = ()>
+pub struct CoapRouter<O, S>
 where
     S: Clone + Debug,
     O: Observer,

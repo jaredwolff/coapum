@@ -8,10 +8,12 @@ use tokio::sync::Mutex;
 use super::RouteHandler;
 use super::{Request, RouterError};
 
-pub fn get<S, F, Fut>(f: F, o: F) -> RouteHandler<S>
+pub fn get<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
-    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
+    G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
+    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -25,10 +27,12 @@ where
     }
 }
 
-pub fn put<S, F, Fut>(f: F, o: F) -> RouteHandler<S>
+pub fn put<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
-    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
+    G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
+    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -42,10 +46,12 @@ where
     }
 }
 
-pub fn post<S, F, Fut>(f: F, o: F) -> RouteHandler<S>
+pub fn post<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
-    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
+    G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
+    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -59,10 +65,12 @@ where
     }
 }
 
-pub fn delete<S, F, Fut>(f: F, o: F) -> RouteHandler<S>
+pub fn delete<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
-    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
+    G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
+    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -76,10 +84,12 @@ where
     }
 }
 
-pub fn unknown<S, F, Fut>(f: F, o: F) -> RouteHandler<S>
+pub fn unknown<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
-    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
+    G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
+    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
