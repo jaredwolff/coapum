@@ -13,7 +13,6 @@ use coapum::{
     serve, {CoapResponse, Packet, ResponseType},
 };
 
-const IDENTITY: &str = "goobie!";
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
 async fn test<S>(payload: Box<dyn Request>, _state: S) -> Result<CoapResponse, RouterError> {
@@ -49,11 +48,7 @@ async fn main() {
                 String::from_utf8(hint.to_vec()).unwrap()
             );
 
-            if hint.eq(IDENTITY.as_bytes()) {
-                Ok(PSK.to_vec())
-            } else {
-                Err(Error::ErrClientCertificateNotVerified)
-            }
+            Ok(PSK.to_vec())
         })),
         psk_identity_hint: Some("coapum server".as_bytes().to_vec()),
         cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
