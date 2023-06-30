@@ -324,3 +324,97 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        observer::memory::MemObserver,
+        router::wrapper::{get, observer},
+    };
+
+    use super::*;
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_register_observer() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut router = CoapRouter::new((), MemObserver::new());
+        router
+            .register_observer("/test".to_string(), Arc::new(tx))
+            .await;
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        router
+            .backend_write("/test".to_string(), Value::Number(1.into()))
+            .await;
+
+        let value = rx.recv().await.unwrap();
+        assert_eq!(value.path, "/test");
+        assert_eq!(value.value, Value::Number(1.into()));
+    }
+
+    #[tokio::test]
+    async fn test_unregister_observer() {
+        let (tx, _rx) = mpsc::channel(1);
+        let mut router = CoapRouter::new((), MemObserver::new());
+        router
+            .register_observer("/test".to_string(), Arc::new(tx))
+            .await;
+        router.unregister_observer("/test".to_string()).await;
+        // No assertion, just checking that it doesn't panic
+    }
+
+    #[tokio::test]
+    async fn test_backend_write_and_read() {
+        let mut router = CoapRouter::new((), MemObserver::new());
+        router
+            .backend_write("/test".to_string(), Value::Number(1.into()))
+            .await;
+
+        // Make sure they're equal
+        if let Some(result) = router.backend_read("/test".to_string()).await {
+            assert_eq!(result, Value::Number(1.into()));
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn test_add_and_lookup() {
+        let mut router = CoapRouter::new((), MemObserver::new());
+        router.add(
+            "/test",
+            get(|_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) }),
+        );
+
+        let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
+        request.set_method(RequestType::Get);
+        request.set_path("test");
+        request
+            .message
+            .set_content_format(ContentFormat::ApplicationJSON);
+        let request: CoapumRequest<SocketAddr> = request.into();
+
+        assert!(router.lookup(&request).is_some());
+    }
+
+    #[test]
+    fn test_add_and_lookup_observer_handler() {
+        let mut router = CoapRouter::new((), MemObserver::new());
+        router.add(
+            "/test",
+            observer::get(
+                |_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) },
+                |_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) },
+            ),
+        );
+
+        let result = router.lookup_observer_handler("/test");
+        assert!(result.is_some());
+
+        let result = router.lookup_observer_handler("/tset");
+        assert!(result.is_none());
+    }
+
+}
