@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use super::FromCoapumRequest;
 
+#[derive(Debug, Clone)]
 pub struct RawPayload {
     pub value: Value,
     pub raw: CoapumRequest<SocketAddr>,

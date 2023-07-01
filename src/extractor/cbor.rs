@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use super::FromCoapumRequest;
 
+#[derive(Debug, Clone)]
 pub struct CborPayload {
     pub value: Value,
     pub raw: CoapumRequest<SocketAddr>,
