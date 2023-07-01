@@ -400,6 +400,11 @@ mod tests {
         let request: CoapumRequest<SocketAddr> = request.into();
 
         assert!(router.lookup(&request).is_some());
+
+        let mut request = request.clone();
+        request.path = "tset".to_string();
+
+        assert!(router.lookup(&request).is_none());
     }
 
     #[test]
