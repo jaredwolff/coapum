@@ -328,5 +328,23 @@ mod tests {
             .await;
 
         let _ = fut.await;
+
+        // Unregister
+        observer.unregister("/observe_and_write".to_string()).await;
+        assert!(!observer
+            .channels
+            .read()
+            .await
+            .contains_key(&"/observe_and_write".to_string()));
+        assert!(observer.channel.is_none());
+
+        observer
+            .register("/observe_and_write".to_string(), Arc::new(tx.clone()))
+            .await;
+
+        // Unregister all
+        observer.unregister_all().await;
+        assert!(observer.channels.read().await.is_empty());
+        assert!(observer.channel.is_none());
     }
 }
