@@ -31,6 +31,28 @@ pub trait Request: Send {
     fn get_raw(&self) -> &CoapumRequest<SocketAddr>;
 }
 
+/// Represents a type alias for an asynchronous handler function in `coapum`.
+///
+/// This handler is responsible for processing incoming requests and returning
+/// a `Future` that resolves to a `Result` containing a `CoapResponse` or a `RouterError`.
+///
+/// # Type Parameters
+///
+/// * `S`: The shared state type that is used across handlers. The state is protected by
+///   a mutex to ensure thread safety. This allows concurrent requests to safely access
+///   and mutate shared state.
+///
+/// # Function Parameters
+///
+/// * `Box<dyn Request>`: A boxed dynamic trait object representing the incoming request. Typically a JsonPayload.
+/// * `Arc<Mutex<S>>`: An atomic reference-counted smart pointer wrapping the Mutex-protected shared state.
+///
+/// # Returns
+///
+/// * The handler returns a pinned, boxed Future which will resolve to a `Result`.
+///   The `Result` will either contain the CoAP response (`CoapResponse`)
+///   or an error (`RouterError`) from the router.
+///
 pub type Handler<S> = Arc<
     dyn Fn(
             Box<dyn Request>,
@@ -40,6 +62,21 @@ pub type Handler<S> = Arc<
         + Sync,
 >;
 
+/// The CoapRouter is a struct responsible for managing routes, shared state and an observer database.
+///
+/// It provides methods for registering and unregistering observers, reading and writing to the backend,
+/// and for adding and looking up routes and handlers. CoapRouter should be cloned per connection.
+///
+/// # Type Parameters
+///
+/// * `O`: The type that implements the Observer trait.
+/// * `S`: The shared state type. It must implement the `Clone` and `Debug` traits.
+///
+/// # Fields
+///
+/// * `inner`: The `Router` object responsible for matching routes to handlers.
+/// * `state`: The shared state object accessible to all handlers. It is wrapped in an Arc and a Mutex for shared and exclusive access.
+/// * `db`: The observer database.
 #[derive(Clone)]
 pub struct CoapRouter<O, S>
 where
@@ -51,11 +88,19 @@ where
     db: O,
 }
 
+/// Provides methods for creating a new CoapRouter, registering and unregistering observers,
+/// performing backend reads and writes, and adding and looking up routes and handlers.
+///
+/// # Type Parameters
+///
+/// * `O`: The type that implements the Observer trait. It must also implement the `Send`, `Sync`, `Clone`, and `'static` traits.
+/// * `S`: The shared state type. It must implement the `Send`, `Clone`, and `Debug` traits.
 impl<O, S> CoapRouter<O, S>
 where
     S: Send + Clone + Debug,
     O: Observer + Send + Sync + Clone + 'static,
 {
+    /// Constructs a new `CoapRouter` with given shared state and observer database.
     pub fn new(state: S, db: O) -> Self {
         Self {
             inner: Router::new(),
@@ -64,22 +109,27 @@ where
         }
     }
 
+    /// Registers an observer for a given path.
     pub async fn register_observer(&mut self, path: String, sender: Arc<Sender<ObserverValue>>) {
         self.db.register(path, sender).await;
     }
 
+    /// Unregisters an observer from a given path.
     pub async fn unregister_observer(&mut self, path: String) {
         self.db.unregister(path).await;
     }
 
+    /// Writes a payload to a path in the backend.
     pub async fn backend_write(&mut self, path: String, payload: Value) {
         self.db.write(path, payload).await;
     }
 
+    /// Reads a value from a path in the backend.
     pub async fn backend_read(&mut self, path: String) -> Option<Value> {
         self.db.read(path).await
     }
 
+    /// Adds a route handler for a given route.
     pub fn add(&mut self, route: &str, handler: RouteHandler<S>) {
         // Check if route already exists
         match self.inner.recognize(route) {
@@ -96,6 +146,7 @@ where
         };
     }
 
+    /// Looks up an observer handler for a given path.
     pub fn lookup_observer_handler(&self, path: &str) -> Option<Handler<S>> {
         match self.inner.recognize(path) {
             Ok(matched) => {
@@ -123,6 +174,7 @@ where
         }
     }
 
+    /// Looks up a handler for a given request.
     pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Handler<S>> {
         match self.inner.recognize(r.get_path()) {
             Ok(matched) => {
@@ -150,6 +202,13 @@ where
     }
 }
 
+/// `CoapumRequest` is a structure that represents a request in the CoAP (Constrained Application Protocol) communication.
+/// It includes the packet message, code, path, optional observe flag, optional response, the source of the request, and an identity vector.
+/// The identity is derived from the DTLS context.
+///
+/// # Type Parameters
+///
+/// * `Endpoint`: Represents the type of the endpoint from which the request is coming. (Typically SocketAddr)
 #[derive(Debug, Clone)]
 pub struct CoapumRequest<Endpoint> {
     pub message: Packet,
@@ -161,6 +220,7 @@ pub struct CoapumRequest<Endpoint> {
     pub identity: Vec<u8>,
 }
 
+/// An implementation block that provides methods to convert `CoapRequest` into `CoapumRequest` and get various details of the request.
 impl<Endpoint> From<CoapRequest<Endpoint>> for CoapumRequest<Endpoint> {
     fn from(req: CoapRequest<Endpoint>) -> Self {
         let path = req.get_path();
@@ -186,19 +246,24 @@ impl<Endpoint> From<CoapRequest<Endpoint>> for CoapumRequest<Endpoint> {
 }
 
 impl<Endpoint> CoapumRequest<Endpoint> {
+    /// Returns the path of the `CoapumRequest`.
     pub fn get_path(&self) -> &String {
         &self.path
     }
 
+    /// Returns the method of the `CoapumRequest`.
     pub fn get_method(&self) -> &RequestType {
         &self.code
     }
 
+    /// Returns the observe flag of the `CoapumRequest`.
     pub fn get_observe_flag(&self) -> &Option<ObserveOption> {
         &self.observe_flag
     }
 }
 
+/// A helper function to create an observer error response with a specified `ResponseType`. The resulting `CoapResponse` will have
+/// the status set to the given `ResponseType`.
 pub fn create_observer_error_response(
     rtype: ResponseType,
 ) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>> {
@@ -209,6 +274,8 @@ pub fn create_observer_error_response(
     Box::pin(async move { Ok(response) })
 }
 
+/// A helper function to create an error response from a `CoapumRequest`. The resulting `CoapResponse` will have
+/// the message ID and token set from the `CoapumRequest` and the status set to the given `RequestType`.
 pub fn create_error_response(
     req: &CoapumRequest<SocketAddr>,
     rtype: ResponseType,
