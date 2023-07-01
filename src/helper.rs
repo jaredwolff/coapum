@@ -24,3 +24,21 @@ pub fn convert_json_to_cbor(json: &str) -> Result<Vec<u8>, Box<dyn std::error::E
 
     Ok(buffer)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_json_to_cbor() {
+        let json = r#"{"age": 30}"#;
+        let expected_cbor = vec![
+            0xa1, // map(2)
+            0x63, 0x61, 0x67, 0x65, // text(4): "age"
+            0x18, 0x1e, // unsigned(30)
+        ];
+
+        let result = convert_json_to_cbor(json).unwrap();
+        assert_eq!(result, expected_cbor);
+    }
+}
