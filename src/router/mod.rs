@@ -333,7 +333,10 @@ mod tests {
     };
 
     use super::*;
-    use std::time::Duration;
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        time::Duration,
+    };
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -417,4 +420,85 @@ mod tests {
         assert!(result.is_none());
     }
 
+    #[tokio::test]
+    async fn test_coapum_request() {
+        let mut router = CoapRouter::new((), ());
+        router.add(
+            "test",
+            get(|_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) }),
+        );
+
+        let mut request = CoapRequest::new();
+        request.set_method(RequestType::Get);
+        request.set_path("/test");
+
+        let identity = vec![0x01, 0x02, 0x03];
+
+        let mut request: CoapumRequest<SocketAddr> = request.into();
+        request.identity = identity.clone();
+
+        // Call the router with a GET request
+        let response = router.call(request).await.unwrap();
+
+        // Check that the response has a Valid status
+        assert_eq!(*response.get_status(), ResponseType::Content);
+
+        // Check that the response message is empty
+        assert!(response.message.payload.is_empty());
+
+        // Call the router with a DELETE request
+        let mut request = CoapRequest::new();
+        request.set_method(RequestType::Delete);
+        request.set_path("/test");
+
+        let mut request: CoapumRequest<SocketAddr> = request.into();
+        request.identity = identity.clone();
+
+        let response = router.call(request).await.unwrap();
+
+        // Check that the response has a Valid status
+        assert_eq!(*response.get_status(), ResponseType::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn test_observe_request() {
+        let socket_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 5683);
+
+        let mut router = CoapRouter::new((), ());
+        router.add(
+            "test",
+            observer::get(
+                |_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) },
+                |_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) },
+            ),
+        );
+
+        let request = ObserverRequest {
+            path: "/test".to_string(),
+            value: Value::Null,
+            source: socket_addr,
+        };
+
+        let response = router.call(request).await.unwrap();
+
+        // Check that the response has a Valid status
+        assert_eq!(*response.get_status(), ResponseType::Content);
+
+        // Check that the response message is empty
+        assert!(response.message.payload.is_empty());
+
+        let request = ObserverRequest {
+            path: "/another".to_string(),
+            value: Value::Null,
+            source: socket_addr,
+        };
+
+        let response = router.call(request).await.unwrap();
+
+        // Check that the response has a Valid status
+        assert_eq!(*response.get_status(), ResponseType::BadRequest);
+
+        // Check that the response message is empty
+        assert!(response.message.payload.is_empty());
+    }
 }
