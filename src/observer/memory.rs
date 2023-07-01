@@ -23,6 +23,12 @@ impl MemObserver {
     }
 }
 
+impl Default for MemObserver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Observer for MemObserver {
     async fn set_id(&mut self, id: String) {

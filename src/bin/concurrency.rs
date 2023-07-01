@@ -26,10 +26,9 @@ async fn main() {
     // Setup socket
     let addr = "127.0.0.1:0";
     let saddr: &str = "127.0.0.1:5684";
-    let mut identity_count = 0;
     let mut handles = Vec::new();
 
-    for _ in 0..CONCURRENCY {
+    for (identity_count, _) in (0..CONCURRENCY).enumerate() {
         let handle = tokio::spawn(async move {
             let conn = Arc::new(UdpSocket::bind(addr).await.unwrap());
             conn.connect(saddr).await.unwrap();
@@ -92,8 +91,6 @@ async fn main() {
         });
 
         handles.push(handle);
-
-        identity_count += 1;
     }
 
     // Wait for all clients to finish
