@@ -267,7 +267,7 @@ where
                 }
             }
             None => {
-                log::error!(
+                log::info!(
                     "No handler found for method: {:#?} to: {:?}",
                     request.get_method(),
                     request.get_path()
@@ -316,7 +316,7 @@ where
                 handler(Box::new(payload), state)
             }
             None => {
-                log::error!("No observer handler found for: {}", request.path);
+                log::info!("No observer handler found for: {}", request.path);
 
                 // If no route handler is found, return a not found error
                 create_observer_error_response(ResponseType::BadRequest)
