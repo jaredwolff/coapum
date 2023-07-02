@@ -6,14 +6,17 @@ use tokio::sync::{mpsc::Sender, RwLock};
 
 use super::{Observer, ObserverValue};
 
+
+/// A memory-based observer that stores data in a HashMap.
 #[derive(Clone)]
 pub struct MemObserver {
-    db: HashMap<String, Value>,
-    id: String,
-    channels: Arc<RwLock<HashMap<String, Arc<Sender<ObserverValue>>>>>,
+    db: HashMap<String, Value>, // The HashMap that stores the data.
+    id: String, // The ID of the observer.
+    channels: Arc<RwLock<HashMap<String, Arc<Sender<ObserverValue>>>>>, // The channels that the observer is registered to.
 }
 
 impl MemObserver {
+    /// Creates a new instance of `MemObserver`.
     pub fn new() -> Self {
         Self {
             db: HashMap::new(),
@@ -31,29 +34,33 @@ impl Default for MemObserver {
 
 #[async_trait]
 impl Observer for MemObserver {
+    /// Sets the ID of the observer.
     async fn set_id(&mut self, id: String) {
         self.id = id;
     }
 
+    /// Registers the observer to a channel.
     async fn register(&mut self, path: String, sender: Arc<Sender<ObserverValue>>) {
         // Add to channels
         self.channels.write().await.insert(path.clone(), sender);
     }
 
+    /// Unregisters the observer from a channel.
     async fn unregister(&mut self, path: String) {
         // Remove single entry
         self.channels.write().await.remove(&path);
     }
 
+    /// Unregisters the observer from all channels.
     async fn unregister_all(&mut self) {
         // Remove all entries
         self.channels.write().await.clear();
     }
 
-    /// Function includes a read and then write since we want to merge
+    /// Writes data to the observer.
     ///
     /// Assumes if there is a path then payload is the value at that path
-    /// If no path it's the whole object..
+    /// If no path it's the whole object.
     async fn write(&mut self, path: String, payload: Value) {
         // Set value at correct provided path
         let new_value = super::path_to_json(&path, &payload);
@@ -112,6 +119,7 @@ impl Observer for MemObserver {
         let _ = self.db.insert(self.id.clone(), value);
     }
 
+    /// Reads data from the observer.
     async fn read(&mut self, path: String) -> Option<Value> {
         match self.db.get(&self.id) {
             Some(value) => {
@@ -128,6 +136,7 @@ impl Observer for MemObserver {
         }
     }
 
+    /// Clears the observer.
     async fn clear(&mut self) {
         let _ = self.db.remove(&self.id);
     }

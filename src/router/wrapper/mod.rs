@@ -11,10 +11,12 @@ use super::{Handler, Request, RouterError};
 
 pub mod observer;
 
+/// A wrapper struct for `RequestType` that implements `Hash`, `PartialEq`, and `Eq` traits.
 #[derive(Clone, Copy, Debug)]
 pub struct RequestTypeWrapper(RequestType);
 
 impl std::hash::Hash for RequestTypeWrapper {
+    /// Hashes the `RequestTypeWrapper` instance.
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self.0 {
             RequestType::Get => 0u8.hash(state),
@@ -30,6 +32,7 @@ impl std::hash::Hash for RequestTypeWrapper {
 }
 
 impl PartialEq for RequestTypeWrapper {
+    /// Compares two `RequestTypeWrapper` instances for equality.
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
@@ -38,24 +41,30 @@ impl PartialEq for RequestTypeWrapper {
 impl Eq for RequestTypeWrapper {}
 
 impl From<RequestType> for RequestTypeWrapper {
+    /// Converts a `RequestType` instance to a `RequestTypeWrapper` instance.
     fn from(r: RequestType) -> Self {
         RequestTypeWrapper(r)
     }
 }
 
 impl From<&RequestType> for RequestTypeWrapper {
+    /// Converts a reference to a `RequestType` instance to a `RequestTypeWrapper` instance.
     fn from(r: &RequestType) -> Self {
         RequestTypeWrapper(*r)
     }
 }
 
+/// A struct that represents a route handler.
 #[derive(Clone)]
 pub struct RouteHandler<S>
 where
     S: Clone,
 {
+    /// The handler function for the route.
     pub handler: Handler<S>,
+    /// The handler function for the observe request.
     pub observe_handler: Option<Handler<S>>,
+    /// The request type for the route.
     pub method: RequestType,
 }
 
@@ -63,11 +72,13 @@ impl<S> Debug for RouteHandler<S>
 where
     S: Clone,
 {
+    /// Formats the `RouteHandler` instance for debugging purposes.
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "RouteHandler {{ method: {:?} }}", self.method)
     }
 }
 
+/// Creates a `RouteHandler` instance for a GET request.
 pub fn get<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
@@ -83,6 +94,7 @@ where
     }
 }
 
+/// Creates a `RouteHandler` instance for a PUT request.
 pub fn put<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
@@ -98,6 +110,7 @@ where
     }
 }
 
+/// Creates a `RouteHandler` instance for a POST request.
 pub fn post<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
@@ -113,6 +126,7 @@ where
     }
 }
 
+/// Creates a `RouteHandler` instance for a DELETE request.
 pub fn delete<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
@@ -128,6 +142,7 @@ where
     }
 }
 
+/// Creates a `RouteHandler` instance for an UNKNOWN request.
 pub fn unknown<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,

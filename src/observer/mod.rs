@@ -8,12 +8,14 @@ pub mod memory;
 #[cfg(feature = "sled-observer")]
 pub mod sled;
 
+/// A struct representing an observer value.
 #[derive(Debug, Clone)]
 pub struct ObserverValue {
     pub value: Value,
     pub path: String,
 }
 
+/// A struct representing an observer request.
 #[derive(Debug, Clone)]
 pub struct ObserverRequest<E> {
     pub value: Value,
@@ -22,6 +24,7 @@ pub struct ObserverRequest<E> {
 }
 
 impl ObserverValue {
+    /// Converts an observer value to an observer request.
     pub fn to_request<E>(self, source: E) -> ObserverRequest<E> {
         ObserverRequest {
             value: self.value,
@@ -31,14 +34,22 @@ impl ObserverValue {
     }
 }
 
+/// A trait representing an observer.
 #[async_trait]
 pub trait Observer: Clone {
+    /// Sets the ID of the observer.
     async fn set_id(&mut self, id: String);
+    /// Registers a path with the observer.
     async fn register(&mut self, path: String, sender: Arc<Sender<ObserverValue>>);
+    /// Unregisters a path from the observer.
     async fn unregister(&mut self, path: String);
+    /// Unregisters all paths from the observer.
     async fn unregister_all(&mut self);
+    /// Writes a value to a path.
     async fn write(&mut self, path: String, payload: Value);
+    /// Reads a value from a path.
     async fn read(&mut self, path: String) -> Option<Value>;
+    /// Clears all values from the observer.
     async fn clear(&mut self);
 }
 
@@ -55,6 +66,16 @@ impl Observer for () {
     async fn clear(&mut self) {}
 }
 
+/// Converts a path and value to a JSON object.
+///
+/// # Arguments
+///
+/// * `path` - A string slice representing the path to be converted.
+/// * `value` - A reference to a `serde_json::Value` object representing the value to be converted.
+///
+/// # Returns
+///
+/// A `serde_json::Value` object representing the JSON object created from the path and value.
 pub fn path_to_json(path: &str, value: &Value) -> Value {
     let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
@@ -69,6 +90,12 @@ pub fn path_to_json(path: &str, value: &Value) -> Value {
     current_value
 }
 
+/// Merges two JSON objects.
+///
+/// # Arguments
+///
+/// * `a` - A mutable reference to a `serde_json::Value` object representing the first JSON object to be merged.
+/// * `b` - A reference to a `serde_json::Value` object representing the second JSON object to be merged.
 pub fn merge_json(a: &mut Value, b: &Value) {
     match (a, b) {
         (&mut Value::Object(ref mut a), Value::Object(ref b)) => {

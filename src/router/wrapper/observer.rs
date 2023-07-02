@@ -8,6 +8,16 @@ use tokio::sync::Mutex;
 use super::RouteHandler;
 use super::{Request, RouterError};
 
+/// Creates a new `RouteHandler` for GET requests.
+///
+/// # Arguments
+///
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+///
+/// # Returns
+///
+/// A `RouteHandler` for GET requests.
 pub fn get<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
@@ -27,6 +37,16 @@ where
     }
 }
 
+/// Creates a new `RouteHandler` for PUT requests.
+///
+/// # Arguments
+///
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+///
+/// # Returns
+///
+/// A `RouteHandler` for PUT requests.
 pub fn put<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
@@ -46,6 +66,16 @@ where
     }
 }
 
+/// Creates a new `RouteHandler` for POST requests.
+///
+/// # Arguments
+///
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+///
+/// # Returns
+///
+/// A `RouteHandler` for POST requests.
 pub fn post<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
@@ -65,6 +95,16 @@ where
     }
 }
 
+/// Creates a new `RouteHandler` for DELETE requests.
+///
+/// # Arguments
+///
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+///
+/// # Returns
+///
+/// A `RouteHandler` for DELETE requests.
 pub fn delete<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
@@ -84,6 +124,16 @@ where
     }
 }
 
+/// Creates a new `RouteHandler` for unknown requests.
+///
+/// # Arguments
+///
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+///
+/// # Returns
+///
+/// A `RouteHandler` for unknown requests.
 pub fn unknown<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,

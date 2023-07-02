@@ -28,6 +28,8 @@ use serde_json::Value as JsonValue;
 ///
 /// ```
 /// use serde_json::json;
+/// use coapum::helper::convert_cbor_to_json;
+/// 
 /// let cbor_data: Vec<u8> = vec![0xA1, 0x63, 0x66, 0x6F, 0x6F, 0x63, 0x62, 0x61, 0x72]; // Equivalent to {"foo": "bar"}
 /// let json_value = convert_cbor_to_json(&cbor_data).unwrap();
 /// assert_eq!(json_value, json!({"foo": "bar"}));
@@ -64,6 +66,8 @@ pub fn convert_cbor_to_json(cbor_data: &[u8]) -> serde_json::Result<JsonValue> {
 ///
 /// ```
 /// use serde_json::json;
+/// use coapum::helper::convert_json_to_cbor;
+/// 
 /// let json_string = json!({"foo": "bar"}).to_string();
 /// let cbor_data = convert_json_to_cbor(&json_string).unwrap();
 /// assert_eq!(cbor_data, vec![0xA1, 0x63, 0x66, 0x6F, 0x6F, 0x63, 0x62, 0x61, 0x72]); // Equivalent to {"foo": "bar"}

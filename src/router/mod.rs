@@ -289,16 +289,21 @@ pub fn create_error_response(
     Box::pin(async move { Ok(response) })
 }
 
+/// Implementation of the `Service` trait for `CoapRouter` with `CoapumRequest` as the request type.
 impl<O, S> Service<CoapumRequest<SocketAddr>> for CoapRouter<O, S>
 where
     S: Debug + Send + Clone + Sync + 'static,
     O: Observer + Send + Sync + Clone + 'static,
 {
+    /// The response type for the service.
     type Response = CoapResponse;
+    /// The error type for the service.
     type Error = Box<dyn std::error::Error + Send + Sync>;
+    /// The future type for the service.
     type Future =
         Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
 
+    /// Polls if the service is ready to process requests.
     fn poll_ready(
         &mut self,
         _cx: &mut std::task::Context<'_>,
@@ -307,6 +312,7 @@ where
         std::task::Poll::Ready(Ok(()))
     }
 
+    /// Handles a `CoapumRequest` and returns a future that resolves to a `CoapResponse`.
     fn call(&mut self, request: CoapumRequest<SocketAddr>) -> Self::Future {
         let state = self.state.clone(); // Clone the state so it can be moved into the async block
 
@@ -340,23 +346,28 @@ where
                     request.get_path()
                 );
 
-                // If no route handler is found, return a not found error
+                // If no route handler is found, return a bad request error
                 create_error_response(&request, ResponseType::BadRequest)
             }
         }
     }
 }
 
+/// Implementation of the `Service` trait for `CoapRouter` with `ObserverRequest` as the request type.
 impl<O, S> Service<ObserverRequest<SocketAddr>> for CoapRouter<O, S>
 where
     S: Debug + Send + Clone + Sync + 'static,
     O: Observer + Send + Sync + Clone + 'static,
 {
+    /// The response type for the service.
     type Response = CoapResponse;
+    /// The error type for the service.
     type Error = Box<dyn std::error::Error + Send + Sync>;
+    /// The future type for the service.
     type Future =
         Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
 
+    /// Polls if the service is ready to process requests.
     fn poll_ready(
         &mut self,
         _cx: &mut std::task::Context<'_>,
@@ -365,6 +376,7 @@ where
         std::task::Poll::Ready(Ok(()))
     }
 
+    /// Handles an `ObserverRequest` and returns a future that resolves to a `CoapResponse`.
     fn call(&mut self, request: ObserverRequest<SocketAddr>) -> Self::Future {
         let state = self.state.clone(); // Clone the state so it can be moved into the async block
 
@@ -385,7 +397,7 @@ where
             None => {
                 log::info!("No observer handler found for: {}", request.path);
 
-                // If no route handler is found, return a not found error
+                // If no observer handler is found, return a bad request error
                 create_observer_error_response(ResponseType::BadRequest)
             }
         }
