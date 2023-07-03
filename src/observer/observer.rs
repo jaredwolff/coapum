@@ -82,6 +82,7 @@ pub trait SubscribableDatabase {
     async fn unsubscribe(&mut self, subscriber_id: &str, device_id: &str, path: &str);
 }
 
+#[derive(Clone)]
 struct MemObserver {
     db: Arc<Mutex<HashMap<String, Value>>>,
     subscriptions: Arc<Mutex<Subscriptions>>,
