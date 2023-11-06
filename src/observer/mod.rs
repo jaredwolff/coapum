@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use serde_json::{map::Entry, Value};
@@ -7,6 +7,7 @@ use tokio::sync::mpsc::Sender;
 pub mod memory;
 #[cfg(feature = "sled-observer")]
 pub mod sled;
+pub mod subscriber;
 
 /// A struct representing an observer value.
 #[derive(Debug, Clone)]
@@ -36,34 +37,65 @@ impl ObserverValue {
 
 /// A trait representing an observer.
 #[async_trait]
-pub trait Observer: Clone {
-    /// Sets the ID of the observer.
-    async fn set_id(&mut self, id: String);
+pub trait Observer: Clone + Debug {
+    type Error: Debug;
+
     /// Registers a path with the observer.
-    async fn register(&mut self, path: String, sender: Arc<Sender<ObserverValue>>);
+    async fn register(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        sender: Arc<Sender<ObserverValue>>,
+    ) -> Result<(), Self::Error>;
     /// Unregisters a path from the observer.
-    async fn unregister(&mut self, path: String);
+    async fn unregister(&mut self, device_id: &str, path: &str) -> Result<(), Self::Error>;
     /// Unregisters all paths from the observer.
-    async fn unregister_all(&mut self);
+    async fn unregister_all(&mut self) -> Result<(), Self::Error>;
     /// Writes a value to a path.
-    async fn write(&mut self, path: String, payload: Value);
+    async fn write(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), Self::Error>;
     /// Reads a value from a path.
-    async fn read(&mut self, path: String) -> Option<Value>;
+    async fn read(&mut self, device_id: &str, path: &str) -> Result<Option<Value>, Self::Error>;
     /// Clears all values from the observer.
-    async fn clear(&mut self);
+    async fn clear(&mut self, device_id: &str) -> Result<(), Self::Error>;
 }
 
 #[async_trait]
 impl Observer for () {
-    async fn set_id(&mut self, _id: String) {}
-    async fn register(&mut self, _path: String, _sender: Arc<Sender<ObserverValue>>) {}
-    async fn unregister(&mut self, _path: String) {}
-    async fn unregister_all(&mut self) {}
-    async fn write(&mut self, _path: String, _payload: Value) {}
-    async fn read(&mut self, _path: String) -> Option<Value> {
-        None
+    type Error = ();
+
+    async fn register(
+        &mut self,
+        _device_id: &str,
+        _path: &str,
+        _sender: Arc<Sender<ObserverValue>>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
-    async fn clear(&mut self) {}
+    async fn unregister(&mut self, _device_id: &str, _path: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    async fn unregister_all(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    async fn write(
+        &mut self,
+        _device_id: &str,
+        _path: &str,
+        _payload: &Value,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    async fn read(&mut self, _device_id: &str, _path: &str) -> Result<Option<Value>, Self::Error> {
+        Ok(None)
+    }
+    async fn clear(&mut self, _device_id: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 /// Converts a path and value to a JSON object.

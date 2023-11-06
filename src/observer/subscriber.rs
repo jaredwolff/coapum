@@ -14,6 +14,7 @@ struct Subscriptions {
 }
 
 impl Subscriptions {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -89,6 +90,7 @@ struct MemObserver {
 }
 
 impl MemObserver {
+    #[allow(dead_code)]
     fn new() -> Result<Self, std::io::Error> {
         let db = HashMap::new();
         let subscriptions = Arc::new(Mutex::new(Subscriptions::new()));
@@ -117,7 +119,7 @@ impl SubscribableDatabase for MemObserver {
         };
 
         // New value with path applied
-        let new_value = path_to_json(&path, &new_value);
+        let new_value = path_to_json(path, &new_value);
 
         log::info!("New: {:?}", new_value);
 
@@ -134,7 +136,7 @@ impl SubscribableDatabase for MemObserver {
                 // Compare paths by iterating
                 let subscriptions = self.subscriptions.lock().await;
                 if let Some(paths) = subscriptions.channels.get(device_id) {
-                    for (p, _v) in paths {
+                    for p in paths.keys() {
                         log::info!("Path: {}", p);
 
                         // Get the pointers

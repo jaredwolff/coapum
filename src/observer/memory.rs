@@ -6,12 +6,10 @@ use tokio::sync::{mpsc::Sender, RwLock};
 
 use super::{Observer, ObserverValue};
 
-
 /// A memory-based observer that stores data in a HashMap.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MemObserver {
     db: HashMap<String, Value>, // The HashMap that stores the data.
-    id: String, // The ID of the observer.
     channels: Arc<RwLock<HashMap<String, Arc<Sender<ObserverValue>>>>>, // The channels that the observer is registered to.
 }
 
@@ -21,7 +19,6 @@ impl MemObserver {
         Self {
             db: HashMap::new(),
             channels: Arc::new(RwLock::new(HashMap::new())),
-            id: String::new(),
         }
     }
 }
@@ -32,45 +29,91 @@ impl Default for MemObserver {
     }
 }
 
+use std::fmt;
+
+#[derive(Debug)]
+pub enum MemObserverError {
+    IoError(std::io::Error),
+    IdNotSet,
+}
+
+impl fmt::Display for MemObserverError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            MemObserverError::IoError(err) => write!(f, "IO error: {}", err),
+            MemObserverError::IdNotSet => write!(f, "Device ID must be set before use!"),
+        }
+    }
+}
+
+impl std::error::Error for MemObserverError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            MemObserverError::IoError(err) => Some(err),
+            MemObserverError::IdNotSet => None,
+        }
+    }
+}
+
+// Converting a std::io::Error into a MemObserverError
+impl From<std::io::Error> for MemObserverError {
+    fn from(err: std::io::Error) -> MemObserverError {
+        MemObserverError::IoError(err)
+    }
+}
+
 #[async_trait]
 impl Observer for MemObserver {
-    /// Sets the ID of the observer.
-    async fn set_id(&mut self, id: String) {
-        self.id = id;
-    }
+    type Error = MemObserverError;
 
     /// Registers the observer to a channel.
-    async fn register(&mut self, path: String, sender: Arc<Sender<ObserverValue>>) {
+    async fn register(
+        &mut self,
+        _device_id: &str,
+        path: &str,
+        sender: Arc<Sender<ObserverValue>>,
+    ) -> Result<(), Self::Error> {
         // Add to channels
-        self.channels.write().await.insert(path.clone(), sender);
+        self.channels.write().await.insert(path.to_string(), sender);
+
+        Ok(())
     }
 
     /// Unregisters the observer from a channel.
-    async fn unregister(&mut self, path: String) {
+    async fn unregister(&mut self, _device_id: &str, path: &str) -> Result<(), Self::Error> {
         // Remove single entry
-        self.channels.write().await.remove(&path);
+        self.channels.write().await.remove(path);
+
+        Ok(())
     }
 
     /// Unregisters the observer from all channels.
-    async fn unregister_all(&mut self) {
+    async fn unregister_all(&mut self) -> Result<(), Self::Error> {
         // Remove all entries
         self.channels.write().await.clear();
+
+        Ok(())
     }
 
     /// Writes data to the observer.
     ///
     /// Assumes if there is a path then payload is the value at that path
     /// If no path it's the whole object.
-    async fn write(&mut self, path: String, payload: Value) {
+    async fn write(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), Self::Error> {
         // Set value at correct provided path
-        let new_value = super::path_to_json(&path, &payload);
+        let new_value = super::path_to_json(path, payload);
 
         log::info!("New value: {:?}", new_value);
 
         let mut current_value = Value::Null;
 
         // Check if we have a value and update the pointer
-        let value = if let Some(value) = self.db.get(&self.id) {
+        let value = if let Some(value) = self.db.get(device_id) {
             current_value = value.clone();
 
             // Create merged path
@@ -106,39 +149,43 @@ impl Observer for MemObserver {
                 };
 
                 // If not equal then send the value from the path
-                let _ = sender
+                sender
                     .send(ObserverValue {
                         path: path.clone(),
                         value,
                     })
-                    .await;
+                    .await
+                    .unwrap();
             }
         }
 
         // Then write it back
-        let _ = self.db.insert(self.id.clone(), value);
+        self.db.insert(device_id.to_string(), value);
+
+        Ok(())
     }
 
     /// Reads data from the observer.
-    async fn read(&mut self, path: String) -> Option<Value> {
-        match self.db.get(&self.id) {
+    async fn read(&mut self, device_id: &str, path: &str) -> Result<Option<Value>, Self::Error> {
+        match self.db.get(device_id) {
             Some(value) => {
                 log::info!("Got value: {:?}", value);
 
                 // Get the value ad the indicated path
-                let pointer_value = value.pointer(&path).cloned();
+                let pointer_value = value.pointer(path).cloned();
 
                 log::info!("Pointer value: {:?}", pointer_value);
 
-                pointer_value
+                Ok(pointer_value)
             }
-            None => None,
+            None => Ok(None),
         }
     }
 
     /// Clears the observer.
-    async fn clear(&mut self) {
-        let _ = self.db.remove(&self.id);
+    async fn clear(&mut self, device_id: &str) -> Result<(), Self::Error> {
+        let _ = self.db.remove(device_id);
+        Ok(())
     }
 }
 
@@ -162,34 +209,37 @@ mod tests {
 
         let mut observer = OBSERVER.clone();
 
-        // Set ID for "device"
-        observer.set_id("test_id".to_string()).await;
-
         // Clear
-        observer.clear().await;
+        observer.clear("123").await.unwrap();
 
         // Write data to path
         observer
-            .write("/test_path".to_string(), json!({"test_key": "test_value"}))
-            .await;
+            .write("123", "/test_path", &json!({"test_key": "test_value"}))
+            .await
+            .unwrap();
 
         // Read the path
-        let result = observer.read("/test_path".to_string()).await;
+        let result = observer.read("123", "/test_path").await.unwrap();
         assert_eq!(result, Some(json!({"test_key": "test_value"})));
 
         // Write data to path
         observer
             .write(
-                "/test_path/second_level".to_string(),
-                json!({"test_key": "test_value"}),
+                "123",
+                "/test_path/second_level",
+                &json!({"test_key": "test_value"}),
             )
-            .await;
+            .await
+            .unwrap();
 
         // Read the path
-        let result = observer.read("/test_path/second_level".to_string()).await;
+        let result = observer
+            .read("123", "/test_path/second_level")
+            .await
+            .unwrap();
         assert_eq!(result, Some(json!({"test_key": "test_value"})));
 
-        let result = observer.read("/test_path".to_string()).await;
+        let result = observer.read("123", "/test_path").await.unwrap();
         assert_eq!(
             result,
             Some(json!({"test_key": "test_value", "second_level": {"test_key": "test_value"}}))
@@ -203,11 +253,8 @@ mod tests {
         // Create test DB
         let mut observer = OBSERVER.clone();
 
-        // Set ID for "device"
-        observer.set_id("test_id".to_string()).await;
-
         // Clear before work
-        observer.clear().await;
+        observer.clear("123").await.unwrap();
 
         // Channel and register
         let (tx, mut rx) = tokio::sync::mpsc::channel::<ObserverValue>(10);
@@ -222,25 +269,32 @@ mod tests {
         sleep(Duration::from_secs(1)).await;
 
         observer
-            .register("/observe_and_write".to_string(), Arc::new(tx.clone()))
-            .await;
+            .register("123", "/observe_and_write", Arc::new(tx.clone()))
+            .await
+            .unwrap();
 
         // Write data to path
         observer
             .write(
-                "/observe_and_write".to_string(),
-                json!({"test_key": "test_value"}),
+                "123",
+                "/observe_and_write",
+                &json!({"test_key": "test_value"}),
             )
-            .await;
+            .await
+            .unwrap();
 
         observer
-            .write("/observe".to_string(), json!({"test": "mest"}))
-            .await;
+            .write("123", "/observe", &json!({"test": "mest"}))
+            .await
+            .unwrap();
 
-        let _ = fut.await;
+        fut.await.unwrap();
 
         // Unregister
-        observer.unregister("/observe_and_write".to_string()).await;
+        observer
+            .unregister("123", "/observe_and_write")
+            .await
+            .unwrap();
         assert!(!observer
             .channels
             .read()
@@ -248,11 +302,12 @@ mod tests {
             .contains_key(&"/observe_and_write".to_string()));
 
         observer
-            .register("/observe_and_write".to_string(), Arc::new(tx.clone()))
-            .await;
+            .register("123", "/observe_and_write", Arc::new(tx.clone()))
+            .await
+            .unwrap();
 
         // Unregister all
-        observer.unregister_all().await;
+        observer.unregister_all().await.unwrap();
         assert!(observer.channels.read().await.is_empty());
     }
 }

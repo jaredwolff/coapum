@@ -9,7 +9,6 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::vec;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use tower::Service;
@@ -110,23 +109,41 @@ where
     }
 
     /// Registers an observer for a given path.
-    pub async fn register_observer(&mut self, path: String, sender: Arc<Sender<ObserverValue>>) {
-        self.db.register(path, sender).await;
+    pub async fn register_observer(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        sender: Arc<Sender<ObserverValue>>,
+    ) -> Result<(), O::Error> {
+        self.db.register(device_id, path, sender).await
     }
 
     /// Unregisters an observer from a given path.
-    pub async fn unregister_observer(&mut self, path: String) {
-        self.db.unregister(path).await;
+    pub async fn unregister_observer(
+        &mut self,
+        device_id: &str,
+        path: &str,
+    ) -> Result<(), O::Error> {
+        self.db.unregister(device_id, path).await
     }
 
     /// Writes a payload to a path in the backend.
-    pub async fn backend_write(&mut self, path: String, payload: Value) {
-        self.db.write(path, payload).await;
+    pub async fn backend_write(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), O::Error> {
+        self.db.write(device_id, path, payload).await
     }
 
     /// Reads a value from a path in the backend.
-    pub async fn backend_read(&mut self, path: String) -> Option<Value> {
-        self.db.read(path).await
+    pub async fn backend_read(
+        &mut self,
+        device_id: &str,
+        path: &str,
+    ) -> Result<Option<Value>, O::Error> {
+        self.db.read(device_id, path).await
     }
 
     /// Adds a route handler for a given route.
@@ -217,7 +234,7 @@ pub struct CoapumRequest<Endpoint> {
     observe_flag: Option<ObserveOption>,
     pub response: Option<CoapResponse>,
     pub source: Option<Endpoint>,
-    pub identity: Vec<u8>,
+    pub identity: String,
 }
 
 /// An implementation block that provides methods to convert `CoapRequest` into `CoapumRequest` and get various details of the request.
@@ -240,7 +257,7 @@ impl<Endpoint> From<CoapRequest<Endpoint>> for CoapumRequest<Endpoint> {
             path,
             code,
             observe_flag,
-            identity: vec![],
+            identity: String::new(),
         }
     }
 }
@@ -423,13 +440,15 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let mut router = CoapRouter::new((), MemObserver::new());
         router
-            .register_observer("/test".to_string(), Arc::new(tx))
-            .await;
+            .register_observer("123", "/test", Arc::new(tx))
+            .await
+            .unwrap();
 
         tokio::time::sleep(Duration::from_secs(1)).await;
-        router
-            .backend_write("/test".to_string(), Value::Number(1.into()))
+        let res = router
+            .backend_write("123", "/test", &Value::Number(1.into()))
             .await;
+        assert!(res.is_ok());
 
         let value = rx.recv().await.unwrap();
         assert_eq!(value.path, "/test");
@@ -441,25 +460,28 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
         let mut router = CoapRouter::new((), MemObserver::new());
         router
-            .register_observer("/test".to_string(), Arc::new(tx))
-            .await;
-        router.unregister_observer("/test".to_string()).await;
+            .register_observer("123", "/test", Arc::new(tx))
+            .await
+            .unwrap();
+
+        router.unregister_observer("123", "/test").await.unwrap();
         // No assertion, just checking that it doesn't panic
     }
 
     #[tokio::test]
     async fn test_backend_write_and_read() {
         let mut router = CoapRouter::new((), MemObserver::new());
-        router
-            .backend_write("/test".to_string(), Value::Number(1.into()))
+        let res = router
+            .backend_write("123", "/test", &Value::Number(1.into()))
             .await;
+        assert!(res.is_ok());
 
         // Make sure they're equal
-        if let Some(result) = router.backend_read("/test".to_string()).await {
-            assert_eq!(result, Value::Number(1.into()));
-        } else {
-            assert!(false);
-        }
+        let res = router.backend_read("123", "/test").await;
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert!(res.is_some());
+        assert_eq!(res.unwrap(), Value::Number(1.into()));
     }
 
     #[test]
@@ -516,10 +538,8 @@ mod tests {
         request.set_method(RequestType::Get);
         request.set_path("/test");
 
-        let identity = vec![0x01, 0x02, 0x03];
-
         let mut request: CoapumRequest<SocketAddr> = request.into();
-        request.identity = identity.clone();
+        request.identity = "123".to_string();
 
         // Call the router with a GET request
         let response = router.call(request).await.unwrap();
@@ -536,7 +556,7 @@ mod tests {
         request.set_path("/test");
 
         let mut request: CoapumRequest<SocketAddr> = request.into();
-        request.identity = identity.clone();
+        request.identity = "123".to_string();
 
         let response = router.call(request).await.unwrap();
 

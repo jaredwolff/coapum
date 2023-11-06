@@ -32,23 +32,35 @@ where
             .await
             .unwrap(),
     );
-    let connections: Arc<Mutex<HashMap<Vec<u8>, Sender<()>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let connections: Arc<Mutex<HashMap<String, Sender<()>>>> = Arc::new(Mutex::new(HashMap::new()));
 
     loop {
         if let Ok((conn, state, socket_addr)) = listener.accept().await {
             log::info!("Got a connection from: {}", socket_addr);
 
             let mut router = router.clone();
-            let mut identity = Vec::new();
+            let identity: String;
             let timeout = config.timeout;
 
             // Get PSK Identity and use it as the Client's ID
             if let Some(s) = state {
                 if let Some(s) = s.psk_identity() {
-                    identity = s.clone();
-                    log::info!("PSK Identity: {}", String::from_utf8(s).unwrap());
+                    identity = match String::from_utf8(s.clone()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::error!("Unable to get identity! Error: {}", e);
+                            continue;
+                        }
+                    };
+
+                    log::info!("PSK Identity: {}", identity);
+                } else {
+                    log::error!("Unable to get identity!");
+                    continue;
                 }
+            } else {
+                log::error!("Unable to get state!");
+                continue;
             }
 
             let cons = connections.clone();
@@ -132,7 +144,7 @@ where
                                 request.identity = identity.clone();
 
                                 // Get path
-                                let path = request.get_path().clone();
+                                let path = request.get_path();
                                 let observe_flag = *request.get_observe_flag();
                                 let method = *request.get_method();
 
@@ -140,11 +152,11 @@ where
                                 match (observe_flag, method) {
                                     (Some(ObserveOption::Register), RequestType::Get) => {
                                         // register
-                                        router.register_observer(path, obs_tx.clone()).await;
+                                        router.register_observer(&identity, path, obs_tx.clone()).await.unwrap();
                                     }
                                     (Some(ObserveOption::Deregister), RequestType::Delete) => {
                                         // unregister
-                                        router.unregister_observer(path).await;
+                                        router.unregister_observer(&identity, path).await.unwrap();
                                     }
                                     _ => {}
                                 };
@@ -183,3 +195,62 @@ where
         }
     }
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use crate::router::wrapper::get;
+
+//     use super::*;
+//     use coap_lite::{CoapRequest, CoapResponse, Packet, RequestType, ResponseType};
+//     use std::net::SocketAddr;
+
+//     #[tokio::test]
+//     async fn test_serve() {
+//         // Set up test data
+//         let addr = "127.0.0.1:5683".to_string();
+//         let config = Config::default();
+
+//         let mut router = CoapRouter::new((), ());
+//         router.add(
+//             "test",
+//             get(|_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) }),
+//         );
+
+//         let mut request = CoapRequest::new();
+//         request.set_method(RequestType::Get);
+//         request.set_path("/test");
+
+//         let identity = vec![0x01, 0x02, 0x03];
+
+//         let mut request: CoapumRequest<SocketAddr> = request.into();
+//         request.identity = identity.clone();
+
+//         // Call the serve function
+//         let result = serve(addr, config, router.clone()).await;
+
+//         // Check that the serve function returns Ok
+//         assert!(result.is_ok());
+
+//         // Call the router with a GET request
+//         let response = router.call(request).await.unwrap();
+
+//         // Check that the response has a Valid status
+//         assert_eq!(*response.get_status(), ResponseType::Content);
+
+//         // Check that the response message is empty
+//         assert!(response.message.payload.is_empty());
+
+//         // Call the router with a DELETE request
+//         let mut request = CoapRequest::new();
+//         request.set_method(RequestType::Delete);
+//         request.set_path("/test");
+
+//         let mut request: CoapumRequest<SocketAddr> = request.into();
+//         request.identity = identity.clone();
+
+//         let response = router.call(request).await.unwrap();
+
+//         // Check that the response has a Valid status
+//         assert_eq!(*response.get_status(), ResponseType::BadRequest);
+//     }
+// }

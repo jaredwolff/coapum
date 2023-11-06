@@ -5,6 +5,9 @@ pub mod observer;
 pub mod router;
 pub mod serve;
 
+#[cfg(test)]
+mod tests;
+
 pub use coap_lite::{
     CoapRequest, CoapResponse, ContentFormat, MessageClass, Packet, RequestType, ResponseType,
 };
