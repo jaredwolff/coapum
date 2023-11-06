@@ -6,26 +6,25 @@ use webrtc_dtls::{
     Error,
 };
 
-use coapum::observer::sled::SledObserver;
+use coapum::{
+    observer::sled::SledObserver,
+    router::wrapper::{CoapResponseResult, IntoCoapResponse},
+};
 
 use coapum::{
-    router::{wrapper::get, CoapRouter, Request, RouterError},
-    serve, {CoapResponse, Packet, ResponseType},
+    router::{wrapper::get, CoapRouter, Request},
+    serve, ResponseType,
 };
 
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
-async fn test<S>(payload: Box<dyn Request>, _state: S) -> Result<CoapResponse, RouterError> {
+async fn test<S>(payload: Box<dyn Request>, _state: S) -> CoapResponseResult {
     log::info!("Got json payload: {}", payload.get_value());
-
-    let pkt = Packet::default();
-    let mut response = CoapResponse::new(&pkt).unwrap();
     let json = "{\"resp\":\"OK\"}";
-    response.message.payload = json.as_bytes().to_vec();
-    response.set_status(ResponseType::Valid);
-
     log::info!("Writing: {}", json);
-    Ok(response)
+    let json = json.as_bytes().to_vec();
+
+    (ResponseType::Valid, json).into_response()
 }
 
 #[tokio::main]

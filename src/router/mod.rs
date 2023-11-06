@@ -4,6 +4,7 @@ use coap_lite::{
 use route_recognizer::Router;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::fmt::Debug;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -18,6 +19,7 @@ use crate::extractor::handle_payload_extraction;
 use crate::extractor::json::JsonPayload;
 use crate::extractor::raw::RawPayload;
 use crate::observer::{Observer, ObserverRequest, ObserverValue};
+use crate::router::wrapper::IntoCoapResponse;
 
 use self::wrapper::{RequestTypeWrapper, RouteHandler};
 
@@ -56,7 +58,7 @@ pub type Handler<S> = Arc<
     dyn Fn(
             Box<dyn Request>,
             Arc<Mutex<S>>,
-        ) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>>
+        ) -> Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
         + Send
         + Sync,
 >;
@@ -279,33 +281,6 @@ impl<Endpoint> CoapumRequest<Endpoint> {
     }
 }
 
-/// A helper function to create an observer error response with a specified `ResponseType`. The resulting `CoapResponse` will have
-/// the status set to the given `ResponseType`.
-pub fn create_observer_error_response(
-    rtype: ResponseType,
-) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>> {
-    let pkt = Packet::default();
-    let mut response = CoapResponse::new(&pkt).unwrap();
-    response.set_status(rtype);
-
-    Box::pin(async move { Ok(response) })
-}
-
-/// A helper function to create an error response from a `CoapumRequest`. The resulting `CoapResponse` will have
-/// the message ID and token set from the `CoapumRequest` and the status set to the given `RequestType`.
-pub fn create_error_response(
-    req: &CoapumRequest<SocketAddr>,
-    rtype: ResponseType,
-) -> Pin<Box<dyn Future<Output = Result<CoapResponse, RouterError>> + Send>> {
-    let pkt = Packet::default();
-    let mut response = CoapResponse::new(&pkt).unwrap();
-    response.message.header.message_id = req.message.header.message_id;
-    response.message.set_token(req.message.get_token().to_vec());
-    response.set_status(rtype);
-
-    Box::pin(async move { Ok(response) })
-}
-
 /// Implementation of the `Service` trait for `CoapRouter` with `CoapumRequest` as the request type.
 impl<O, S> Service<CoapumRequest<SocketAddr>> for CoapRouter<O, S>
 where
@@ -315,7 +290,7 @@ where
     /// The response type for the service.
     type Response = CoapResponse;
     /// The error type for the service.
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = Infallible;
     /// The future type for the service.
     type Future =
         Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
@@ -364,7 +339,7 @@ where
                 );
 
                 // If no route handler is found, return a bad request error
-                create_error_response(&request, ResponseType::BadRequest)
+                Box::pin(async move { (ResponseType::BadRequest, &request).into_response() })
             }
         }
     }
@@ -379,7 +354,7 @@ where
     /// The response type for the service.
     type Response = CoapResponse;
     /// The error type for the service.
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = Infallible;
     /// The future type for the service.
     type Future =
         Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
@@ -415,7 +390,7 @@ where
                 log::info!("No observer handler found for: {}", request.path);
 
                 // If no observer handler is found, return a bad request error
-                create_observer_error_response(ResponseType::BadRequest)
+                Box::pin(async move { (ResponseType::BadRequest).into_response() })
             }
         }
     }
@@ -489,7 +464,7 @@ mod tests {
         let mut router = CoapRouter::new((), MemObserver::new());
         router.add(
             "/test",
-            get(|_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) }),
+            get(|_, _| async { (ResponseType::Valid).into_response() }),
         );
 
         let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
@@ -514,8 +489,8 @@ mod tests {
         router.add(
             "/test",
             observer::get(
-                |_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) },
-                |_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) },
+                |_, _| async { (ResponseType::Valid).into_response() },
+                |_, _| async { (ResponseType::Valid).into_response() },
             ),
         );
 
@@ -531,7 +506,7 @@ mod tests {
         let mut router = CoapRouter::new((), ());
         router.add(
             "test",
-            get(|_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) }),
+            get(|_, _| async { (ResponseType::Content).into_response() }),
         );
 
         let mut request = CoapRequest::new();
@@ -572,8 +547,8 @@ mod tests {
         router.add(
             "test",
             observer::get(
-                |_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) },
-                |_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) },
+                |_, _| async { (ResponseType::Content).into_response() },
+                |_, _| async { (ResponseType::Content).into_response() },
             ),
         );
 

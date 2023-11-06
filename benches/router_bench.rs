@@ -9,7 +9,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use serde_json::json;
 use tower::Service; // make sure to use your actual project name and import path
 
-async fn test<S>(payload: Box<dyn Request>, _state: S) -> Result<CoapResponse, RouterError> {
+async fn test<S>(payload: Box<dyn Request>, _state: S) -> CoapResponse {
     log::info!("Got json payload: {}", payload.get_value());
 
     let pkt = Packet::default();
@@ -19,7 +19,7 @@ async fn test<S>(payload: Box<dyn Request>, _state: S) -> Result<CoapResponse, R
     response.set_status(ResponseType::Valid);
 
     log::info!("Writing: {}", json);
-    Ok(response)
+    response
 }
 
 fn router_benchmark(c: &mut Criterion) {

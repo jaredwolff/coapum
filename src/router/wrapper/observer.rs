@@ -1,19 +1,20 @@
 use coap_lite::{CoapResponse, RequestType};
 
+use std::convert::Infallible;
 use std::future::Future;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
+use super::Request;
 use super::RouteHandler;
-use super::{Request, RouterError};
 
 /// Creates a new `RouteHandler` for GET requests.
 ///
 /// # Arguments
 ///
-/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
-/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
 ///
 /// # Returns
 ///
@@ -22,8 +23,8 @@ pub fn get<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
-    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
-    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -41,8 +42,8 @@ where
 ///
 /// # Arguments
 ///
-/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
-/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
 ///
 /// # Returns
 ///
@@ -51,8 +52,8 @@ pub fn put<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
-    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
-    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -70,8 +71,8 @@ where
 ///
 /// # Arguments
 ///
-/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
-/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
 ///
 /// # Returns
 ///
@@ -80,8 +81,8 @@ pub fn post<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
-    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
-    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -99,8 +100,8 @@ where
 ///
 /// # Arguments
 ///
-/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
-/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
 ///
 /// # Returns
 ///
@@ -109,8 +110,8 @@ pub fn delete<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
-    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
-    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -128,8 +129,8 @@ where
 ///
 /// # Arguments
 ///
-/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
-/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `Result<CoapResponse, RouterError>`.
+/// * `f` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
+/// * `o` - A closure that takes a boxed `Request` and an `Arc<Mutex<S>>` and returns a future that resolves to a `CoapResponse`.
 ///
 /// # Returns
 ///
@@ -138,8 +139,8 @@ pub fn unknown<S, F, G, Fut1, Fut2>(f: F, o: G) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut1 + Send + Sync + 'static,
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
-    Fut1: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
-    Fut2: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
+    Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -158,23 +159,17 @@ mod tests {
 
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-    use crate::extractor::json::JsonPayload;
+    use crate::{extractor::json::JsonPayload, router::wrapper::IntoCoapResponse};
 
     use super::*;
-    use coap_lite::{CoapRequest, CoapResponse, Packet};
+    use coap_lite::{CoapRequest, Packet, ResponseType};
     use serde_json::Value;
 
     #[tokio::test]
     async fn test_get() {
         let handler: RouteHandler<()> = get(
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
+            |_, _| async { (ResponseType::Valid).into_response() },
+            |_, _| async { (ResponseType::Valid).into_response() },
         );
         assert_eq!(handler.method, RequestType::Get);
         assert!(handler.observe_handler.is_some());
@@ -183,14 +178,8 @@ mod tests {
     #[tokio::test]
     async fn test_put() {
         let handler: RouteHandler<()> = put(
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
+            |_, _| async { (ResponseType::Valid).into_response() },
+            |_, _| async { (ResponseType::Valid).into_response() },
         );
         assert_eq!(handler.method, RequestType::Put);
         assert!(handler.observe_handler.is_some());
@@ -199,14 +188,8 @@ mod tests {
     #[tokio::test]
     async fn test_post() {
         let handler: RouteHandler<()> = post(
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
+            |_, _| async { (ResponseType::Valid).into_response() },
+            |_, _| async { (ResponseType::Valid).into_response() },
         );
         assert_eq!(handler.method, RequestType::Post);
         assert!(handler.observe_handler.is_some());
@@ -215,14 +198,8 @@ mod tests {
     #[tokio::test]
     async fn test_delete() {
         let handler: RouteHandler<()> = delete(
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
+            |_, _| async { (ResponseType::Valid).into_response() },
+            |_, _| async { (ResponseType::Valid).into_response() },
         );
         assert_eq!(handler.method, RequestType::Delete);
         assert!(handler.observe_handler.is_some());
@@ -231,14 +208,8 @@ mod tests {
     #[tokio::test]
     async fn test_unknown() {
         let handler: RouteHandler<()> = unknown(
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
+            |_, _| async { (ResponseType::Valid).into_response() },
+            |_, _| async { (ResponseType::Valid).into_response() },
         );
         assert_eq!(handler.method, RequestType::UnKnown);
         assert!(handler.observe_handler.is_some());
@@ -247,14 +218,8 @@ mod tests {
     #[tokio::test]
     async fn test_handler() {
         let handler: RouteHandler<()> = get(
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
-            |_, _| async {
-                let pkt = Packet::default();
-                Ok(CoapResponse::new(&pkt).unwrap())
-            },
+            |_, _| async { (ResponseType::Valid, vec![1, 2, 3]).into_response() },
+            |_, _| async { (ResponseType::Valid, vec![3, 2, 1]).into_response() },
         );
         assert_eq!(handler.method, RequestType::Get);
         assert!(handler.observe_handler.is_some());
@@ -271,13 +236,15 @@ mod tests {
         };
 
         let state = Arc::new(Mutex::new(()));
-        let result = (handler.handler)(Box::new(payload.clone()), state.clone()).await;
-        assert!(result.is_ok());
+        let result = (handler.handler)(Box::new(payload.clone()), state.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.message.payload, vec![1, 2, 3]);
 
         assert!(handler.observe_handler.is_some());
         if let Some(h) = handler.observe_handler {
-            let result = h(Box::new(payload), state).await;
-            assert!(result.is_ok());
+            let result = h(Box::new(payload), state).await.unwrap();
+            assert_eq!(result.message.payload, vec![3, 2, 1]);
         }
     }
 }

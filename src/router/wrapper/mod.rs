@@ -1,13 +1,15 @@
-use coap_lite::{CoapResponse, RequestType};
+use coap_lite::{CoapResponse, Packet, RequestType, ResponseType};
 
 use core::fmt::{self, Debug};
+use std::convert::Infallible;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{fmt::Formatter, hash::Hasher};
 
 use tokio::sync::Mutex;
 
-use super::{Handler, Request, RouterError};
+use super::{CoapumRequest, Handler, Request};
 
 pub mod observer;
 
@@ -82,7 +84,7 @@ where
 pub fn get<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut: Future<Output = CoapResponseResult> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -98,7 +100,7 @@ where
 pub fn put<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut: Future<Output = CoapResponseResult> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -114,7 +116,7 @@ where
 pub fn post<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut: Future<Output = CoapResponseResult> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -130,7 +132,7 @@ where
 pub fn delete<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut: Future<Output = CoapResponseResult> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -146,7 +148,7 @@ where
 pub fn unknown<S, F, Fut>(f: F) -> RouteHandler<S>
 where
     F: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<CoapResponse, RouterError>> + Send + 'static,
+    Fut: Future<Output = CoapResponseResult> + Send + 'static,
     S: Clone,
 {
     RouteHandler {
@@ -158,6 +160,99 @@ where
     }
 }
 
+pub type CoapResponseResult = Result<CoapResponse, Infallible>;
+
+pub trait IntoCoapResponse {
+    fn into_response(self) -> CoapResponseResult;
+}
+
+impl IntoCoapResponse for ResponseType {
+    fn into_response(self) -> CoapResponseResult {
+        let pkt = Packet::new();
+        let mut response = CoapResponse::new(&pkt).unwrap();
+        response.set_status(self);
+        Ok(response)
+    }
+}
+
+impl<R> IntoCoapResponse for (ResponseType, R)
+where
+    R: IntoCoapResponse,
+{
+    fn into_response(self) -> CoapResponseResult {
+        let mut response = self.1.into_response().unwrap();
+        response.set_status(self.0);
+        Ok(response)
+    }
+}
+
+impl IntoCoapResponse for Box<dyn Request> {
+    fn into_response(self) -> CoapResponseResult {
+        let pkt = Packet::new();
+        let mut response = CoapResponse::new(&pkt).unwrap();
+        response.message.header.message_id = self.get_raw().message.header.message_id;
+        response
+            .message
+            .set_token(self.get_raw().message.get_token().to_vec());
+        Ok(response)
+    }
+}
+
+impl IntoCoapResponse for &CoapumRequest<SocketAddr> {
+    fn into_response(self) -> CoapResponseResult {
+        let pkt = Packet::new();
+        let mut response = CoapResponse::new(&pkt).unwrap();
+        response.message.header.message_id = self.message.header.message_id;
+        response
+            .message
+            .set_token(self.message.get_token().to_vec());
+        Ok(response)
+    }
+}
+
+impl IntoCoapResponse for CoapumRequest<SocketAddr> {
+    fn into_response(self) -> CoapResponseResult {
+        let pkt = Packet::new();
+        let mut response = CoapResponse::new(&pkt).unwrap();
+        response.message.header.message_id = self.message.header.message_id;
+        response
+            .message
+            .set_token(self.message.get_token().to_vec());
+        Ok(response)
+    }
+}
+
+impl IntoCoapResponse for ciborium::Value {
+    fn into_response(self) -> CoapResponseResult {
+        let pkt = Packet::new();
+        let mut response = CoapResponse::new(&pkt).unwrap();
+
+        let mut buffer = Vec::new();
+        let _ = ciborium::ser::into_writer(&self, &mut buffer);
+
+        response.message.payload = buffer;
+        Ok(response)
+    }
+}
+
+impl IntoCoapResponse for serde_json::Value {
+    fn into_response(self) -> CoapResponseResult {
+        let pkt = Packet::new();
+        let mut response = CoapResponse::new(&pkt).unwrap();
+        response.message.payload = serde_json::to_vec(&self).unwrap();
+        Ok(response)
+    }
+}
+
+impl IntoCoapResponse for Vec<u8> {
+    fn into_response(self) -> CoapResponseResult {
+        let pkt = Packet::new();
+        let mut response = CoapResponse::new(&pkt).unwrap();
+        response.message.payload = self;
+        Ok(response)
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -166,65 +261,51 @@ mod tests {
     use crate::extractor::json::JsonPayload;
 
     use super::*;
-    use coap_lite::{CoapRequest, CoapResponse, Packet};
+    use coap_lite::{CoapRequest, Packet};
     use serde_json::Value;
 
     #[tokio::test]
     async fn test_get() {
-        let handler: RouteHandler<()> = get(|_, _| async {
-            let pkt = Packet::default();
-            Ok(CoapResponse::new(&pkt).unwrap())
-        });
+        let handler: RouteHandler<()> = get(|_, _| async { (ResponseType::Valid).into_response() });
         assert_eq!(handler.method, RequestType::Get);
         assert!(handler.observe_handler.is_none());
     }
 
     #[tokio::test]
     async fn test_put() {
-        let handler: RouteHandler<()> = put(|_, _| async {
-            let pkt = Packet::default();
-            Ok(CoapResponse::new(&pkt).unwrap())
-        });
+        let handler: RouteHandler<()> = put(|_, _| async { (ResponseType::Valid).into_response() });
         assert_eq!(handler.method, RequestType::Put);
         assert!(handler.observe_handler.is_none());
     }
 
     #[tokio::test]
     async fn test_post() {
-        let handler: RouteHandler<()> = post(|_, _| async {
-            let pkt = Packet::default();
-            Ok(CoapResponse::new(&pkt).unwrap())
-        });
+        let handler: RouteHandler<()> =
+            post(|_, _| async { (ResponseType::Valid).into_response() });
         assert_eq!(handler.method, RequestType::Post);
         assert!(handler.observe_handler.is_none());
     }
 
     #[tokio::test]
     async fn test_delete() {
-        let handler: RouteHandler<()> = delete(|_, _| async {
-            let pkt = Packet::default();
-            Ok(CoapResponse::new(&pkt).unwrap())
-        });
+        let handler: RouteHandler<()> =
+            delete(|_, _| async { (ResponseType::Valid).into_response() });
         assert_eq!(handler.method, RequestType::Delete);
         assert!(handler.observe_handler.is_none());
     }
 
     #[tokio::test]
     async fn test_unknown() {
-        let handler: RouteHandler<()> = unknown(|_, _| async {
-            let pkt = Packet::default();
-            Ok(CoapResponse::new(&pkt).unwrap())
-        });
+        let handler: RouteHandler<()> =
+            unknown(|_, _| async { (ResponseType::Valid).into_response() });
         assert_eq!(handler.method, RequestType::UnKnown);
         assert!(handler.observe_handler.is_none());
     }
 
     #[tokio::test]
     async fn test_handler() {
-        let handler: RouteHandler<()> = get(|_, _| async {
-            let pkt = Packet::default();
-            Ok(CoapResponse::new(&pkt).unwrap())
-        });
+        let handler: RouteHandler<()> =
+            get(|_, _| async { (ResponseType::Valid, vec![1, 2, 3]).into_response() });
         assert_eq!(handler.method, RequestType::Get);
         assert!(handler.observe_handler.is_none());
 
@@ -240,7 +321,7 @@ mod tests {
         };
 
         let state = Arc::new(Mutex::new(()));
-        let result = (handler.handler)(Box::new(payload), state).await;
-        assert!(result.is_ok());
+        let result = (handler.handler)(Box::new(payload), state).await.unwrap();
+        assert_eq!(result.message.payload, vec![1, 2, 3]);
     }
 }
