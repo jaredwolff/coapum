@@ -1,17 +1,13 @@
 use std::{self, sync::Arc};
 
-use webrtc_dtls::{
-    cipher_suite::CipherSuiteId,
-    config::{Config, ExtendedMasterSecretType},
-    Error,
-};
-
 use coapum::{
+    dtls::{
+        cipher_suite::CipherSuiteId,
+        config::{Config, ExtendedMasterSecretType},
+        Error,
+    },
     observer::sled::SledObserver,
     router::wrapper::{CoapResponseResult, IntoCoapResponse},
-};
-
-use coapum::{
     router::{wrapper::get, CoapRouter, Request},
     serve, ResponseType,
 };

@@ -11,8 +11,8 @@ mod tests;
 pub use coap_lite::{
     CoapRequest, CoapResponse, ContentFormat, MessageClass, Packet, RequestType, ResponseType,
 };
-pub use webrtc_dtls;
-pub use webrtc_util;
+pub use webrtc_dtls as dtls;
+pub use webrtc_util as util;
 
 #[cfg(test)]
 #[macro_use]

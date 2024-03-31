@@ -5,7 +5,7 @@ use tokio::sync::{
     Mutex,
 };
 use tower::Service;
-use webrtc_dtls::listener;
+use webrtc_dtls::{conn::DTLSConn, listener};
 use webrtc_util::conn::Listener;
 
 use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType, ResponseType};
@@ -35,33 +35,30 @@ where
     let connections: Arc<Mutex<HashMap<String, Sender<()>>>> = Arc::new(Mutex::new(HashMap::new()));
 
     loop {
-        if let Ok((conn, state, socket_addr)) = listener.accept().await {
+        if let Ok((conn, socket_addr)) = listener.accept().await {
             log::info!("Got a connection from: {}", socket_addr);
 
             let mut router = router.clone();
             let identity: String;
             let timeout = config.timeout;
 
-            // Get PSK Identity and use it as the Client's ID
-            if let Some(s) = state {
-                if let Some(s) = s.psk_identity() {
-                    identity = match String::from_utf8(s.clone()) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            log::error!("Unable to get identity! Error: {}", e);
-                            continue;
-                        }
-                    };
-
-                    log::info!("PSK Identity: {}", identity);
-                } else {
-                    log::error!("Unable to get identity!");
-                    continue;
-                }
+            let state = if let Some(dtls) = conn.as_any().downcast_ref::<DTLSConn>() {
+                dtls.connection_state().await
             } else {
                 log::error!("Unable to get state!");
                 continue;
-            }
+            };
+
+            // Get PSK Identity and use it as the Client's ID
+            identity = match String::from_utf8(state.identity_hint) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("Unable to get identity! Error: {}", e);
+                    continue;
+                }
+            };
+
+            log::info!("PSK Identity: {}", identity);
 
             let cons = connections.clone();
 

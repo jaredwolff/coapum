@@ -1,15 +1,17 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::net::UdpSocket;
-use webrtc_dtls::{
-    cipher_suite::CipherSuiteId,
-    config::{Config, ExtendedMasterSecretType},
-    conn::DTLSConn,
-    Error,
-};
-use webrtc_util::Conn;
 
-use coapum::{CoapRequest, ContentFormat, Packet, RequestType};
+use coapum::{
+    dtls::{
+        cipher_suite::CipherSuiteId,
+        config::{Config, ExtendedMasterSecretType},
+        conn::DTLSConn,
+        Error,
+    },
+    util::Conn,
+    CoapRequest, ContentFormat, Packet, RequestType,
+};
 
 const IDENTITY: &[u8] = "goobie!".as_bytes();
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
