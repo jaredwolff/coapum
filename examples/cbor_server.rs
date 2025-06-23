@@ -1,3 +1,49 @@
+//! # CBOR Server Example
+//!
+//! This example demonstrates a comprehensive CoAP server implementation using CBOR
+//! (Concise Binary Object Representation) for payload serialization. It showcases:
+//!
+//! - DTLS security with PSK (Pre-Shared Key) authentication
+//! - RESTful API design with path parameters
+//! - Observer pattern for real-time notifications
+//! - Structured error handling with custom response types
+//! - Device state management for IoT use cases
+//!
+//! ## Features
+//!
+//! - **Device Management**: CRUD operations for device states
+//! - **Stream Handling**: Data ingestion endpoints
+//! - **Real-time Updates**: CoAP observe pattern for notifications
+//! - **Security**: DTLS encryption with PSK authentication
+//! - **Persistence**: Sled database for observer storage
+//!
+//! ## API Endpoints
+//!
+//! - `POST .d/{device_id}` - Update device state
+//! - `GET .d/{device_id}` - Get device state
+//! - `DELETE .d/{device_id}` - Delete device state
+//! - `OBSERVE .d/{device_id}` - Subscribe to device state changes
+//! - `POST .s/{stream_id}` - Handle stream data
+//! - `PUT echo` - Echo payload back
+//! - `GET hello` - Echo payload back
+//! - `ANY /` - Ping endpoint
+//!
+//! ## Usage
+//!
+//! ```bash
+//! # Start the server
+//! cargo run --example cbor_server
+//!
+//! # In another terminal, test with the client
+//! cargo run --example cbor_client
+//! ```
+//!
+//! ## Security
+//!
+//! The server uses DTLS with PSK authentication. The default PSK is configured
+//! for the identity "goobie!" with the key "63ef2024b1de6417f856fab7005d38f6".
+//! In production, use strong, randomly generated keys.
+
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},

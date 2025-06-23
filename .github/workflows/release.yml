@@ -1,0 +1,296 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., v0.1.0)"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      version_number: ${{ steps.get_version.outputs.version_number }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_number=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\.\-]+)?$ ]]; then
+            echo "Invalid version format: $VERSION"
+            echo "Expected format: v1.2.3 or v1.2.3-alpha.1"
+            exit 1
+          fi
+
+      - name: Check Cargo.toml version matches
+        run: |
+          VERSION_NUMBER="${{ steps.get_version.outputs.version_number }}"
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if [[ "$VERSION_NUMBER" != "$CARGO_VERSION" ]]; then
+            echo "Version mismatch: tag=$VERSION_NUMBER, Cargo.toml=$CARGO_VERSION"
+            echo "Please update Cargo.toml version to match the tag"
+            exit 1
+          fi
+
+      - name: Run full test suite
+        run: cargo test --all-features --verbose
+
+      - name: Check examples compile
+        run: |
+          cargo check --examples --all-features
+          echo "✅ All examples compile successfully"
+
+      - name: Check documentation builds
+        run: |
+          cargo doc --all-features --no-deps
+          echo "✅ Documentation builds successfully"
+
+      - name: Validate package can be published
+        run: |
+          cargo package --allow-dirty
+          echo "✅ Package validation successful"
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+  publish-crate:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: [validate, security-audit]
+    environment: release
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, publish-crate]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          VERSION_NUMBER="${{ needs.validate.outputs.version_number }}"
+
+          # Get the previous tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${VERSION}$" | head -n1)
+
+          echo "## 🎉 Coapum ${VERSION}" > changelog.md
+          echo "" >> changelog.md
+          echo "A modern, ergonomic CoAP library for Rust with DTLS support and async handlers." >> changelog.md
+          echo "" >> changelog.md
+
+          if [[ -n "$PREV_TAG" ]]; then
+            echo "### 📝 Changes since ${PREV_TAG}" >> changelog.md
+            echo "" >> changelog.md
+            git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD" >> changelog.md
+          else
+            echo "### 📝 Changes in this release" >> changelog.md
+            echo "" >> changelog.md
+            git log --pretty=format:"- %s (%h)" --max-count=20 >> changelog.md
+          fi
+
+          echo "" >> changelog.md
+          echo "### 📦 Installation" >> changelog.md
+          echo "" >> changelog.md
+          echo '```toml' >> changelog.md
+          echo "[dependencies]" >> changelog.md
+          echo "coapum = \"${VERSION_NUMBER}\"" >> changelog.md
+          echo '```' >> changelog.md
+          echo "" >> changelog.md
+          echo "### 🚀 Quick Start" >> changelog.md
+          echo "" >> changelog.md
+          echo '```rust' >> changelog.md
+          echo 'use coapum::{router::RouterBuilder, observer::memory::MemoryObserver, serve};' >> changelog.md
+          echo '' >> changelog.md
+          echo '#[tokio::main]' >> changelog.md
+          echo 'async fn main() -> Result<(), Box<dyn std::error::Error>> {' >> changelog.md
+          echo '    let router = RouterBuilder::new((), MemoryObserver::new())' >> changelog.md
+          echo '        .get("/hello", || async { "Hello, CoAP!" })' >> changelog.md
+          echo '        .build();' >> changelog.md
+          echo '' >> changelog.md
+          echo '    serve::serve("127.0.0.1:5683".to_string(), Default::default(), router).await?;' >> changelog.md
+          echo '    Ok(())' >> changelog.md
+          echo '}' >> changelog.md
+          echo '```' >> changelog.md
+          echo "" >> changelog.md
+          echo "### 📚 Examples" >> changelog.md
+          echo "" >> changelog.md
+          echo "Check out the example applications in the repository:" >> changelog.md
+          echo "" >> changelog.md
+          echo "- **CBOR Server/Client**: Full-featured IoT device management with CBOR payloads" >> changelog.md
+          echo "- **Raw Server/Client**: Basic CoAP communication with raw payloads" >> changelog.md
+          echo "- **Concurrency Example**: Demonstrates concurrent request handling" >> changelog.md
+          echo "" >> changelog.md
+          echo '```bash' >> changelog.md
+          echo "git clone https://github.com/your-org/coapum.git" >> changelog.md
+          echo "cd coapum" >> changelog.md
+          echo "cargo run --bin cbor_server" >> changelog.md
+          echo '```' >> changelog.md
+          echo "" >> changelog.md
+          echo "### 🔗 Links" >> changelog.md
+          echo "" >> changelog.md
+          echo "- 📖 [Documentation](https://docs.rs/coapum/${VERSION_NUMBER})" >> changelog.md
+          echo "- 📦 [Crates.io](https://crates.io/crates/coapum)" >> changelog.md
+          echo "- 🐛 [Issues](https://github.com/your-org/coapum/issues)" >> changelog.md
+          echo "- 💬 [Discussions](https://github.com/your-org/coapum/discussions)" >> changelog.md
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.validate.outputs.version }}
+          name: Coapum ${{ needs.validate.outputs.version }}
+          bodyFile: changelog.md
+          draft: false
+          prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  update-docs:
+    name: Update Documentation
+    runs-on: ubuntu-latest
+    needs: [validate, create-release]
+    if: always() && needs.create-release.result == 'success'
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build documentation
+        run: cargo doc --all-features --no-deps
+
+      - name: Deploy documentation to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: target/doc
+          destination_dir: ${{ needs.validate.outputs.version_number }}
+          keep_files: true
+
+      - name: Trigger docs.rs rebuild
+        run: |
+          # Trigger docs.rs to rebuild documentation
+          VERSION_NUMBER="${{ needs.validate.outputs.version_number }}"
+          curl -f -X POST "https://docs.rs/crate/coapum/$VERSION_NUMBER/builds" || echo "Failed to trigger docs.rs rebuild (this is usually fine)"
+
+  post-release:
+    name: Post-Release Notifications
+    runs-on: ubuntu-latest
+    needs: [validate, create-release, update-docs]
+    if: always() && needs.create-release.result == 'success'
+    steps:
+      - name: Release Summary
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          VERSION_NUMBER="${{ needs.validate.outputs.version_number }}"
+
+          echo "🎉 **Coapum ${VERSION} Released Successfully!**"
+          echo ""
+          echo "✅ Published to crates.io: https://crates.io/crates/coapum/${VERSION_NUMBER}"
+          echo "✅ GitHub release created: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+          echo "✅ Documentation updated: https://docs.rs/coapum/${VERSION_NUMBER}"
+          echo ""
+          echo "📦 **Installation:**"
+          echo "cargo add coapum@${VERSION_NUMBER}"
+          echo ""
+          echo "🎯 **Next Steps:**"
+          echo "- Monitor for any issues or bug reports"
+          echo "- Update examples and tutorials if needed"
+          echo "- Consider announcing on social media or Rust forums"
+
+      - name: Create tracking issue for next release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ needs.validate.outputs.version_number }}';
+            const [major, minor, patch] = version.split('.').map(Number);
+            const nextMinor = `${major}.${minor + 1}.0`;
+
+            const title = `🚀 Release Planning: v${nextMinor}`;
+            const body = `
+            ## Release Planning for v${nextMinor}
+
+            This issue tracks the planning and progress for the next minor release.
+
+            ### 🎯 Goals
+            - [ ] Identify key features/improvements for next release
+            - [ ] Review and prioritize open issues
+            - [ ] Plan breaking changes (if any)
+            - [ ] Update roadmap
+
+            ### 📋 Checklist
+            - [ ] Feature freeze date set
+            - [ ] Documentation updates planned
+            - [ ] Migration guide prepared (if needed)
+            - [ ] Performance benchmarks run
+            - [ ] Security review completed
+
+            ### 🔗 Previous Release
+            Released: [v${version}](https://github.com/${{ github.repository }}/releases/tag/v${version})
+
+            ---
+            _This issue was automatically created after releasing v${version}_
+            `;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['release-planning', 'enhancement']
+            });

@@ -23,7 +23,7 @@ Add Coapum to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-coapum = "0.1.0"
+coapum = "0.2.0"
 ```
 
 ### Basic Server
@@ -277,14 +277,14 @@ let dtls_config = Config {
 
 ```toml
 [dependencies]
-coapum = { version = "0.1.0", features = ["sled-observer"] }
+coapum = { version = "0.2.0", features = ["sled-observer"] }
 ```
 
 - `sled-observer` - Enable Sled database backend for observers (default)
 
 ## Examples
 
-The `src/bin/` directory contains complete examples:
+The `examples/` directory contains complete examples:
 
 - `cbor_server.rs` - CBOR payload handling with device state management
 - `raw_server.rs` - Raw payload handling
@@ -296,10 +296,10 @@ Run an example:
 
 ```bash
 # Start CBOR server
-cargo run --bin cbor_server
+cargo run --example cbor_server
 
 # In another terminal, run client
-cargo run --bin cbor_client
+cargo run --example cbor_client
 ```
 
 ## Testing

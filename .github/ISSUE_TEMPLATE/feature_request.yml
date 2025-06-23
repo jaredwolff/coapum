@@ -1,0 +1,203 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for Coapum
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+assignees:
+  - maintainer-username
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a new feature! 🚀
+
+        Please search existing issues and discussions before creating a new request to avoid duplicates.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: A clear and concise description of the feature you'd like to see
+      placeholder: "I would like to see..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? What use case does it address?
+      placeholder: |
+        Currently, when I try to..., I face the following challenges:
+        - Challenge 1
+        - Challenge 2
+
+        This makes it difficult to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your proposed solution in detail
+      placeholder: |
+        I propose adding a new API/feature that would:
+        - Do X
+        - Allow Y
+        - Enable Z
+
+        This could be implemented by...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or features?
+      placeholder: |
+        I've considered the following alternatives:
+        1. Alternative 1 - but this has limitations...
+        2. Alternative 2 - but this doesn't address...
+        3. Using existing feature X - but it's not suitable because...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component would this feature affect?
+      options:
+        - "Router/Routing"
+        - "Handler/Extractors"
+        - "Observer Pattern"
+        - "DTLS/Security"
+        - "Configuration"
+        - "Documentation"
+        - "Examples"
+        - "Performance"
+        - "Developer Experience"
+        - "Other"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - "Low - Nice to have"
+        - "Medium - Would be helpful"
+        - "High - Important for my use case"
+        - "Critical - Blocking my project"
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-design
+    attributes:
+      label: API Design (Optional)
+      description: If you have ideas about the API design, please share them
+      render: rust
+      placeholder: |
+        // Example API design
+        let router = RouterBuilder::new(state, observer)
+            .new_feature_method("/path", handler)
+            .build();
+
+        // Or new trait/struct
+        pub trait NewFeature {
+            fn new_method(&self) -> Result<T, E>;
+        }
+    validations:
+      required: false
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case Details
+      description: Provide a detailed use case showing how this feature would be used
+      placeholder: |
+        Here's how I would use this feature in my project:
+
+        1. Context: I'm building a CoAP server for IoT devices that...
+        2. Current limitation: I can't do X because...
+        3. With this feature: I would be able to...
+        4. Expected outcome: This would enable me to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact Assessment
+      description: What would be the impact of implementing this feature?
+      placeholder: |
+        Positive impacts:
+        - Enables new use cases
+        - Improves developer experience
+        - Better performance
+
+        Potential concerns:
+        - Breaking changes (if any)
+        - Increased complexity
+        - Maintenance burden
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: breaking-changes
+    attributes:
+      label: Breaking Changes
+      description: Would this feature require breaking changes?
+      options:
+        - label: "This feature would require breaking changes"
+        - label: "This feature could be implemented without breaking changes"
+        - label: "I'm not sure about breaking changes"
+
+  - type: checkboxes
+    id: implementation
+    attributes:
+      label: Implementation
+      description: Are you interested in implementing this feature?
+      options:
+        - label: "I'm willing to implement this feature myself"
+        - label: "I can help with implementation"
+        - label: "I can help with testing"
+        - label: "I can help with documentation"
+        - label: "I would prefer someone else implements this"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, screenshots, links, or examples about the feature request here.
+
+        This could include:
+        - Links to similar features in other libraries
+        - Screenshots or mockups
+        - Related CoAP specifications
+        - Performance requirements
+        - Security considerations
+      placeholder: "Any additional context..."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: "I have searched existing issues and discussions to avoid duplicates"
+          required: true
+        - label: "I have provided a clear description of the feature and its benefits"
+          required: true
+        - label: "I have described the problem this feature would solve"
+          required: true
+        - label: "I understand this is a feature request and not a bug report"
+          required: true

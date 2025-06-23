@@ -1,0 +1,327 @@
+name: Performance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run performance tests weekly on Sundays at 2 AM UTC
+    - cron: "0 2 * * 0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install criterion
+        run: cargo install --force cargo-criterion
+
+      - name: Run benchmarks
+        run: |
+          echo "🚀 Running performance benchmarks..."
+          cargo bench --all-features -- --output-format verbose
+          echo "✅ Benchmarks completed"
+
+      - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: Rust Benchmark
+          tool: "cargo"
+          output-file-path: target/criterion/router_bench/base/estimates.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          comment-on-alert: true
+          alert-threshold: "150%"
+          fail-on-alert: false
+          summary-always: true
+
+      - name: Compare PR benchmarks
+        uses: benchmark-action/github-action-benchmark@v1
+        if: github.event_name == 'pull_request'
+        with:
+          name: Rust Benchmark
+          tool: "cargo"
+          output-file-path: target/criterion/router_bench/base/estimates.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          comment-on-alert: true
+          alert-threshold: "150%"
+          fail-on-alert: false
+          summary-always: true
+
+  memory-profiling:
+    name: Memory Profiling
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-memory-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build examples for profiling
+        run: |
+          cargo build --examples --all-features
+          echo "✅ Built examples for memory profiling"
+
+      - name: Run memory profiling
+        run: |
+          echo "🔍 Running memory profiling..."
+
+          # Create memory profile directory
+          mkdir -p memory-profiles
+
+          # Profile CBOR server startup and shutdown
+          timeout 30s valgrind --tool=massif --massif-out-file=memory-profiles/cbor-server.out \
+            cargo run --example cbor_server &
+          SERVER_PID=$!
+
+          sleep 10
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+
+          # Generate memory usage report
+          if [ -f memory-profiles/cbor-server.out ]; then
+            ms_print memory-profiles/cbor-server.out > memory-profiles/cbor-server-report.txt
+            echo "📊 Memory profile generated for CBOR server"
+            head -20 memory-profiles/cbor-server-report.txt
+          fi
+
+      - name: Upload memory profiles
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: memory-profiles
+          path: memory-profiles/
+          retention-days: 30
+
+  load-test:
+    name: Load Testing
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-load-test-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build examples
+        run: cargo build --examples --all-features --release
+
+      - name: Install load testing tools
+        run: |
+          # Install a simple HTTP load testing tool
+          sudo apt-get update
+          sudo apt-get install -y apache2-utils curl
+
+      - name: Run load test
+        timeout-minutes: 5
+        run: |
+          echo "🚀 Starting load test..."
+
+          # Start server in release mode
+          RUST_LOG=warn ./target/release/examples/cbor_server &
+          SERVER_PID=$!
+
+          # Wait for server to start
+          sleep 5
+
+          # Create load test results directory
+          mkdir -p load-test-results
+
+          # Run concurrent connection test
+          echo "📈 Testing concurrent connections..."
+
+          # Simple load test simulation
+          for i in {1..10}; do
+            timeout 10s ./target/release/examples/cbor_client &
+          done
+
+          # Wait for all clients to complete
+          wait
+
+          # Clean up server
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+
+          echo "✅ Load test completed"
+
+      - name: Performance regression check
+        run: |
+          echo "🔍 Checking for performance regressions..."
+
+          # This would typically compare against baseline metrics
+          # For now, we'll just validate that benchmarks ran successfully
+          if [ -f target/criterion/router_bench/base/estimates.json ]; then
+            echo "✅ Benchmark data found"
+
+            # Extract key metrics (this is a simplified example)
+            ROUTER_TIME=$(grep -o '"mean":{"estimate":[0-9.]*' target/criterion/router_bench/base/estimates.json | cut -d: -f3)
+            echo "📊 Router benchmark time: ${ROUTER_TIME}ns"
+
+            # Simple threshold check (adjust as needed)
+            THRESHOLD=1000000  # 1ms in nanoseconds
+            if (( $(echo "$ROUTER_TIME > $THRESHOLD" | bc -l) )); then
+              echo "⚠️  Performance regression detected: router time ${ROUTER_TIME}ns exceeds threshold ${THRESHOLD}ns"
+              # Don't fail the build for now, just warn
+            else
+              echo "✅ Performance within acceptable limits"
+            fi
+          else
+            echo "⚠️  No benchmark data found"
+          fi
+
+  resource-usage:
+    name: Resource Usage Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-resource-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install monitoring tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y htop sysstat
+
+      - name: Build examples
+        run: cargo build --examples --all-features
+
+      - name: Analyze resource usage
+        timeout-minutes: 2
+        run: |
+          echo "📊 Analyzing resource usage..."
+
+          # Start resource monitoring
+          sar -u -r 1 60 > resource-usage.log &
+          SAR_PID=$!
+
+          # Start server
+          cargo run --example cbor_server &
+          SERVER_PID=$!
+
+          # Let it run for a bit
+          sleep 30
+
+          # Run some client requests
+          for i in {1..5}; do
+            timeout 5s cargo run --example cbor_client || true
+            sleep 2
+          done
+
+          # Clean up
+          kill $SERVER_PID $SAR_PID 2>/dev/null || true
+          wait $SERVER_PID $SAR_PID 2>/dev/null || true
+
+          # Analyze results
+          echo "📈 Resource usage summary:"
+          if [ -f resource-usage.log ]; then
+            echo "Average CPU and Memory usage:"
+            tail -10 resource-usage.log
+          fi
+
+      - name: Upload resource analysis
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resource-analysis
+          path: |
+            resource-usage.log
+          retention-days: 7
+
+  performance-summary:
+    name: Performance Summary
+    runs-on: ubuntu-latest
+    needs: [benchmark, memory-profiling, resource-usage]
+    if: always()
+    steps:
+      - name: Performance Summary
+        run: |
+          echo "📊 **Performance Test Summary**"
+          echo ""
+          echo "✅ **Completed Jobs:**"
+
+          if [[ "${{ needs.benchmark.result }}" == "success" ]]; then
+            echo "- ✅ Benchmarks: PASSED"
+          else
+            echo "- ❌ Benchmarks: FAILED"
+          fi
+
+          if [[ "${{ needs.memory-profiling.result }}" == "success" ]]; then
+            echo "- ✅ Memory Profiling: PASSED"
+          else
+            echo "- ❌ Memory Profiling: FAILED"
+          fi
+
+          if [[ "${{ needs.resource-usage.result }}" == "success" ]]; then
+            echo "- ✅ Resource Usage Analysis: PASSED"
+          else
+            echo "- ❌ Resource Usage Analysis: FAILED"
+          fi
+
+          echo ""
+          echo "📈 **Performance Metrics:**"
+          echo "- Router performance benchmarks completed"
+          echo "- Memory usage profiled"
+          echo "- Resource utilization analyzed"
+          echo ""
+          echo "🔗 **Artifacts:**"
+          echo "- Benchmark results stored for trending"
+          echo "- Memory profiles available for download"
+          echo "- Resource usage logs captured"

@@ -1,0 +1,93 @@
+version: 2
+updates:
+  # Cargo dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "maintainer-username"  # Replace with actual maintainer
+    assignees:
+      - "maintainer-username"  # Replace with actual maintainer
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "rust"
+    groups:
+      # Group minor and patch updates for async runtime dependencies
+      async-runtime:
+        patterns:
+          - "tokio*"
+          - "futures*"
+          - "async-trait"
+        update-types:
+          - "minor"
+          - "patch"
+
+      # Group CoAP related dependencies
+      coap:
+        patterns:
+          - "coap-lite"
+          - "webrtc-*"
+        update-types:
+          - "minor"
+          - "patch"
+
+      # Group serialization dependencies
+      serialization:
+        patterns:
+          - "serde*"
+          - "ciborium"
+          - "serde_json"
+        update-types:
+          - "minor"
+          - "patch"
+
+      # Group development dependencies
+      dev-deps:
+        patterns:
+          - "criterion"
+          - "lazy_static"
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+
+    # Allow major version updates but create separate PRs
+    ignore:
+      # Temporarily ignore major updates for critical dependencies
+      # Remove these once tested
+      - dependency-name: "tokio"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "serde"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/.github/workflows"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "maintainer-username"  # Replace with actual maintainer
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      # Group all GitHub Actions updates
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
