@@ -39,7 +39,6 @@ where
             log::info!("Got a connection from: {}", socket_addr);
 
             let mut router = router.clone();
-            let identity: String;
             let timeout = config.timeout;
 
             let state = if let Some(dtls) = conn.as_any().downcast_ref::<DTLSConn>() {
@@ -50,7 +49,7 @@ where
             };
 
             // Get PSK Identity and use it as the Client's ID
-            identity = match String::from_utf8(state.identity_hint) {
+            let identity: String = match String::from_utf8(state.identity_hint) {
                 Ok(s) => s,
                 Err(e) => {
                     log::error!("Unable to get identity! Error: {}", e);

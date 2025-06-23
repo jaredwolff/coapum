@@ -81,6 +81,7 @@ pub struct PathRejection {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum PathRejectionKind {
     FailedToDeserializePathParams { key: String },
     MissingPathParams,
@@ -163,6 +164,7 @@ fn extract_wildcard_param(path: &str) -> Option<String> {
 ///
 /// This is a more advanced version that can handle paths like:
 /// `/devices/{device_id}/properties/{property_name}`
+#[allow(dead_code)]
 fn extract_path_params(path: &str, pattern: &str) -> Option<Vec<(String, String)>> {
     let path_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     let pattern_segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();

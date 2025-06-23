@@ -59,7 +59,7 @@ async fn main() {
 
             // Look up the hint in the database
             if let Some(psk) = psk_store.read().unwrap().get(&hint) {
-                return Ok(psk.clone());
+                Ok(psk.clone())
             } else {
                 log::info!("Hint {} not found in store", hint);
                 Err(Error::ErrIdentityNoPsk)

@@ -1,5 +1,5 @@
-use std::io::Cursor;
 use serde::ser::Error;
+use std::io::Cursor;
 
 use ciborium::value::Value as CborValue;
 use serde_json::Value as JsonValue;
@@ -22,8 +22,8 @@ use serde_json::Value as JsonValue;
 /// # Returns
 ///
 /// * `serde_json::Result<JsonValue>` - If successful, the function returns `Ok(JsonValue)`,
-/// where `JsonValue` is the equivalent JSON data. If the conversion fails, it returns an
-/// error of type `serde_json::Error`.
+///   where `JsonValue` is the equivalent JSON data. If the conversion fails, it returns an
+///   error of type `serde_json::Error`.
 ///
 /// # Examples
 ///
@@ -61,8 +61,8 @@ pub fn convert_cbor_to_json(cbor_data: &[u8]) -> serde_json::Result<JsonValue> {
 /// # Returns
 ///
 /// * `Result<Vec<u8>, Box<dyn std::error::Error>>` - If successful, the function returns `Ok(Vec<u8>)`,
-/// where `Vec<u8>` is the equivalent CBOR data. If the conversion fails, it returns an
-/// error of type `Box<dyn std::error::Error>`.
+///   where `Vec<u8>` is the equivalent CBOR data. If the conversion fails, it returns an
+///   error of type `Box<dyn std::error::Error>`.
 ///
 /// # Examples
 ///

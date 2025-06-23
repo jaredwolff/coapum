@@ -20,32 +20,38 @@ async fn test() -> Raw {
 }
 
 fn router_benchmark(c: &mut Criterion) {
-    let mut router = RouterBuilder::new((), ()).get("test", test).build();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let router = RouterBuilder::new((), ()).get("test", test).build();
 
     c.bench_function("coap_router", |b| {
         b.iter(|| {
-            let mut pkt = Packet::new();
+            let mut router = router.clone();
+            rt.block_on(async {
+                let mut pkt = Packet::new();
 
-            let value = json!({
-                "code": 415,
-                "message": null,
-                "continue": false,
-                "extra": { "numbers" : [8.2341e+4, 0.251425] },
-            });
+                let value = json!({
+                    "code": 415,
+                    "message": null,
+                    "continue": false,
+                    "extra": { "numbers" : [8.2341e+4, 0.251425] },
+                });
 
-            // Serialize the value into the buffer
-            let buffer = serde_json::to_vec(&value).unwrap();
+                // Serialize the value into the buffer
+                let buffer = serde_json::to_vec(&value).unwrap();
 
-            // Set value
-            pkt.payload = buffer;
+                // Set value
+                pkt.payload = buffer;
 
-            let request = CoapRequest::from_packet(
-                pkt,
-                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0)),
-            );
+                let request = CoapRequest::from_packet(
+                    pkt,
+                    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0)),
+                );
 
-            let request: CoapumRequest<SocketAddr> = request.into();
-            let _ = router.call(std::hint::black_box::<CoapumRequest<SocketAddr>>(request));
+                let request: CoapumRequest<SocketAddr> = request.into();
+                let _ = router
+                    .call(std::hint::black_box::<CoapumRequest<SocketAddr>>(request))
+                    .await;
+            })
         })
     });
 }

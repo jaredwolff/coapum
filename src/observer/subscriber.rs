@@ -228,7 +228,7 @@ mod tests {
 
         log::info!("Set to: {:?}", new_value);
 
-        db.set(&device_id, &path, new_value.clone()).await.unwrap();
+        db.set(device_id, path, new_value.clone()).await.unwrap();
 
         let next = receiver1.recv().await.unwrap();
         assert_eq!(new_value, next);
@@ -243,7 +243,7 @@ mod tests {
 
         log::info!("Set to: {:?}", new_value);
 
-        db.set(&device_id, &path, new_value.clone()).await.unwrap();
+        db.set(device_id, path, new_value.clone()).await.unwrap();
 
         let next = receiver1.recv().await.unwrap();
         assert_eq!(new_value, next);
@@ -254,7 +254,7 @@ mod tests {
         log::info!("Set to: {:?}", new_value);
 
         // Should not notify
-        db.set(&device_id, &path, new_value.clone()).await.unwrap();
+        db.set(device_id, path, new_value.clone()).await.unwrap();
 
         // Receeivers should be closed since we dropped Sender(s)
         db.unsubscribe("subscriber1", device_id, path).await;

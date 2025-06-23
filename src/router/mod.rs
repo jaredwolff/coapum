@@ -347,10 +347,7 @@ impl<Endpoint> From<CoapRequest<Endpoint>> for CoapumRequest<Endpoint> {
         let path = req.get_path();
         let code = *req.get_method();
         let observe_flag = match req.get_observe_flag() {
-            Some(o) => match o {
-                Ok(o) => Some(o),
-                Err(_) => None,
-            },
+            Some(o) => o.ok(),
             None => None,
         };
 
@@ -489,6 +486,7 @@ mod tests {
 
     #[derive(Clone, Debug)]
     struct TestState {
+        #[allow(dead_code)]
         counter: i32,
     }
 

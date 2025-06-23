@@ -55,7 +55,7 @@ use coapum::{
         config::{Config, ExtendedMasterSecretType},
         Error,
     },
-    extract::{Cbor, Identity, Path, StatusCode},
+    extract::{Cbor, Identity, Path, State, StatusCode},
     observer::sled::SledObserver,
     router::RouterBuilder,
     serve,
@@ -81,7 +81,7 @@ struct ApiResponse {
 
 #[derive(Clone, Debug)]
 struct AppState {
-    device_states: HashMap<String, DeviceState>,
+    device_states: Arc<tokio::sync::Mutex<HashMap<String, DeviceState>>>,
 }
 
 impl AsRef<AppState> for AppState {
@@ -95,6 +95,7 @@ async fn update_device_state(
     Path(device_id): Path<String>,
     Cbor(new_state): Cbor<DeviceState>,
     Identity(client_id): Identity,
+    State(app_state): State<AppState>,
 ) -> Result<Cbor<ApiResponse>, StatusCode> {
     log::info!(
         "Updating device {} state from client {}: temp={}°C, humidity={}%, battery={}%",
@@ -105,8 +106,9 @@ async fn update_device_state(
         new_state.battery_level
     );
 
-    // In a real application, you'd save this to your state/database
-    // For this example, we'll just acknowledge the update
+    // Store the device state in our application state
+    let mut states = app_state.device_states.lock().await;
+    states.insert(device_id.clone(), new_state.clone());
     let response = ApiResponse {
         status: "success".to_string(),
         message: format!("Device {} state updated", device_id),
@@ -119,6 +121,7 @@ async fn update_device_state(
 async fn get_device_state(
     Path(device_id): Path<String>,
     Identity(client_id): Identity,
+    State(app_state): State<AppState>,
 ) -> Result<Cbor<DeviceState>, StatusCode> {
     log::info!(
         "Getting device {} state for client {}",
@@ -126,13 +129,13 @@ async fn get_device_state(
         client_id
     );
 
-    // In a real application, you'd fetch this from your state/database
-    // For this example, we'll return a mock state
-    let state = DeviceState {
+    // Fetch the device state from our application state
+    let states = app_state.device_states.lock().await;
+    let state = states.get(&device_id).cloned().unwrap_or(DeviceState {
         temperature: 23.5,
         humidity: 45.2,
         battery_level: 85,
-    };
+    });
 
     Ok(Cbor(state))
 }
@@ -141,6 +144,7 @@ async fn get_device_state(
 async fn notify_device_state(
     Path(device_id): Path<String>,
     Identity(client_id): Identity,
+    State(app_state): State<AppState>,
 ) -> Cbor<DeviceState> {
     log::info!(
         "Sending notification for device {} to client {}",
@@ -148,12 +152,13 @@ async fn notify_device_state(
         client_id
     );
 
-    // In a real application, this would be triggered by actual state changes
-    let state = DeviceState {
+    // Get the current device state for notifications
+    let states = app_state.device_states.lock().await;
+    let state = states.get(&device_id).cloned().unwrap_or(DeviceState {
         temperature: 24.1,
         humidity: 43.8,
         battery_level: 84,
-    };
+    });
 
     Cbor(state)
 }
@@ -162,6 +167,7 @@ async fn notify_device_state(
 async fn delete_device_state(
     Path(device_id): Path<String>,
     Identity(client_id): Identity,
+    State(app_state): State<AppState>,
 ) -> Result<StatusCode, StatusCode> {
     log::info!(
         "Deleting device {} state for client {}",
@@ -169,7 +175,9 @@ async fn delete_device_state(
         client_id
     );
 
-    // In a real application, you'd remove this from your state/database
+    // Remove the device state from our application state
+    let mut states = app_state.device_states.lock().await;
+    states.remove(&device_id);
     Ok(StatusCode::Deleted)
 }
 
@@ -214,7 +222,7 @@ async fn main() {
 
     // Create application state
     let app_state = AppState {
-        device_states: HashMap::new(),
+        device_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
     };
 
     // Create observer database
@@ -243,7 +251,7 @@ async fn main() {
             log::info!("Client's hint: {}", hint);
 
             if let Some(psk) = psk_store.read().unwrap().get(&hint) {
-                return Ok(psk.clone());
+                Ok(psk.clone())
             } else {
                 log::info!("Hint {} not found in store", hint);
                 Err(Error::ErrIdentityNoPsk)

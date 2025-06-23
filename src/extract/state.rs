@@ -89,7 +89,7 @@ impl fmt::Debug for Source {
 
 impl Clone for Source {
     fn clone(&self) -> Self {
-        Source(self.0)
+        *self
     }
 }
 
@@ -145,7 +145,7 @@ impl fmt::Debug for ObserveFlag {
 
 impl Clone for ObserveFlag {
     fn clone(&self) -> Self {
-        ObserveFlag(self.0)
+        *self
     }
 }
 
@@ -325,7 +325,7 @@ impl<S> FromRequest<S> for FullRequest {
 mod tests {
     use super::*;
     use crate::{CoapRequest, Packet};
-    use coap_lite::{ObserveOption, RequestType};
+    use coap_lite::RequestType;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     fn create_test_request() -> CoapumRequest<SocketAddr> {

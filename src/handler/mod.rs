@@ -372,8 +372,8 @@ where
 {
     async fn call_erased(
         &self,
-        req: CoapumRequest<SocketAddr>,
-        state: Arc<Mutex<S>>,
+        _req: CoapumRequest<SocketAddr>,
+        _state: Arc<Mutex<S>>,
     ) -> Result<CoapResponse, Infallible> {
         // This is a fallback implementation that returns a default response
         // The actual handler calling will be done by the specific implementations
