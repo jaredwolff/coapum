@@ -4,7 +4,8 @@ use coap_lite::{CoapResponse, ResponseType};
 use futures::Future;
 use tokio::sync::Mutex;
 
-use crate::router::{wrapper::IntoCoapResponse, CoapumRequest, Handler, Request};
+use crate::handler::ErasedHandler;
+use crate::router::{wrapper::IntoCoapResponse, CoapumRequest, Request};
 
 pub mod cbor;
 pub mod json;
@@ -20,14 +21,20 @@ pub trait FromCoapumRequest {
 
 pub fn handle_payload_extraction<T, S>(
     request: &CoapumRequest<SocketAddr>,
-    handler: Handler<S>,
+    handler: Box<dyn ErasedHandler<S>>,
     state: Arc<Mutex<S>>,
 ) -> Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
 where
     T: FromCoapumRequest<Error = std::io::Error> + Request + Send + 'static,
+    S: Send + Sync + 'static,
 {
     match T::from_coap_request(request) {
-        Ok(payload) => handler(Box::new(payload), state),
+        Ok(_payload) => {
+            // During migration: call the new handler directly with CoapumRequest
+            // The old payload extraction system will be removed in Phase 2
+            let req = request.clone();
+            Box::pin(async move { handler.call_erased(req, state).await })
+        }
         Err(e) => {
             log::warn!("Unable to parse payload: {}", e);
             let resp = (ResponseType::UnsupportedContentFormat, request).into_response();

@@ -3,13 +3,12 @@
 //! This module provides an improved routing API that works with the new handler system,
 //! allowing for more ergonomic registration of handlers with automatic parameter extraction.
 
-use crate::handler::{into_handler, Handler, HandlerFn};
+use crate::handler::{into_erased_handler, into_handler, Handler, HandlerFn};
 use crate::observer::Observer;
 use crate::router::wrapper::RouteHandler;
 use crate::router::CoapRouter;
 use coap_lite::RequestType;
-use std::{fmt::Debug, sync::Arc};
-use tokio::sync::Mutex;
+use std::fmt::Debug;
 
 /// Enhanced router builder for ergonomic handler registration
 pub struct RouterBuilder<O, S>
@@ -37,9 +36,10 @@ where
     where
         HandlerFn<F, S>: Handler<T, S>,
         F: Send + Sync + Clone,
+        T: Send + Sync + 'static,
     {
         let route_handler = RouteHandler {
-            handler: convert_to_old_handler(into_handler(handler)),
+            handler: into_erased_handler(into_handler(handler)),
             observe_handler: None,
             method: RequestType::Get,
         };
@@ -52,9 +52,10 @@ where
     where
         HandlerFn<F, S>: Handler<T, S>,
         F: Send + Sync + Clone,
+        T: Send + Sync + 'static,
     {
         let route_handler = RouteHandler {
-            handler: convert_to_old_handler(into_handler(handler)),
+            handler: into_erased_handler(into_handler(handler)),
             observe_handler: None,
             method: RequestType::Post,
         };
@@ -67,9 +68,10 @@ where
     where
         HandlerFn<F, S>: Handler<T, S>,
         F: Send + Sync + Clone,
+        T: Send + Sync + 'static,
     {
         let route_handler = RouteHandler {
-            handler: convert_to_old_handler(into_handler(handler)),
+            handler: into_erased_handler(into_handler(handler)),
             observe_handler: None,
             method: RequestType::Put,
         };
@@ -82,9 +84,10 @@ where
     where
         HandlerFn<F, S>: Handler<T, S>,
         F: Send + Sync + Clone,
+        T: Send + Sync + 'static,
     {
         let route_handler = RouteHandler {
-            handler: convert_to_old_handler(into_handler(handler)),
+            handler: into_erased_handler(into_handler(handler)),
             observe_handler: None,
             method: RequestType::Delete,
         };
@@ -97,9 +100,10 @@ where
     where
         HandlerFn<F, S>: Handler<T, S>,
         F: Send + Sync + Clone,
+        T: Send + Sync + 'static,
     {
         let route_handler = RouteHandler {
-            handler: convert_to_old_handler(into_handler(handler)),
+            handler: into_erased_handler(into_handler(handler)),
             observe_handler: None,
             method: RequestType::UnKnown,
         };
@@ -119,10 +123,12 @@ where
         HandlerFn<F2, S>: Handler<T2, S>,
         F1: Send + Sync + Clone,
         F2: Send + Sync + Clone,
+        T1: Send + Sync + 'static,
+        T2: Send + Sync + 'static,
     {
         let route_handler = RouteHandler {
-            handler: convert_to_old_handler(into_handler(get_handler)),
-            observe_handler: Some(convert_to_old_handler(into_handler(notify_handler))),
+            handler: into_erased_handler(into_handler(get_handler)),
+            observe_handler: Some(into_erased_handler(into_handler(notify_handler))),
             method: RequestType::Get,
         };
         self.router.add(path, route_handler);
@@ -140,22 +146,7 @@ where
     }
 }
 
-/// Convert new handler to old handler format for compatibility
-fn convert_to_old_handler<H, T, S>(handler: H) -> crate::router::Handler<S>
-where
-    H: Handler<T, S> + Send + Sync + Clone + 'static,
-    S: Send + Sync + 'static,
-{
-    Arc::new(
-        move |_req: Box<dyn crate::router::Request>, state: Arc<Mutex<S>>| {
-            let handler = handler.clone();
-            // This is a bit tricky - we need to convert from the old Box<dyn Request> format
-            // to the new CoapumRequest format. For now, we'll extract the raw request.
-            let raw_req = _req.get_raw().clone();
-            Box::pin(async move { handler.call(raw_req, state).await })
-        },
-    )
-}
+// Old convert_to_old_handler function removed - now using into_erased_handler directly
 
 /// Convenience functions for creating handlers with specific HTTP methods
 
@@ -164,10 +155,11 @@ pub fn get<F, T, S>(handler: F) -> RouteHandler<S>
 where
     HandlerFn<F, S>: Handler<T, S> + Send + Sync + Clone,
     F: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
     S: Clone + Send + Sync + 'static,
 {
     RouteHandler {
-        handler: convert_to_old_handler(into_handler(handler)),
+        handler: into_erased_handler(into_handler(handler)),
         observe_handler: None,
         method: RequestType::Get,
     }
@@ -178,10 +170,11 @@ pub fn post<F, T, S>(handler: F) -> RouteHandler<S>
 where
     HandlerFn<F, S>: Handler<T, S> + Send + Sync + Clone,
     F: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
     S: Clone + Send + Sync + 'static,
 {
     RouteHandler {
-        handler: convert_to_old_handler(into_handler(handler)),
+        handler: into_erased_handler(into_handler(handler)),
         observe_handler: None,
         method: RequestType::Post,
     }
@@ -192,10 +185,11 @@ pub fn put<F, T, S>(handler: F) -> RouteHandler<S>
 where
     HandlerFn<F, S>: Handler<T, S> + Send + Sync + Clone,
     F: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
     S: Clone + Send + Sync + 'static,
 {
     RouteHandler {
-        handler: convert_to_old_handler(into_handler(handler)),
+        handler: into_erased_handler(into_handler(handler)),
         observe_handler: None,
         method: RequestType::Put,
     }
@@ -206,10 +200,11 @@ pub fn delete<F, T, S>(handler: F) -> RouteHandler<S>
 where
     HandlerFn<F, S>: Handler<T, S> + Send + Sync + Clone,
     F: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
     S: Clone + Send + Sync + 'static,
 {
     RouteHandler {
-        handler: convert_to_old_handler(into_handler(handler)),
+        handler: into_erased_handler(into_handler(handler)),
         observe_handler: None,
         method: RequestType::Delete,
     }
@@ -220,10 +215,11 @@ pub fn any<F, T, S>(handler: F) -> RouteHandler<S>
 where
     HandlerFn<F, S>: Handler<T, S> + Send + Sync + Clone,
     F: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
     S: Clone + Send + Sync + 'static,
 {
     RouteHandler {
-        handler: convert_to_old_handler(into_handler(handler)),
+        handler: into_erased_handler(into_handler(handler)),
         observe_handler: None,
         method: RequestType::UnKnown,
     }

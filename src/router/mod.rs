@@ -14,10 +14,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use tower::Service;
 
-use crate::extractor::cbor::CborPayload;
-use crate::extractor::handle_payload_extraction;
-use crate::extractor::json::JsonPayload;
-use crate::extractor::raw::RawPayload;
+use crate::handler::ErasedHandler;
 use crate::observer::{Observer, ObserverRequest, ObserverValue};
 use crate::router::wrapper::IntoCoapResponse;
 
@@ -32,36 +29,7 @@ pub trait Request: Send {
     fn get_raw(&self) -> &CoapumRequest<SocketAddr>;
 }
 
-/// Represents a type alias for an asynchronous handler function in `coapum`.
-///
-/// This handler is responsible for processing incoming requests and returning
-/// a `Future` that resolves to a `Result` containing a `CoapResponse` or a `RouterError`.
-///
-/// # Type Parameters
-///
-/// * `S`: The shared state type that is used across handlers. The state is protected by
-///   a mutex to ensure thread safety. This allows concurrent requests to safely access
-///   and mutate shared state.
-///
-/// # Function Parameters
-///
-/// * `Box<dyn Request>`: A boxed dynamic trait object representing the incoming request. Typically a JsonPayload.
-/// * `Arc<Mutex<S>>`: An atomic reference-counted smart pointer wrapping the Mutex-protected shared state.
-///
-/// # Returns
-///
-/// * The handler returns a pinned, boxed Future which will resolve to a `Result`.
-///   The `Result` will either contain the CoAP response (`CoapResponse`)
-///   or an error (`RouterError`) from the router.
-///
-pub type Handler<S> = Arc<
-    dyn Fn(
-            Box<dyn Request>,
-            Arc<Mutex<S>>,
-        ) -> Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
-        + Send
-        + Sync,
->;
+// Old Handler type alias removed - migrating to ErasedHandler trait
 
 /// The CoapRouter is a struct responsible for managing routes, shared state and an observer database.
 ///
@@ -81,7 +49,7 @@ pub type Handler<S> = Arc<
 #[derive(Clone)]
 pub struct CoapRouter<O, S>
 where
-    S: Clone + Debug,
+    S: Clone + Debug + Send + Sync + 'static,
     O: Observer,
 {
     inner: Router<HashMap<RequestTypeWrapper, RouteHandler<S>>>,
@@ -95,10 +63,10 @@ where
 /// # Type Parameters
 ///
 /// * `O`: The type that implements the Observer trait. It must also implement the `Send`, `Sync`, `Clone`, and `'static` traits.
-/// * `S`: The shared state type. It must implement the `Send`, `Clone`, and `Debug` traits.
+/// * `S`: The shared state type. It must implement the `Send`, `Sync`, `Clone`, and `Debug` traits.
 impl<O, S> CoapRouter<O, S>
 where
-    S: Send + Clone + Debug,
+    S: Send + Sync + Clone + Debug + 'static,
     O: Observer + Send + Sync + Clone + 'static,
 {
     /// Constructs a new `CoapRouter` with given shared state and observer database.
@@ -166,7 +134,7 @@ where
     }
 
     /// Looks up an observer handler for a given path.
-    pub fn lookup_observer_handler(&self, path: &str) -> Option<Handler<S>> {
+    pub fn lookup_observer_handler(&self, path: &str) -> Option<Box<dyn ErasedHandler<S>>> {
         match self.inner.recognize(path) {
             Ok(matched) => {
                 let handler = matched.handler();
@@ -178,7 +146,9 @@ where
                 match handler.get(&reqtype) {
                     Some(h) => {
                         log::debug!("Matched handler: {:?}", h);
-                        h.observe_handler.clone()
+                        h.observe_handler
+                            .as_ref()
+                            .map(|handler| handler.clone_erased())
                     }
                     None => {
                         log::debug!("No handler found");
@@ -194,7 +164,7 @@ where
     }
 
     /// Looks up a handler for a given request.
-    pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Handler<S>> {
+    pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Box<dyn ErasedHandler<S>>> {
         match self.inner.recognize(r.get_path()) {
             Ok(matched) => {
                 let handler = matched.handler();
@@ -205,7 +175,7 @@ where
                 match handler.get(&reqtype) {
                     Some(h) => {
                         log::debug!("Matched handler: {:?}", h);
-                        Some(h.handler.clone())
+                        Some(h.handler.clone_erased())
                     }
                     None => {
                         log::debug!("No handler found");
@@ -313,23 +283,8 @@ where
                 let path = request.get_path();
                 log::debug!("Handler found for route: {:?}", &path);
 
-                if let Some(format) = &request.message.get_content_format() {
-                    log::info!("Content format: {:?}", format);
-
-                    match format {
-                        ContentFormat::ApplicationJSON => {
-                            handle_payload_extraction::<JsonPayload, S>(&request, handler, state)
-                        }
-                        ContentFormat::ApplicationCBOR => {
-                            handle_payload_extraction::<CborPayload, S>(&request, handler, state)
-                        }
-                        // All other unsupported formats for extraction
-                        _ => handle_payload_extraction::<RawPayload, S>(&request, handler, state),
-                    }
-                } else {
-                    log::debug!("Content format not declared");
-                    handle_payload_extraction::<RawPayload, S>(&request, handler, state)
-                }
+                // Call the new ErasedHandler directly
+                Box::pin(async move { handler.call_erased(request, state).await })
             }
             None => {
                 log::info!(
@@ -379,12 +334,11 @@ where
                 let packet = Packet::default();
                 let raw = CoapRequest::from_packet(packet, request.source);
 
-                let payload = JsonPayload {
-                    value: request.value,
-                    raw: raw.into(),
-                };
+                let mut coap_request: CoapumRequest<SocketAddr> = raw.into();
+                // Set the value for the observer request
+                coap_request.identity = request.path.clone();
 
-                handler(Box::new(payload), state)
+                Box::pin(async move { handler.call_erased(coap_request, state).await })
             }
             None => {
                 log::info!("No observer handler found for: {}", request.path);
@@ -398,10 +352,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        observer::memory::MemObserver,
-        router::wrapper::{get, observer},
-    };
+    use crate::{observer::memory::MemObserver, router::wrapper::get};
 
     use super::*;
     use std::{

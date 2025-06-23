@@ -335,6 +335,116 @@ where
     HandlerFn::new(f)
 }
 
+/// Type-erased handler trait for storing handlers with different extractor types
+///
+/// This trait allows the router to store handlers with different type parameters
+/// in the same collection while preserving the ability to call them with
+/// CoapumRequest and state.
+#[async_trait]
+pub trait ErasedHandler<S>: Send + Sync + 'static {
+    /// Call this handler with the given request and state
+    async fn call_erased(
+        &self,
+        req: CoapumRequest<SocketAddr>,
+        state: Arc<Mutex<S>>,
+    ) -> Result<CoapResponse, Infallible>;
+
+    /// Clone this handler
+    fn clone_erased(&self) -> Box<dyn ErasedHandler<S>>;
+}
+
+/// Wrapper for storing handlers in type-erased form
+pub struct ErasedHandlerWrapper<H> {
+    handler: H,
+}
+
+impl<H> ErasedHandlerWrapper<H> {
+    pub fn new(handler: H) -> Self {
+        Self { handler }
+    }
+}
+
+#[async_trait]
+impl<H, S> ErasedHandler<S> for ErasedHandlerWrapper<H>
+where
+    H: Send + Sync + Clone + 'static,
+    S: Send + Sync + 'static,
+{
+    async fn call_erased(
+        &self,
+        req: CoapumRequest<SocketAddr>,
+        state: Arc<Mutex<S>>,
+    ) -> Result<CoapResponse, Infallible> {
+        // This is a fallback implementation that returns a default response
+        // The actual handler calling will be done by the specific implementations
+        let pkt = coap_lite::Packet::new();
+        let mut response = crate::CoapResponse::new(&pkt).unwrap();
+        response.set_status(coap_lite::ResponseType::NotImplemented);
+        Ok(response)
+    }
+
+    fn clone_erased(&self) -> Box<dyn ErasedHandler<S>> {
+        Box::new(ErasedHandlerWrapper {
+            handler: self.handler.clone(),
+        })
+    }
+}
+
+// Specialized wrapper for HandlerFn types
+pub struct HandlerFnErasedWrapper<F, T, S> {
+    handler_fn: HandlerFn<F, S>,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+#[async_trait]
+impl<F, T, S> ErasedHandler<S> for HandlerFnErasedWrapper<F, T, S>
+where
+    HandlerFn<F, S>: Handler<T, S>,
+    F: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
+    S: Send + Sync + 'static,
+{
+    async fn call_erased(
+        &self,
+        req: CoapumRequest<SocketAddr>,
+        state: Arc<Mutex<S>>,
+    ) -> Result<CoapResponse, Infallible> {
+        self.handler_fn.clone().call(req, state).await
+    }
+
+    fn clone_erased(&self) -> Box<dyn ErasedHandler<S>> {
+        Box::new(HandlerFnErasedWrapper {
+            handler_fn: self.handler_fn.clone(),
+            _phantom: std::marker::PhantomData,
+        })
+    }
+}
+
+impl<H> Clone for ErasedHandlerWrapper<H>
+where
+    H: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            handler: self.handler.clone(),
+        }
+    }
+}
+
+/// Convert a HandlerFn into an erased handler for storage in the router
+pub fn into_erased_handler<F, T, S>(handler: HandlerFn<F, S>) -> Box<dyn ErasedHandler<S>>
+where
+    HandlerFn<F, S>: Handler<T, S>,
+    F: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
+    S: Send + Sync + 'static,
+{
+    Box::new(HandlerFnErasedWrapper {
+        handler_fn: handler,
+        _phantom: std::marker::PhantomData,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,6 +510,21 @@ mod tests {
         let state = Arc::new(Mutex::new(()));
 
         let response = handler.call(req, state).await.unwrap();
+        assert_eq!(*response.get_status(), coap_lite::ResponseType::Valid);
+    }
+
+    #[tokio::test]
+    async fn test_erased_handler() {
+        async fn simple_handler() -> StatusCode {
+            StatusCode::Valid
+        }
+
+        let handler = into_handler(simple_handler);
+        let erased = into_erased_handler(handler);
+        let req = create_test_request();
+        let state = Arc::new(Mutex::new(()));
+
+        let response = erased.call_erased(req, state).await.unwrap();
         assert_eq!(*response.get_status(), coap_lite::ResponseType::Valid);
     }
 }
