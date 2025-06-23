@@ -1,13 +1,26 @@
 pub mod config;
+pub mod extract;
 pub mod extractor;
+pub mod handler;
 pub mod helper;
 pub mod observer;
 pub mod router;
+pub mod routing;
 pub mod serve;
 
 #[cfg(test)]
 mod tests;
 
+// Re-export commonly used types from the ergonomic API
+pub use extract::state::FullRequest;
+pub use extract::{
+    Bytes, Cbor, FromRequest, Identity, IntoResponse, Json, ObserveFlag, Path, Raw, Source, State,
+    StatusCode,
+};
+pub use handler::{into_handler, Handler, HandlerFn};
+pub use routing::{any, delete, get, post, put, RouterBuilder};
+
+// Re-export CoAP types
 pub use coap_lite::{
     CoapRequest, CoapResponse, ContentFormat, MessageClass, Packet, RequestType, ResponseType,
 };

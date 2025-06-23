@@ -406,6 +406,7 @@ dependencies = [
  "lazy_static",
  "log",
  "route-recognizer",
+ "serde",
  "serde_json",
  "sled",
  "tokio",
