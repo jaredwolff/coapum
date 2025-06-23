@@ -439,7 +439,7 @@ mod tests {
         let mut router = CoapRouter::new((), MemObserver::new());
         router.add(
             "/test",
-            observer::get(
+            wrapper::observer::get(
                 |_, _| async { (ResponseType::Valid).into_response() },
                 |_, _| async { (ResponseType::Valid).into_response() },
             ),
@@ -497,7 +497,7 @@ mod tests {
         let mut router = CoapRouter::new((), ());
         router.add(
             "test",
-            observer::get(
+            wrapper::observer::get(
                 |_, _| async { (ResponseType::Content).into_response() },
                 |_, _| async { (ResponseType::Content).into_response() },
             ),

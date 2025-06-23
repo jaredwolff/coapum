@@ -8,9 +8,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::{fmt::Formatter, hash::Hasher};
 
+use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use super::{CoapumRequest, Handler, Request};
+use super::{CoapumRequest, Request};
+use crate::handler::ErasedHandler;
 
 pub mod observer;
 

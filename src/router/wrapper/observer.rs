@@ -6,8 +6,7 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use super::Request;
-use super::RouteHandler;
+use super::{LegacyHandlerWrapper, Request, RouteHandler};
 
 /// Creates a new `RouteHandler` for GET requests.
 ///
@@ -25,15 +24,20 @@ where
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
     Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
-    S: Clone,
+    S: Send + Sync + Clone + 'static,
 {
+    let handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(f(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+    let observe_handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(o(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+
     RouteHandler {
-        handler: Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
-            Box::pin(f(req, state))
-        }),
-        observe_handler: Some(Arc::new(
-            move |req: Box<dyn Request>, state: Arc<Mutex<S>>| Box::pin(o(req, state)),
-        )),
+        handler: Box::new(LegacyHandlerWrapper::new(handler)),
+        observe_handler: Some(Box::new(LegacyHandlerWrapper::new(observe_handler))),
         method: RequestType::Get,
     }
 }
@@ -54,15 +58,20 @@ where
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
     Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
-    S: Clone,
+    S: Send + Sync + Clone + 'static,
 {
+    let handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(f(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+    let observe_handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(o(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+
     RouteHandler {
-        handler: Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
-            Box::pin(f(req, state))
-        }),
-        observe_handler: Some(Arc::new(
-            move |req: Box<dyn Request>, state: Arc<Mutex<S>>| Box::pin(o(req, state)),
-        )),
+        handler: Box::new(LegacyHandlerWrapper::new(handler)),
+        observe_handler: Some(Box::new(LegacyHandlerWrapper::new(observe_handler))),
         method: RequestType::Put,
     }
 }
@@ -83,15 +92,20 @@ where
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
     Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
-    S: Clone,
+    S: Send + Sync + Clone + 'static,
 {
+    let handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(f(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+    let observe_handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(o(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+
     RouteHandler {
-        handler: Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
-            Box::pin(f(req, state))
-        }),
-        observe_handler: Some(Arc::new(
-            move |req: Box<dyn Request>, state: Arc<Mutex<S>>| Box::pin(o(req, state)),
-        )),
+        handler: Box::new(LegacyHandlerWrapper::new(handler)),
+        observe_handler: Some(Box::new(LegacyHandlerWrapper::new(observe_handler))),
         method: RequestType::Post,
     }
 }
@@ -112,15 +126,20 @@ where
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
     Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
-    S: Clone,
+    S: Send + Sync + Clone + 'static,
 {
+    let handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(f(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+    let observe_handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(o(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+
     RouteHandler {
-        handler: Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
-            Box::pin(f(req, state))
-        }),
-        observe_handler: Some(Arc::new(
-            move |req: Box<dyn Request>, state: Arc<Mutex<S>>| Box::pin(o(req, state)),
-        )),
+        handler: Box::new(LegacyHandlerWrapper::new(handler)),
+        observe_handler: Some(Box::new(LegacyHandlerWrapper::new(observe_handler))),
         method: RequestType::Delete,
     }
 }
@@ -141,15 +160,20 @@ where
     G: Fn(Box<dyn Request>, Arc<Mutex<S>>) -> Fut2 + Send + Sync + 'static,
     Fut1: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
     Fut2: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static,
-    S: Clone,
+    S: Send + Sync + Clone + 'static,
 {
+    let handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(f(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+    let observe_handler = Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
+        Box::pin(o(req, state))
+            as std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>
+    });
+
     RouteHandler {
-        handler: Arc::new(move |req: Box<dyn Request>, state: Arc<Mutex<S>>| {
-            Box::pin(f(req, state))
-        }),
-        observe_handler: Some(Arc::new(
-            move |req: Box<dyn Request>, state: Arc<Mutex<S>>| Box::pin(o(req, state)),
-        )),
+        handler: Box::new(LegacyHandlerWrapper::new(handler)),
+        observe_handler: Some(Box::new(LegacyHandlerWrapper::new(observe_handler))),
         method: RequestType::UnKnown,
     }
 }
@@ -236,14 +260,16 @@ mod tests {
         };
 
         let state = Arc::new(Mutex::new(()));
-        let result = (handler.handler)(Box::new(payload.clone()), state.clone())
+        let result = handler
+            .handler
+            .call_erased(payload.raw.clone(), state.clone())
             .await
             .unwrap();
         assert_eq!(result.message.payload, vec![1, 2, 3]);
 
         assert!(handler.observe_handler.is_some());
-        if let Some(h) = handler.observe_handler {
-            let result = h(Box::new(payload), state).await.unwrap();
+        if let Some(h) = &handler.observe_handler {
+            let result = h.call_erased(payload.raw, state).await.unwrap();
             assert_eq!(result.message.payload, vec![3, 2, 1]);
         }
     }

@@ -11,22 +11,23 @@ use coapum::{
         Error,
     },
     observer::sled::SledObserver,
-    router::wrapper::{CoapResponseResult, IntoCoapResponse},
-    router::{wrapper::get, CoapRouter, Request},
-    serve, ResponseType,
+    routing::RouterBuilder,
+    serve, Raw,
 };
 
 type PskStore = Arc<RwLock<HashMap<String, Vec<u8>>>>;
 
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
-async fn test<S>(payload: Box<dyn Request>, _state: S) -> CoapResponseResult {
-    log::info!("Got json payload: {}", payload.get_value());
+async fn test() -> Raw {
     let json = "{\"resp\":\"OK\"}";
     log::info!("Writing: {}", json);
     let json = json.as_bytes().to_vec();
 
-    (ResponseType::Valid, json).into_response()
+    Raw {
+        payload: json,
+        content_format: None,
+    }
 }
 
 #[tokio::main]
@@ -46,8 +47,7 @@ async fn main() {
 
     let obs = SledObserver::new("coapum.db");
 
-    let mut router = CoapRouter::new((), obs);
-    router.add("test", get(test));
+    let router = RouterBuilder::new((), obs).get("test", test).build();
 
     // Setup socket
     let addr = "127.0.0.1:5684";
