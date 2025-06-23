@@ -11,7 +11,7 @@ use coapum::{
         Error,
     },
     observer::sled::SledObserver,
-    routing::RouterBuilder,
+    router::RouterBuilder,
     serve, Raw,
 };
 

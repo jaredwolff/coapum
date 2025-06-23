@@ -49,35 +49,31 @@ async fn main() {
     let mut b = vec![0u8; 1024];
     let payload_json = "{\"foo\": {\"bar\": 1, \"baz\": [1, 2, 3]}}";
 
-    loop {
-        log::info!("Writing: {}", payload_json);
+    log::info!("Writing: {}", payload_json);
 
-        let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
-        request.set_method(RequestType::Get);
-        request.set_path("test");
-        request.message.payload = payload_json.as_bytes().to_vec();
-        request
-            .message
-            .set_content_format(ContentFormat::ApplicationJSON);
-        match dtls_conn.send(&request.message.to_bytes().unwrap()).await {
-            Ok(n) => {
-                log::info!("Wrote {} bytes", n);
-            }
-            Err(e) => {
-                log::error!("Error writing: {}", e);
-                break;
-            }
-        };
-
-        if let Ok(n) = dtls_conn.recv(&mut b).await {
-            log::debug!("Read {} bytes", n);
-
-            let packet = Packet::from_bytes(&b[0..n]).unwrap();
-
-            log::info!("Response: {:?}", String::from_utf8(packet.payload).unwrap());
-            log::info!("Status: {:?}", packet.header.code);
+    let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
+    request.set_method(RequestType::Get);
+    request.set_path("test");
+    request.message.payload = payload_json.as_bytes().to_vec();
+    request
+        .message
+        .set_content_format(ContentFormat::ApplicationJSON);
+    match dtls_conn.send(&request.message.to_bytes().unwrap()).await {
+        Ok(n) => {
+            log::info!("Wrote {} bytes", n);
         }
+        Err(e) => {
+            log::error!("Error writing: {}", e);
+            return;
+        }
+    };
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    if let Ok(n) = dtls_conn.recv(&mut b).await {
+        log::debug!("Read {} bytes", n);
+
+        let packet = Packet::from_bytes(&b[0..n]).unwrap();
+
+        log::info!("Response: {:?}", String::from_utf8(packet.payload).unwrap());
+        log::info!("Status: {:?}", packet.header.code);
     }
 }

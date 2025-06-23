@@ -169,8 +169,6 @@ pub trait Handler<S, Args>: Clone + Send + Sized + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CoapRequest, Packet};
-    use std::net::{Ipv4Addr, SocketAddrV4};
 
     #[test]
     fn test_status_code_conversion() {

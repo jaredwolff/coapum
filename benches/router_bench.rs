@@ -1,30 +1,26 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use coapum::{
-    router::{wrapper::get, CoapRouter, CoapumRequest, Request, RouterError},
-    {CoapRequest, CoapResponse, Packet, ResponseType},
+    router::{CoapumRequest, RouterBuilder},
+    Raw, {CoapRequest, Packet},
 };
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use serde_json::json;
 use tower::Service; // make sure to use your actual project name and import path
 
-async fn test<S>(payload: Box<dyn Request>, _state: S) -> CoapResponse {
-    log::info!("Got json payload: {}", payload.get_value());
-
-    let pkt = Packet::default();
-    let mut response = CoapResponse::new(&pkt).unwrap();
+async fn test() -> Raw {
     let json = "{\"resp\":\"OK\"}";
-    response.message.payload = json.as_bytes().to_vec();
-    response.set_status(ResponseType::Valid);
-
     log::info!("Writing: {}", json);
-    response
+
+    Raw {
+        payload: json.as_bytes().to_vec(),
+        content_format: None,
+    }
 }
 
 fn router_benchmark(c: &mut Criterion) {
-    let mut router = CoapRouter::new((), ());
-    router.add("test", get(test));
+    let mut router = RouterBuilder::new((), ()).get("test", test).build();
 
     c.bench_function("coap_router", |b| {
         b.iter(|| {
@@ -49,7 +45,7 @@ fn router_benchmark(c: &mut Criterion) {
             );
 
             let request: CoapumRequest<SocketAddr> = request.into();
-            router.call(black_box::<CoapumRequest<SocketAddr>>(request));
+            let _ = router.call(std::hint::black_box::<CoapumRequest<SocketAddr>>(request));
         })
     });
 }

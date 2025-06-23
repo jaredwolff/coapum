@@ -11,7 +11,7 @@ use coapum::{
     },
     extract::{Cbor, Identity, Path, StatusCode},
     observer::sled::SledObserver,
-    routing::RouterBuilder,
+    router::RouterBuilder,
     serve,
 };
 use serde::{Deserialize, Serialize};

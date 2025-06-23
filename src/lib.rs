@@ -1,11 +1,9 @@
 pub mod config;
 pub mod extract;
-pub mod extractor;
 pub mod handler;
 pub mod helper;
 pub mod observer;
 pub mod router;
-pub mod routing;
 pub mod serve;
 
 #[cfg(test)]
@@ -18,7 +16,7 @@ pub use extract::{
     StatusCode,
 };
 pub use handler::{into_handler, Handler, HandlerFn};
-pub use routing::{any, delete, get, post, put, RouterBuilder};
+pub use router::RouterBuilder;
 
 // Re-export CoAP types
 pub use coap_lite::{

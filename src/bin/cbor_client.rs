@@ -1,10 +1,9 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc};
 
 use tokio::net::UdpSocket;
 
 use coapum::{
     dtls::{cipher_suite::CipherSuiteId, config::Config, conn::DTLSConn, Error},
-    helper,
     util::Conn,
     {CoapRequest, ContentFormat, Packet, RequestType},
 };

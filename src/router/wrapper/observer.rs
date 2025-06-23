@@ -183,11 +183,11 @@ mod tests {
 
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-    use crate::{extractor::json::JsonPayload, router::wrapper::IntoCoapResponse};
+    use crate::router::wrapper::IntoCoapResponse;
+    use crate::router::CoapumRequest;
 
     use super::*;
     use coap_lite::{CoapRequest, Packet, ResponseType};
-    use serde_json::Value;
 
     #[tokio::test]
     async fn test_get() {
@@ -254,22 +254,19 @@ mod tests {
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0)),
         );
 
-        let payload = JsonPayload {
-            raw: request.into(),
-            value: Value::Null,
-        };
+        let coap_request: CoapumRequest<SocketAddr> = request.into();
 
         let state = Arc::new(Mutex::new(()));
         let result = handler
             .handler
-            .call_erased(payload.raw.clone(), state.clone())
+            .call_erased(coap_request.clone(), state.clone())
             .await
             .unwrap();
         assert_eq!(result.message.payload, vec![1, 2, 3]);
 
         assert!(handler.observe_handler.is_some());
         if let Some(h) = &handler.observe_handler {
-            let result = h.call_erased(payload.raw, state).await.unwrap();
+            let result = h.call_erased(coap_request, state).await.unwrap();
             assert_eq!(result.message.payload, vec![3, 2, 1]);
         }
     }
