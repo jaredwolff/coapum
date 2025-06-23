@@ -9,32 +9,31 @@ default = ["sled-observer"]
 sled-observer = ["sled"]
 
 [dependencies]
-async-trait = "0.1.79"
+async-trait = "0.1.88"
 ciborium = "0.2.2"
-coap-lite = "0.11.5"
-env_logger = "0.10"
-futures = "0.3.30"
-log = "0.4.21"
+coap-lite = "0.13.3"
+env_logger = "0.11.8"
+futures = "0.3.31"
+log = "0.4.27"
 route-recognizer = "0.3.1"
-serde_json = "1.0.115"
-tokio = { version = "1.37.0", features = ["full"] }
-tower = { version = "0.4.13", features = [
+serde_json = "1.0.140"
+tokio = { version = "1.45.1", features = ["full"] }
+tower = { version = "0.5.2", features = [
     "tokio",
     "tokio-stream",
     "tokio-util",
 ] }
-webrtc-dtls = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/get-psk-identity" }
-webrtc-util = { git = "https://github.com/jaredwolff/webrtc.git", branch = "jared/get-psk-identity" }
 
 # Optional
 sled = { version = "0.34.7", optional = true }
 
-# webrtc-dtls = { path = "../webrtc/dtls" }
-# webrtc-util = { path = "../webrtc/util" }
+# DTLS
+webrtc-dtls = { version = "0.12" }
+webrtc-util = { version = "0.11" }
 
 [dev-dependencies]
 lazy_static = { version = "1.4.0" }
-criterion = { version = "0.5.1" }
+criterion = { version = "0.6.0" }
 
 [[bench]]
 name = "router_bench"
