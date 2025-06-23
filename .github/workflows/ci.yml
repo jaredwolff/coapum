@@ -144,7 +144,7 @@ jobs:
           -o coverage.lcov
 
       - name: Upload to codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           file: coverage.lcov
           fail_ci_if_error: true
