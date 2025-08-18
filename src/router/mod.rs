@@ -13,7 +13,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::Mutex;
 use tower::Service;
 
@@ -57,6 +57,102 @@ where
     }
 }
 
+/// A handle that allows external code to update the application state
+/// without having direct access to the router.
+#[derive(Clone)]
+pub struct StateUpdateHandle<S>
+where
+    S: Send + Sync + Clone + 'static,
+{
+    sender: mpsc::Sender<Box<dyn FnOnce(&mut S) + Send + 'static>>,
+}
+
+impl<S> StateUpdateHandle<S>
+where
+    S: Send + Sync + Clone + 'static,
+{
+    /// Create a new state update handle
+    pub fn new(sender: mpsc::Sender<Box<dyn FnOnce(&mut S) + Send + 'static>>) -> Self {
+        Self { sender }
+    }
+
+    /// Update the application state using a closure
+    /// 
+    /// This allows external components to modify the shared state safely.
+    /// The update is queued and applied asynchronously by the router.
+    /// 
+    /// # Example
+    /// 
+    /// ```rust,no_run
+    /// # use coapum::StateUpdateHandle;
+    /// # #[derive(Clone)]
+    /// # struct MyAppState {
+    /// #     counter: i32,
+    /// #     config: Config,
+    /// # }
+    /// # #[derive(Clone)]
+    /// # struct Config {
+    /// #     max_db_connections: usize,
+    /// # }
+    /// # async fn example(state_handle: StateUpdateHandle<MyAppState>) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Update a counter in the state
+    /// state_handle.update(|state: &mut MyAppState| {
+    ///     state.counter += 1;
+    /// }).await?;
+    /// 
+    /// // Update database connection pool size
+    /// state_handle.update(|state: &mut MyAppState| {
+    ///     state.config.max_db_connections = 50;
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update<F>(&self, updater: F) -> Result<(), StateUpdateError>
+    where
+        F: FnOnce(&mut S) + Send + 'static,
+    {
+        self.sender
+            .send(Box::new(updater))
+            .await
+            .map_err(|_| StateUpdateError::ChannelClosed)
+    }
+
+    /// Attempt to update the state without blocking
+    /// 
+    /// Returns an error if the update channel is full or closed.
+    pub fn try_update<F>(&self, updater: F) -> Result<(), StateUpdateError>
+    where
+        F: FnOnce(&mut S) + Send + 'static,
+    {
+        self.sender
+            .try_send(Box::new(updater))
+            .map_err(|e| match e {
+                mpsc::error::TrySendError::Full(_) => StateUpdateError::ChannelFull,
+                mpsc::error::TrySendError::Closed(_) => StateUpdateError::ChannelClosed,
+            })
+    }
+}
+
+/// Error type for state update operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum StateUpdateError {
+    /// The update channel is full (try_update only)
+    ChannelFull,
+    /// The update channel is closed (router dropped)
+    ChannelClosed,
+}
+
+impl std::fmt::Display for StateUpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StateUpdateError::ChannelFull => write!(f, "State update channel is full"),
+            StateUpdateError::ChannelClosed => write!(f, "State update channel is closed"),
+        }
+    }
+}
+
+impl std::error::Error for StateUpdateError {}
+
 pub trait Request: Send {
     fn get_value(&self) -> &Value;
     fn get_raw(&self) -> &CoapumRequest<SocketAddr>;
@@ -86,6 +182,8 @@ where
     inner: Router<HashMap<RequestTypeWrapper, RouteHandler<S>>>,
     state: Arc<Mutex<S>>, // Shared state
     db: O,
+    // Channel for external state updates
+    state_update_sender: Option<mpsc::Sender<Box<dyn FnOnce(&mut S) + Send + 'static>>>,
 }
 
 /// Provides methods for creating a new CoapRouter, registering and unregistering observers,
@@ -106,6 +204,7 @@ where
             inner: Router::new(),
             state: Arc::new(Mutex::new(state)),
             db,
+            state_update_sender: None,
         }
     }
 
@@ -168,6 +267,78 @@ where
         path: &str,
     ) -> Result<Option<Value>, O::Error> {
         self.db.read(device_id, path).await
+    }
+
+    /// Enable external state updates and return a handle for external components
+    /// 
+    /// This creates a channel that allows external components to safely update
+    /// the shared application state. Returns a StateUpdateHandle and starts
+    /// a background task to process state updates.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `buffer_size` - The size of the update channel buffer (default: 1000)
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a StateUpdateHandle that external components can use to queue state updates.
+    /// 
+    /// # Example
+    /// 
+    /// ```rust,no_run
+    /// # use coapum::router::CoapRouter;
+    /// # use coapum::observer::memory::MemObserver;
+    /// # #[derive(Clone, Debug)]
+    /// # struct AppState {
+    /// #     counter: i32,
+    /// # }
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let app_state = AppState { counter: 0 };
+    /// # let observer = MemObserver::new();
+    /// let mut router = CoapRouter::new(app_state, observer);
+    /// let state_handle = router.enable_state_updates(1000);
+    /// 
+    /// // External component can now update state:
+    /// state_handle.update(|state| {
+    ///     state.counter += 1;
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_state_updates(&mut self, buffer_size: usize) -> StateUpdateHandle<S> {
+        let (sender, receiver) = mpsc::channel(buffer_size);
+        self.state_update_sender = Some(sender.clone());
+        
+        // Spawn background task to process state updates
+        let state = Arc::clone(&self.state);
+        tokio::spawn(async move {
+            Self::process_state_updates(state, receiver).await;
+        });
+        
+        StateUpdateHandle::new(sender)
+    }
+
+    /// Process state updates from the channel
+    /// 
+    /// This runs in a background task and applies state updates sequentially
+    /// to maintain consistency.
+    async fn process_state_updates(
+        state: Arc<Mutex<S>>,
+        mut receiver: mpsc::Receiver<Box<dyn FnOnce(&mut S) + Send + 'static>>,
+    ) {
+        while let Some(update) = receiver.recv().await {
+            let mut state_guard = state.lock().await;
+            update(&mut *state_guard);
+        }
+    }
+
+    /// Get a state update handle if state updates are enabled
+    /// 
+    /// Returns None if enable_state_updates() has not been called.
+    pub fn state_update_handle(&self) -> Option<StateUpdateHandle<S>> {
+        self.state_update_sender
+            .as_ref()
+            .map(|sender| StateUpdateHandle::new(sender.clone()))
     }
 
     /// Adds a route handler for a given route.
@@ -376,6 +547,55 @@ where
     /// Create a notification trigger handle for external code to trigger observer notifications
     pub fn notification_trigger(&self) -> NotificationTrigger<O> {
         NotificationTrigger::new(self.router.db.clone())
+    }
+
+    /// Enable external state updates and return a handle for external components
+    /// 
+    /// This is a convenience method that calls enable_state_updates on the underlying router.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `buffer_size` - The size of the update channel buffer (default: 1000)
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a StateUpdateHandle that external components can use to queue state updates.
+    /// 
+    /// # Example
+    /// 
+    /// ```rust,no_run
+    /// # use coapum::RouterBuilder;
+    /// # use coapum::observer::memory::MemObserver;
+    /// # #[derive(Clone, Debug)]
+    /// # struct AppState {
+    /// #     counter: i32,
+    /// # }
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let app_state = AppState { counter: 0 };
+    /// # let observer = MemObserver::new();
+    /// let mut builder = RouterBuilder::new(app_state, observer);
+    /// let state_handle = builder.enable_state_updates(1000);
+    /// 
+    /// let router = builder
+    ///     // .get("/api/data", handler)
+    ///     .build();
+    /// 
+    /// // External component can now update state:
+    /// state_handle.update(|state| {
+    ///     state.counter += 1;
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_state_updates(&mut self, buffer_size: usize) -> StateUpdateHandle<S> {
+        self.router.enable_state_updates(buffer_size)
+    }
+
+    /// Get a state update handle if state updates are enabled
+    /// 
+    /// Returns None if enable_state_updates() has not been called.
+    pub fn state_update_handle(&self) -> Option<StateUpdateHandle<S>> {
+        self.router.state_update_handle()
     }
 
     /// Get a mutable reference to the underlying router for advanced usage

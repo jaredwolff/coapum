@@ -184,17 +184,17 @@ impl<S> FromRequest<S> for ObserveFlag {
 /// connection pools wrapped in Arc for efficient sharing.
 ///
 /// ### PostgreSQL Example (using sqlx)
-/// 
-/// ```rust
+///
+/// ```rust,ignore
 /// use coapum::extract::State;
 /// use std::sync::Arc;
-/// 
+///
 /// #[derive(Clone)]
 /// struct AppState {
 ///     db: Arc<sqlx::PgPool>,
 ///     cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
 /// }
-/// 
+///
 /// async fn get_user_handler(State(state): State<AppState>) -> Result<String, Box<dyn std::error::Error>> {
 ///     let user = sqlx::query!("SELECT name FROM users WHERE id = $1", 1)
 ///         .fetch_one(&*state.db)
@@ -204,17 +204,17 @@ impl<S> FromRequest<S> for ObserveFlag {
 /// ```
 ///
 /// ### SQLite Example (using sqlx)
-/// 
-/// ```rust
-/// use coapum::extract::State;
+///
+/// ```rust,ignore
+/// use coapum::{Json, extract::State};
 /// use std::sync::Arc;
-/// 
+///
 /// #[derive(Clone)]
 /// struct AppState {
 ///     db: Arc<sqlx::SqlitePool>,
 ///     config: AppConfig,
 /// }
-/// 
+///
 /// async fn insert_data_handler(
 ///     State(state): State<AppState>,
 ///     Json(data): Json<serde_json::Value>
@@ -227,21 +227,21 @@ impl<S> FromRequest<S> for ObserveFlag {
 /// ```
 ///
 /// ### Diesel Example
-/// 
-/// ```rust
+///
+/// ```rust,ignore
 /// use coapum::extract::State;
 /// use std::sync::Arc;
 /// use diesel::r2d2::{Pool, ConnectionManager};
 /// use diesel::PgConnection;
-/// 
+///
 /// type DbPool = Arc<Pool<ConnectionManager<PgConnection>>>;
-/// 
+///
 /// #[derive(Clone)]
 /// struct AppState {
 ///     db_pool: DbPool,
 ///     redis_client: Arc<redis::Client>,
 /// }
-/// 
+///
 /// async fn database_handler(State(state): State<AppState>) {
 ///     let mut conn = state.db_pool.get().expect("Failed to get connection");
 ///     // Use connection for database operations
@@ -249,12 +249,25 @@ impl<S> FromRequest<S> for ObserveFlag {
 /// ```
 ///
 /// ### Generic Database Pattern
-/// 
+///
 /// For maximum flexibility, you can define a trait for database operations:
-/// 
-/// ```rust
+///
+/// ```rust,ignore
 /// use async_trait::async_trait;
-/// 
+/// use coapum::extract::State;
+/// use std::sync::Arc;
+///
+/// #[derive(Clone)]
+/// struct User {
+///     id: i32,
+///     name: String,
+/// }
+///
+/// #[derive(Clone)]
+/// struct Cache {
+///     // Cache implementation
+/// }
+///
 /// #[async_trait]
 /// pub trait DatabaseOps: Send + Sync + Clone {
 ///     type Error: std::error::Error + Send + Sync + 'static;
@@ -262,13 +275,13 @@ impl<S> FromRequest<S> for ObserveFlag {
 ///     async fn get_user(&self, id: i32) -> Result<User, Self::Error>;
 ///     async fn save_data(&self, data: &serde_json::Value) -> Result<(), Self::Error>;
 /// }
-/// 
+///
 /// #[derive(Clone)]
 /// struct AppState<DB: DatabaseOps> {
 ///     db: DB,
 ///     cache: Arc<tokio::sync::RwLock<Cache>>,
 /// }
-/// 
+///
 /// async fn generic_handler<DB: DatabaseOps>(
 ///     State(state): State<AppState<DB>>
 /// ) -> Result<(), DB::Error> {

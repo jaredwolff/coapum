@@ -18,7 +18,7 @@ pub use extract::{
     StatusCode,
 };
 pub use handler::{into_handler, Handler, HandlerFn};
-pub use router::{NotificationTrigger, RouterBuilder};
+pub use router::{NotificationTrigger, RouterBuilder, StateUpdateHandle, StateUpdateError};
 
 // Re-export CoAP types
 pub use coap_lite::{

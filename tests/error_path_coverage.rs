@@ -68,11 +68,6 @@ async fn handler_cbor_serialization_test(
     }
 }
 
-// Handler that always panics to test panic recovery
-async fn handler_panic_test() -> StatusCode {
-    panic!("Simulated handler panic for testing");
-}
-
 // Handler with complex error conditions
 async fn handler_complex_error_scenarios(
     Json(data): Json<ErrorTestData>,
@@ -326,7 +321,7 @@ mod content_format_error_tests {
         request.message.payload = json_bytes;
         // Don't set content format - this may cause extraction issues
 
-        let response = router.call(request).await.unwrap();
+        let _response = router.call(request).await.unwrap();
         // Handler should handle missing content format gracefully
         // Just verify we get some response (success or error)
         assert!(true);

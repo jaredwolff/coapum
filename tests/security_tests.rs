@@ -4,7 +4,7 @@
 //! path validation, connection management, and injection attack prevention.
 
 use coapum::{
-    extract::{Cbor, Json, FromRequest},
+    extract::{Cbor, FromRequest, Json},
     observer::memory::MemObserver,
     router::RouterBuilder,
     CoapRequest, ContentFormat, Packet,
@@ -33,15 +33,16 @@ mod payload_security_tests {
     async fn test_cbor_payload_at_size_limit() {
         // Create payload exactly at CBOR size limit (8192 bytes)
         let large_string = "A".repeat(8000); // Leave room for CBOR encoding overhead
-        let test_data = TestPayload {
-            data: large_string,
-        };
+        let test_data = TestPayload { data: large_string };
 
         let mut buffer = Vec::new();
         ciborium::ser::into_writer(&test_data, &mut buffer).unwrap();
 
         // Ensure we're at or near the limit but not over
-        assert!(buffer.len() <= 8192, "Test payload should be within CBOR limit");
+        assert!(
+            buffer.len() <= 8192,
+            "Test payload should be within CBOR limit"
+        );
 
         let mut req = create_test_request_with_payload(buffer);
         req.message
@@ -71,12 +72,13 @@ mod payload_security_tests {
     async fn test_json_payload_at_size_limit() {
         // Create JSON payload at size limit (1MB)
         let large_string = "A".repeat(1_048_500); // Leave room for JSON structure
-        let test_data = TestPayload {
-            data: large_string,
-        };
+        let test_data = TestPayload { data: large_string };
 
         let payload = serde_json::to_vec(&test_data).unwrap();
-        assert!(payload.len() <= 1_048_576, "Test payload should be within JSON limit");
+        assert!(
+            payload.len() <= 1_048_576,
+            "Test payload should be within JSON limit"
+        );
 
         let mut req = create_test_request_with_payload(payload);
         req.message
@@ -96,7 +98,10 @@ mod payload_security_tests {
             .set_content_format(ContentFormat::ApplicationJSON);
 
         let result = Json::<TestPayload>::from_request(&req, &()).await;
-        assert!(result.is_err(), "Should reject JSON payload over size limit");
+        assert!(
+            result.is_err(),
+            "Should reject JSON payload over size limit"
+        );
 
         let error = result.unwrap_err();
         assert!(error.to_string().contains("Payload too large"));
@@ -113,7 +118,10 @@ mod payload_security_tests {
 
         let cbor_result = Cbor::<TestPayload>::from_request(&req, &()).await;
         assert!(cbor_result.is_err(), "CBOR should reject empty payload");
-        assert!(cbor_result.unwrap_err().to_string().contains("Empty payload"));
+        assert!(cbor_result
+            .unwrap_err()
+            .to_string()
+            .contains("Empty payload"));
 
         // Test JSON empty payload
         let mut req = create_test_request_with_payload(empty_payload);
@@ -122,7 +130,10 @@ mod payload_security_tests {
 
         let json_result = Json::<TestPayload>::from_request(&req, &()).await;
         assert!(json_result.is_err(), "JSON should reject empty payload");
-        assert!(json_result.unwrap_err().to_string().contains("Empty payload"));
+        assert!(json_result
+            .unwrap_err()
+            .to_string()
+            .contains("Empty payload"));
     }
 
     #[tokio::test]
@@ -147,7 +158,6 @@ mod payload_security_tests {
 }
 
 mod path_validation_security_tests {
-    use super::*;
 
     // Note: validate_observer_path is a private function in serve.rs
     // These tests document expected behavior but can't test the function directly
@@ -156,7 +166,7 @@ mod path_validation_security_tests {
         // Test various path traversal attempts that should be rejected
         let traversal_attempts = vec![
             "../secrets",
-            "data/../../../etc/passwd", 
+            "data/../../../etc/passwd",
             "./../../config",
             "/data/../admin",
             "normal/../../../../../root",
@@ -166,7 +176,9 @@ mod path_validation_security_tests {
         for malicious_path in traversal_attempts {
             // Document that these should be rejected by validate_observer_path
             assert!(
-                malicious_path.contains("..") || malicious_path.contains("./") || malicious_path.contains("\\"),
+                malicious_path.contains("..")
+                    || malicious_path.contains("./")
+                    || malicious_path.contains("\\"),
                 "Path {} contains dangerous patterns that should be rejected",
                 malicious_path
             );
@@ -177,7 +189,7 @@ mod path_validation_security_tests {
     fn test_invalid_characters_documentation() {
         let invalid_paths = vec![
             "/data/sensor@1",
-            "/api/user#123", 
+            "/api/user#123",
             "/device/temp$",
             "/path with spaces",
             "/データ/センサー", // Unicode characters
@@ -188,9 +200,9 @@ mod path_validation_security_tests {
 
         for invalid_path in invalid_paths {
             // Document that these contain invalid characters
-            let has_invalid = !invalid_path.chars().all(|c| 
-                c == '/' || c.is_ascii_alphanumeric() || c == '_' || c == '-'
-            );
+            let has_invalid = !invalid_path
+                .chars()
+                .all(|c| c == '/' || c.is_ascii_alphanumeric() || c == '_' || c == '-');
             assert!(
                 has_invalid,
                 "Path {} should contain invalid characters",
@@ -203,7 +215,7 @@ mod path_validation_security_tests {
     fn test_valid_path_patterns() {
         let valid_paths = vec![
             "/api/sensors",
-            "/device_123/temperature", 
+            "/device_123/temperature",
             "/data-source/readings",
             "/sensors/device_1/temp",
         ];
@@ -211,15 +223,17 @@ mod path_validation_security_tests {
         for valid_path in valid_paths {
             // Test that these paths contain only valid characters
             let components: Vec<&str> = valid_path.split('/').filter(|s| !s.is_empty()).collect();
-            
+
             for component in &components {
                 assert!(
-                    component.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+                    component
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
                     "Component '{}' should contain only valid characters",
                     component
                 );
             }
-            
+
             // Test path depth (should be reasonable)
             assert!(
                 components.len() <= 10,
@@ -236,16 +250,16 @@ mod connection_security_tests {
     fn test_identity_sanitization() {
         // These tests would need access to the identity sanitization logic in serve.rs
         // For now, we document the expected behavior
-        
+
         let test_cases = vec![
             ("normal_client", true),
             ("client-123", true),
             ("client.domain.com", true),
-            ("", false), // Empty should be rejected
-            ("client@domain", false), // @ should be filtered out
+            ("", false),                         // Empty should be rejected
+            ("client@domain", false),            // @ should be filtered out
             ("client;DROP TABLE users;", false), // SQL injection attempt
-            ("client\x00null", false), // Null byte injection
-            ("", false), // Empty should be rejected
+            ("client\x00null", false),           // Null byte injection
+            ("", false),                         // Empty should be rejected
         ];
 
         // This test documents expected behavior - actual implementation would need
@@ -257,10 +271,12 @@ mod connection_security_tests {
                 "Identity length validation: {}",
                 identity
             );
-            
+
             if should_be_valid {
                 assert!(
-                    identity.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'),
+                    identity
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'),
                     "Identity should contain only safe characters: {}",
                     identity
                 );
@@ -301,11 +317,14 @@ mod integration_security_tests {
             request.set_path(malicious_path);
 
             let request: coapum::router::CoapumRequest<SocketAddr> = request.into();
-            
+
             // Router should handle malicious paths gracefully (not panic)
             let result = router.call(request).await;
             // We don't care about the specific response, just that it doesn't crash
-            assert!(result.is_ok() || result.is_err(), "Router should handle malicious paths gracefully");
+            assert!(
+                result.is_ok() || result.is_err(),
+                "Router should handle malicious paths gracefully"
+            );
         }
     }
 
@@ -319,11 +338,12 @@ mod integration_security_tests {
         // Test concurrent requests with various payloads
         let mut handles = vec![];
 
-        for i in 0..5 { // Reduced to 5 for faster testing
+        for i in 0..5 {
+            // Reduced to 5 for faster testing
             let router_clone = router.clone();
             let handle = tokio::spawn(async move {
                 let oversized_payload = vec![0u8; 1_000]; // Smaller payload for testing
-                
+
                 let mut request = CoapRequest::from_packet(
                     Packet::new(),
                     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8000 + i)),
