@@ -9,6 +9,8 @@ pub mod serve;
 #[cfg(test)]
 mod tests;
 
+pub mod test_utils;
+
 // Re-export commonly used types from the ergonomic API
 pub use extract::state::FullRequest;
 pub use extract::{
