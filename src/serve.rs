@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 
 use tokio::sync::{
     mpsc::{channel, Sender},
@@ -16,7 +16,78 @@ use crate::{
     router::{CoapRouter, CoapumRequest},
 };
 
-const BUF_SIZE: usize = 8192;
+/// Connection information for security tracking and rate limiting
+#[derive(Debug, Clone)]
+struct ConnectionInfo {
+    sender: Sender<()>,
+    established_at: Instant,
+    #[allow(dead_code)] // Reserved for future security features
+    source_addr: SocketAddr,
+    reconnect_count: u32,
+}
+
+/// Security constants for connection management
+const MIN_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
+const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
+/// Path validation errors
+#[derive(Debug)]
+enum PathValidationError {
+    TraversalAttempt,
+    PathTooDeep,
+    InvalidCharacters,
+    EmptyPath,
+}
+
+impl std::fmt::Display for PathValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathValidationError::TraversalAttempt => write!(f, "Path traversal attempt detected"),
+            PathValidationError::PathTooDeep => write!(f, "Path too deep (max 10 components)"),
+            PathValidationError::InvalidCharacters => write!(f, "Path contains invalid characters"),
+            PathValidationError::EmptyPath => write!(f, "Path is empty"),
+        }
+    }
+}
+
+impl std::error::Error for PathValidationError {}
+
+/// Security: Validate and normalize observer path to prevent injection attacks
+fn validate_observer_path(path: &str) -> Result<String, PathValidationError> {
+    if path.is_empty() {
+        return Err(PathValidationError::EmptyPath);
+    }
+
+    // Security: Reject paths containing dangerous patterns
+    if path.contains("..") || path.contains("./") || path.contains("\\") {
+        return Err(PathValidationError::TraversalAttempt);
+    }
+
+    // Normalize and validate path components
+    let components: Vec<&str> = path.split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // Security: Limit path depth to prevent resource exhaustion
+    const MAX_PATH_DEPTH: usize = 10;
+    if components.len() > MAX_PATH_DEPTH {
+        return Err(PathValidationError::PathTooDeep);
+    }
+
+    // Security: Validate each path component for safe characters only
+    for component in &components {
+        if !component.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err(PathValidationError::InvalidCharacters);
+        }
+    }
+
+    // Return normalized path
+    if components.is_empty() {
+        Ok("/".to_string())
+    } else {
+        Ok(format!("/{}", components.join("/")))
+    }
+}
 
 pub async fn serve<O, S>(
     addr: String,
@@ -27,19 +98,21 @@ where
     S: Debug + Clone + Send + Sync + 'static, // The shared state needs to be Send and Sync to be shared across threads
     O: Observer + Send + Sync + 'static,
 {
+    let dtls_config = config.dtls_cfg.clone();
     let listener = Arc::new(
-        listener::listen(addr.clone(), config.dtls_cfg)
+        listener::listen(addr.clone(), dtls_config)
             .await
-            .unwrap(),
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?,
     );
-    let connections: Arc<Mutex<HashMap<String, Sender<()>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let connections: Arc<Mutex<HashMap<String, ConnectionInfo>>> = Arc::new(Mutex::new(HashMap::new()));
 
     loop {
         if let Ok((conn, socket_addr)) = listener.accept().await {
             log::info!("Got a connection from: {}", socket_addr);
 
             let mut router = router.clone();
-            let timeout = config.timeout;
+            let config_clone = config.clone();
+            let timeout = config_clone.timeout;
 
             let state = if let Some(dtls) = conn.as_any().downcast_ref::<DTLSConn>() {
                 dtls.connection_state().await
@@ -49,24 +122,38 @@ where
             };
 
             // Get PSK Identity and use it as the Client's ID
-            let identity: String = match String::from_utf8(state.identity_hint) {
-                Ok(s) => s,
-                Err(e) => {
-                    log::error!("Unable to get identity! Error: {}", e);
-                    continue;
+            // Security: Validate identity hint size and content to prevent buffer overflow
+            const MAX_IDENTITY_LENGTH: usize = 256;
+            
+            let identity: String = if state.identity_hint.len() > MAX_IDENTITY_LENGTH {
+                log::error!("Identity hint too long: {} bytes (max: {})", state.identity_hint.len(), MAX_IDENTITY_LENGTH);
+                continue;
+            } else {
+                match String::from_utf8(state.identity_hint) {
+                    Ok(s) => {
+                        // Sanitize identity to prevent injection attacks
+                        let sanitized: String = s.chars()
+                            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+                            .take(MAX_IDENTITY_LENGTH)
+                            .collect();
+                        
+                        if sanitized.is_empty() {
+                            log::error!("Identity hint contains no valid characters");
+                            continue;
+                        }
+                        
+                        sanitized
+                    },
+                    Err(e) => {
+                        log::error!("Invalid UTF-8 in identity hint: {}", e);
+                        continue;
+                    }
                 }
             };
 
             log::info!("PSK Identity: {}", identity);
 
             let cons = connections.clone();
-
-            // Check for old connection and terminate it
-            {
-                if let Some(tx) = cons.lock().await.get(&identity) {
-                    let _ = tx.send(()).await; // Signal the old connection to terminate
-                }
-            }
 
             tokio::spawn(async move {
                 let (tx, mut rx) = channel::<()>(1);
@@ -75,13 +162,51 @@ where
                 let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
                 let obs_tx = Arc::new(obs_tx);
 
-                // Insert the channel
+                // Security: Validate connection and implement rate limiting
                 {
-                    cons.lock().await.insert(identity.clone(), tx);
+                    let mut connections_guard = cons.lock().await;
+
+                    // Check for existing connection and implement security measures
+                    if let Some(old_conn) = connections_guard.get(&identity) {
+                        // Security: Rate limit reconnections to prevent abuse
+                        if old_conn.established_at.elapsed() < MIN_RECONNECT_INTERVAL {
+                            log::warn!(
+                                "Rate limited: Rapid reconnection attempt from {} for identity '{}' (interval: {:?})",
+                                socket_addr, identity, old_conn.established_at.elapsed()
+                            );
+                            return; // Skip this connection attempt
+                        }
+
+                        // Security: Detect suspicious reconnection patterns
+                        if old_conn.reconnect_count > MAX_RECONNECT_ATTEMPTS {
+                            log::error!(
+                                "Security: Too many reconnection attempts from {} for identity '{}' (count: {})",
+                                socket_addr, identity, old_conn.reconnect_count
+                            );
+                            return; // Block this identity
+                        }
+
+                        // Signal the old connection to terminate
+                        let _ = old_conn.sender.send(()).await;
+                    }
+
+                    // Insert the new connection with tracking info
+                    let conn_info = ConnectionInfo {
+                        sender: tx,
+                        established_at: Instant::now(),
+                        source_addr: socket_addr,
+                        reconnect_count: connections_guard
+                            .get(&identity)
+                            .map(|c| c.reconnect_count + 1)
+                            .unwrap_or(0),
+                    };
+
+                    connections_guard.insert(identity.clone(), conn_info);
+                    log::info!("Connection established for identity '{}' from {}", identity, socket_addr);
                 }
 
                 // Buffer
-                let mut b = vec![0u8; BUF_SIZE];
+                let mut b = vec![0u8; config_clone.buffer_size()];
 
                 loop {
                     tokio::select! {
@@ -106,11 +231,14 @@ where
 
                                         // Then send..
                                         log::info!("Sending data to: {}", socket_addr);
-                                        match conn.send(&resp.message.to_bytes().unwrap()).await{
+                                        match resp.message.to_bytes() {
+                                            Ok(bytes) => match conn.send(&bytes).await {
                                             Ok(n) => log::debug!("Wrote {} notification bytes", n),
                                             Err(e) => {
                                                 log::error!("Error: {}", e);
                                             }
+                                        },
+                                            Err(e) => log::error!("Failed to serialize response: {}", e),
                                         }
                                     }
                                     Err(e) => log::error!("Error: {}", e)
@@ -132,7 +260,13 @@ where
                             };
 
                             if let Ok(n) = recv {
-                                let packet = Packet::from_bytes(&b[..n]).unwrap();
+                                let packet = match Packet::from_bytes(&b[..n]) {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        log::error!("Failed to parse packet: {}", e);
+                                        continue;
+                                    }
+                                };
                                 let request = CoapRequest::from_packet(packet, socket_addr);
 
                                 // Convert to wrapper
@@ -147,12 +281,34 @@ where
                                 // Handle observations
                                 match (observe_flag, method) {
                                     (Some(ObserveOption::Register), RequestType::Get) => {
-                                        // register
-                                        router.register_observer(&identity, path, obs_tx.clone()).await.unwrap();
+                                        // register - ensure path starts with / for consistency with routing
+                                        // Security: Validate path to prevent injection attacks
+                                        match validate_observer_path(path) {
+                                            Ok(normalized_path) => {
+                                                if let Err(e) = router.register_observer(&identity, &normalized_path, obs_tx.clone()).await {
+                                                    log::error!("Failed to register observer: {:?}", e);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                log::error!("Invalid observer path '{}' from {}: {}", path, socket_addr, e);
+                                                // Send error response for invalid path
+                                                continue;
+                                            }
+                                        }
                                     }
                                     (Some(ObserveOption::Deregister), RequestType::Delete) => {
-                                        // unregister
-                                        router.unregister_observer(&identity, path).await.unwrap();
+                                        // Security: Validate path to prevent injection attacks
+                                        match validate_observer_path(path) {
+                                            Ok(normalized_path) => {
+                                                if let Err(e) = router.unregister_observer(&identity, &normalized_path).await {
+                                                    log::error!("Failed to unregister observer: {:?}", e);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                log::error!("Invalid observer path '{}' from {}: {}", path, socket_addr, e);
+                                                continue;
+                                            }
+                                        }
                                     }
                                     _ => {}
                                 };
@@ -162,7 +318,13 @@ where
                                 {
                                     Ok(resp) => {
                                       // Get the response
-                                      let bytes = resp.message.to_bytes().unwrap();
+                                      let bytes = match resp.message.to_bytes() {
+                                          Ok(b) => b,
+                                          Err(e) => {
+                                              log::error!("Failed to serialize response: {}", e);
+                                              continue;
+                                          }
+                                      };
                                       log::debug!("Got response: {:?}", resp.message);
 
                                       // Write it back
@@ -186,7 +348,19 @@ where
                     }
                 }
 
-                log::info!("Terminated: {}", &socket_addr);
+                // Clean up connection from the map
+                {
+                    cons.lock().await.remove(&identity);
+                }
+
+                // Clean up all observer subscriptions for this device
+                let _ = router.unregister_all(&identity).await;
+
+                log::info!(
+                    "Terminated connection for identity: {} ({})",
+                    &identity,
+                    &socket_addr
+                );
             });
         }
     }

@@ -157,6 +157,7 @@ enum CborRejectionKind {
     InvalidCborData { error: String },
     MissingCborContentType,
     EmptyPayload,
+    PayloadTooLarge,
 }
 
 impl fmt::Display for CborRejection {
@@ -170,6 +171,9 @@ impl fmt::Display for CborRejection {
             }
             CborRejectionKind::EmptyPayload => {
                 write!(f, "Empty payload")
+            }
+            CborRejectionKind::PayloadTooLarge => {
+                write!(f, "Payload too large")
             }
         }
     }
@@ -185,6 +189,7 @@ impl IntoResponse for CborRejection {
                 StatusCode::UnsupportedContentFormat.into_response()
             }
             CborRejectionKind::EmptyPayload => StatusCode::BadRequest.into_response(),
+            CborRejectionKind::PayloadTooLarge => StatusCode::RequestEntityTooLarge.into_response(),
         }
     }
 }
@@ -207,6 +212,14 @@ where
             });
         }
 
+        // Security: Check payload size to prevent memory exhaustion attacks
+        const MAX_CBOR_PAYLOAD_SIZE: usize = 8192;
+        if req.message.payload.len() > MAX_CBOR_PAYLOAD_SIZE {
+            return Err(CborRejection {
+                kind: CborRejectionKind::PayloadTooLarge,
+            });
+        }
+
         // Check content format if available
         if let Some(content_format) = req.message.get_content_format() {
             match content_format {
@@ -219,13 +232,14 @@ where
             }
         }
 
-        // Deserialize CBOR data
-        let value =
-            ciborium::de::from_reader(&req.message.payload[..]).map_err(|e| CborRejection {
-                kind: CborRejectionKind::InvalidCborData {
-                    error: e.to_string(),
-                },
-            })?;
+        // Security: Deserialize CBOR data with size constraints
+        // Note: ciborium doesn't expose public deserializer configuration,
+        // but the from_reader function already has internal protections
+        let value = ciborium::de::from_reader(&req.message.payload[..]).map_err(|e| CborRejection {
+            kind: CborRejectionKind::InvalidCborData {
+                error: e.to_string(),
+            },
+        })?;
 
         Ok(Cbor(value))
     }
@@ -321,6 +335,7 @@ enum JsonRejectionKind {
     InvalidJsonData { error: String },
     MissingJsonContentType,
     EmptyPayload,
+    PayloadTooLarge,
 }
 
 impl fmt::Display for JsonRejection {
@@ -334,6 +349,9 @@ impl fmt::Display for JsonRejection {
             }
             JsonRejectionKind::EmptyPayload => {
                 write!(f, "Empty payload")
+            }
+            JsonRejectionKind::PayloadTooLarge => {
+                write!(f, "Payload too large")
             }
         }
     }
@@ -349,6 +367,7 @@ impl IntoResponse for JsonRejection {
                 StatusCode::UnsupportedContentFormat.into_response()
             }
             JsonRejectionKind::EmptyPayload => StatusCode::BadRequest.into_response(),
+            JsonRejectionKind::PayloadTooLarge => StatusCode::RequestEntityTooLarge.into_response(),
         }
     }
 }
@@ -368,6 +387,14 @@ where
         if req.message.payload.is_empty() {
             return Err(JsonRejection {
                 kind: JsonRejectionKind::EmptyPayload,
+            });
+        }
+
+        // Security: Check payload size to prevent memory exhaustion attacks
+        const MAX_JSON_PAYLOAD_SIZE: usize = 1_048_576; // 1MB
+        if req.message.payload.len() > MAX_JSON_PAYLOAD_SIZE {
+            return Err(JsonRejection {
+                kind: JsonRejectionKind::PayloadTooLarge,
             });
         }
 

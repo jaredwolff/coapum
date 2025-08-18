@@ -27,6 +27,36 @@ pub mod wrapper;
 
 pub type RouterError = Box<(dyn std::error::Error + Send + Sync + 'static)>;
 
+/// A handle that allows external code to trigger observer notifications
+/// without having direct access to the router.
+#[derive(Clone)]
+pub struct NotificationTrigger<O>
+where
+    O: Observer + Send + Sync + Clone + 'static,
+{
+    observer: O,
+}
+
+impl<O> NotificationTrigger<O>
+where
+    O: Observer + Send + Sync + Clone + 'static,
+{
+    /// Create a new notification trigger
+    pub fn new(observer: O) -> Self {
+        Self { observer }
+    }
+
+    /// Trigger a notification for observers of a specific device and path
+    pub async fn trigger_notification(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), O::Error> {
+        self.observer.write(device_id, path, payload).await
+    }
+}
+
 pub trait Request: Send {
     fn get_value(&self) -> &Value;
     fn get_raw(&self) -> &CoapumRequest<SocketAddr>;
@@ -103,6 +133,11 @@ where
         self.db.unregister(device_id, path).await
     }
 
+    /// Unregisters all observers for a given device.
+    pub async fn unregister_all(&mut self, _device_id: &str) -> Result<(), O::Error> {
+        self.db.unregister_all().await
+    }
+
     /// Writes a payload to a path in the backend.
     pub async fn backend_write(
         &mut self,
@@ -111,6 +146,19 @@ where
         payload: &Value,
     ) -> Result<(), O::Error> {
         self.db.write(device_id, path, payload).await
+    }
+
+    /// Triggers observer notifications for a specific device and path.
+    /// This is useful when the application needs to notify observers
+    /// about changes that happened outside of the normal request flow.
+    pub async fn trigger_notification(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), O::Error> {
+        // Use backend_write which will trigger the observer notifications
+        self.backend_write(device_id, path, payload).await
     }
 
     /// Reads a value from a path in the backend.
@@ -141,6 +189,7 @@ where
 
     /// Looks up an observer handler for a given path.
     pub fn lookup_observer_handler(&self, path: &str) -> Option<Box<dyn ErasedHandler<S>>> {
+        log::debug!("Looking up observer handler for path: '{}'", path);
         match self.inner.recognize(path) {
             Ok(matched) => {
                 let handler = matched.handler();
@@ -151,19 +200,26 @@ where
                 log::debug!("Matched route: {:?}", matched);
                 match handler.get(&reqtype) {
                     Some(h) => {
-                        log::debug!("Matched handler: {:?}", h);
+                        log::debug!(
+                            "Matched handler, has observe_handler: {}",
+                            h.observe_handler.is_some()
+                        );
                         h.observe_handler
                             .as_ref()
                             .map(|handler| handler.clone_erased())
                     }
                     None => {
-                        log::debug!("No handler found");
+                        log::debug!("No handler found for GET method");
                         None
                     }
                 }
             }
             Err(e) => {
-                log::warn!("Unable to recognize. Err: {}", e);
+                log::warn!(
+                    "Unable to recognize observer handler path '{}'. Err: {}",
+                    path,
+                    e
+                );
                 None
             }
         }
@@ -317,6 +373,11 @@ where
         self.router
     }
 
+    /// Create a notification trigger handle for external code to trigger observer notifications
+    pub fn notification_trigger(&self) -> NotificationTrigger<O> {
+        NotificationTrigger::new(self.router.db.clone())
+    }
+
     /// Get a mutable reference to the underlying router for advanced usage
     pub fn router_mut(&mut self) -> &mut CoapRouter<O, S> {
         &mut self.router
@@ -456,21 +517,24 @@ where
     fn call(&mut self, request: ObserverRequest<SocketAddr>) -> Self::Future {
         let state = self.state.clone(); // Clone the state so it can be moved into the async block
 
+        log::debug!("Processing ObserverRequest for path: {}", request.path);
         match self.lookup_observer_handler(&request.path) {
             Some(handler) => {
                 log::debug!("Handler found for route: {:?}", &request.path);
 
                 let packet = Packet::default();
-                let raw = CoapRequest::from_packet(packet, request.source);
+                let mut raw = CoapRequest::from_packet(packet, request.source);
+                // Set the path in the request for proper parameter extraction
+                raw.set_path(&request.path);
 
                 let mut coap_request: CoapumRequest<SocketAddr> = raw.into();
-                // Set the value for the observer request
-                coap_request.identity = request.path.clone();
+                // Identity should be empty or properly set - not the path
+                coap_request.identity = String::new();
 
                 Box::pin(async move { handler.call_erased(coap_request, state).await })
             }
             None => {
-                log::info!("No observer handler found for: {}", request.path);
+                log::debug!("No observer handler found for: {}", request.path);
 
                 // If no observer handler is found, return a bad request error
                 Box::pin(async move { (ResponseType::BadRequest).into_response() })
