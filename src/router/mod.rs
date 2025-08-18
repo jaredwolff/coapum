@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, Sender};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tower::Service;
 
 use crate::handler::{into_erased_handler, into_handler, ErasedHandler, Handler, HandlerFn};
@@ -152,6 +152,214 @@ impl std::fmt::Display for StateUpdateError {
 }
 
 impl std::error::Error for StateUpdateError {}
+
+/// A handle that allows external code to manage client authentication
+/// without having direct access to the server's PSK store.
+#[derive(Clone)]
+pub struct ClientManager {
+    sender: mpsc::Sender<ClientCommand>,
+}
+
+/// Commands for client management operations
+#[derive(Debug)]
+pub enum ClientCommand {
+    /// Add a new client with PSK authentication
+    AddClient { 
+        identity: String, 
+        key: Vec<u8>,
+        metadata: Option<ClientMetadata>,
+    },
+    /// Remove a client
+    RemoveClient { 
+        identity: String 
+    },
+    /// Update an existing client's key
+    UpdateKey { 
+        identity: String, 
+        key: Vec<u8> 
+    },
+    /// Update client metadata
+    UpdateMetadata {
+        identity: String,
+        metadata: ClientMetadata,
+    },
+    /// Enable or disable a client
+    SetClientEnabled {
+        identity: String,
+        enabled: bool,
+    },
+    /// Get all client identities (response via oneshot channel)
+    ListClients {
+        response: tokio::sync::oneshot::Sender<Vec<String>>,
+    },
+}
+
+/// Metadata associated with a client
+#[derive(Debug, Clone, Default)]
+pub struct ClientMetadata {
+    /// Optional friendly name for the client
+    pub name: Option<String>,
+    /// Optional description
+    pub description: Option<String>,
+    /// Whether the client is enabled
+    pub enabled: bool,
+    /// Optional tags for categorization
+    pub tags: Vec<String>,
+    /// Custom key-value pairs
+    pub custom: HashMap<String, String>,
+}
+
+impl ClientManager {
+    /// Create a new client manager
+    pub fn new(sender: mpsc::Sender<ClientCommand>) -> Self {
+        Self { sender }
+    }
+
+    /// Add a new client with PSK authentication
+    /// 
+    /// # Example
+    /// 
+    /// ```rust,no_run
+    /// # use coapum::router::ClientManager;
+    /// # async fn example(client_manager: ClientManager) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Add a simple client
+    /// client_manager.add_client("device_001", b"secret_key_123").await?;
+    /// 
+    /// // Add a client with metadata
+    /// let metadata = coapum::router::ClientMetadata {
+    ///     name: Some("Temperature Sensor".to_string()),
+    ///     enabled: true,
+    ///     tags: vec!["sensor".to_string(), "outdoor".to_string()],
+    ///     ..Default::default()
+    /// };
+    /// client_manager.add_client_with_metadata("device_002", b"secret_key_456", metadata).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn add_client(&self, identity: &str, key: &[u8]) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::AddClient {
+                identity: identity.to_string(),
+                key: key.to_vec(),
+                metadata: None,
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Add a new client with metadata
+    pub async fn add_client_with_metadata(
+        &self, 
+        identity: &str, 
+        key: &[u8],
+        metadata: ClientMetadata,
+    ) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::AddClient {
+                identity: identity.to_string(),
+                key: key.to_vec(),
+                metadata: Some(metadata),
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Remove a client
+    pub async fn remove_client(&self, identity: &str) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::RemoveClient {
+                identity: identity.to_string(),
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Update a client's PSK key
+    pub async fn update_key(&self, identity: &str, key: &[u8]) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::UpdateKey {
+                identity: identity.to_string(),
+                key: key.to_vec(),
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Update client metadata
+    pub async fn update_metadata(
+        &self, 
+        identity: &str, 
+        metadata: ClientMetadata
+    ) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::UpdateMetadata {
+                identity: identity.to_string(),
+                metadata,
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Enable or disable a client
+    pub async fn set_client_enabled(
+        &self, 
+        identity: &str, 
+        enabled: bool
+    ) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::SetClientEnabled {
+                identity: identity.to_string(),
+                enabled,
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// List all registered client identities
+    pub async fn list_clients(&self) -> Result<Vec<String>, ClientManagerError> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        
+        self.sender
+            .send(ClientCommand::ListClients { response: tx })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)?;
+            
+        rx.await
+            .map_err(|_| ClientManagerError::ResponseFailed)
+    }
+}
+
+/// Error type for client manager operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClientManagerError {
+    /// The command channel is closed
+    ChannelClosed,
+    /// Failed to receive response
+    ResponseFailed,
+}
+
+impl std::fmt::Display for ClientManagerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClientManagerError::ChannelClosed => write!(f, "Client manager channel is closed"),
+            ClientManagerError::ResponseFailed => write!(f, "Failed to receive response from client manager"),
+        }
+    }
+}
+
+impl std::error::Error for ClientManagerError {}
+
+/// Internal client store entry
+#[derive(Debug, Clone)]
+pub struct ClientEntry {
+    /// The PSK key
+    pub key: Vec<u8>,
+    /// Client metadata
+    pub metadata: ClientMetadata,
+}
+
+/// Shared client store type
+pub type ClientStore = Arc<RwLock<HashMap<String, ClientEntry>>>;
 
 pub trait Request: Send {
     fn get_value(&self) -> &Value;

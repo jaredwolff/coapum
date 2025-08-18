@@ -5,6 +5,7 @@ pub mod helper;
 pub mod observer;
 pub mod router;
 pub mod serve;
+pub mod serve_with_client_manager;
 
 #[cfg(test)]
 mod tests;
@@ -18,7 +19,10 @@ pub use extract::{
     StatusCode,
 };
 pub use handler::{into_handler, Handler, HandlerFn};
-pub use router::{NotificationTrigger, RouterBuilder, StateUpdateHandle, StateUpdateError};
+pub use router::{
+    NotificationTrigger, RouterBuilder, StateUpdateHandle, StateUpdateError,
+    ClientManager, ClientManagerError, ClientMetadata,
+};
 
 // Re-export CoAP types
 pub use coap_lite::{
