@@ -146,7 +146,7 @@ jobs:
       - name: Upload to codecov
         uses: codecov/codecov-action@v5
         with:
-          file: coverage.lcov
+          files: coverage.lcov
           fail_ci_if_error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -179,7 +179,7 @@ jobs:
         if: github.ref == 'refs/heads/master'
         with:
           tool: "cargo"
-          output-file-path: target/criterion/router_bench/base/estimates.json
+          output-file-path: target/criterion/coap_router/base/estimates.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true
@@ -213,6 +213,8 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout sources
         uses: actions/checkout@v5
@@ -233,14 +235,6 @@ jobs:
         run: cargo doc --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
-
-      - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/master'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: target/doc
-          force_orphan: true
 
   integration:
     name: Integration Tests

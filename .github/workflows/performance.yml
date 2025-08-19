@@ -34,13 +34,11 @@ jobs:
             target
           key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install criterion
-        run: cargo install --force cargo-criterion
 
       - name: Run benchmarks
         run: |
           echo "🚀 Running performance benchmarks..."
-          cargo bench --all-features -- --output-format verbose
+          cargo bench --all-features
           echo "✅ Benchmarks completed"
 
       - name: Store benchmark results
@@ -49,7 +47,6 @@ jobs:
         with:
           name: Rust Benchmark
           tool: "cargo"
-          output-file-path: target/criterion/router_bench/base/estimates.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true
@@ -63,7 +60,6 @@ jobs:
         with:
           name: Rust Benchmark
           tool: "cargo"
-          output-file-path: target/criterion/router_bench/base/estimates.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           comment-on-alert: true
           alert-threshold: "150%"
@@ -197,11 +193,11 @@ jobs:
 
           # This would typically compare against baseline metrics
           # For now, we'll just validate that benchmarks ran successfully
-          if [ -f target/criterion/router_bench/base/estimates.json ]; then
+          if [ -f target/criterion/coap_router/base/estimates.json ]; then
             echo "✅ Benchmark data found"
 
             # Extract key metrics (this is a simplified example)
-            ROUTER_TIME=$(grep -o '"mean":{"estimate":[0-9.]*' target/criterion/router_bench/base/estimates.json | cut -d: -f3)
+            ROUTER_TIME=$(grep -o '"point_estimate":[0-9.]*' target/criterion/coap_router/base/estimates.json | cut -d: -f2)
             echo "📊 Router benchmark time: ${ROUTER_TIME}ns"
 
             # Simple threshold check (adjust as needed)
