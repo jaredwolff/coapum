@@ -9,9 +9,9 @@ updates:
       time: "09:00"
     open-pull-requests-limit: 10
     reviewers:
-      - "maintainer-username"  # Replace with actual maintainer
+      - "jaredwolff"
     assignees:
-      - "maintainer-username"  # Replace with actual maintainer
+      - "jaredwolff"
     commit-message:
       prefix: "deps"
       include: "scope"

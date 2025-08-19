@@ -6,7 +6,7 @@ use crate::{SenMLPack, SenMLRecord, SenMLValue};
 #[derive(Debug, Default)]
 pub struct SenMLBuilder {
     base_name: Option<String>,
-    base_time: Option<f64>, 
+    base_time: Option<f64>,
     base_unit: Option<String>,
     base_value: Option<f64>,
     base_sum: Option<f64>,
@@ -57,7 +57,8 @@ impl SenMLBuilder {
 
     /// Add a record with a string value
     pub fn add_string_value<S: Into<String>, V: Into<String>>(mut self, name: S, value: V) -> Self {
-        self.records.push(SenMLRecord::with_string_value(name, value));
+        self.records
+            .push(SenMLRecord::with_string_value(name, value));
         self
     }
 
@@ -75,24 +76,23 @@ impl SenMLBuilder {
 
     /// Add a measurement with timestamp
     pub fn add_measurement<S: Into<String>>(mut self, name: S, value: f64, time: f64) -> Self {
-        self.records.push(
-            SenMLRecord::with_value(name, value).with_time(time)
-        );
+        self.records
+            .push(SenMLRecord::with_value(name, value).with_time(time));
         self
     }
 
     /// Add a measurement with unit and timestamp
     pub fn add_measurement_with_unit<S: Into<String>, U: Into<String>>(
-        mut self, 
-        name: S, 
-        value: f64, 
-        unit: U, 
-        time: f64
+        mut self,
+        name: S,
+        value: f64,
+        unit: U,
+        time: f64,
     ) -> Self {
         self.records.push(
             SenMLRecord::with_value(name, value)
                 .with_unit(unit)
-                .with_time(time)
+                .with_time(time),
         );
         self
     }
@@ -102,8 +102,8 @@ impl SenMLBuilder {
         self.records.push(
             SenMLRecord::new()
                 .with_name(name)
-                .with_sum(sum)  
-                .with_time(time)
+                .with_sum(sum)
+                .with_time(time),
         );
         self
     }
@@ -115,7 +115,7 @@ impl SenMLBuilder {
     }
 
     /// Add multiple records at once
-    pub fn add_records<I>(mut self, records: I) -> Self 
+    pub fn add_records<I>(mut self, records: I) -> Self
     where
         I: IntoIterator<Item = SenMLRecord>,
     {
@@ -130,7 +130,7 @@ impl SenMLBuilder {
         // Create base record if we have base values
         if self.has_base_values() {
             let mut base_record = SenMLRecord::new();
-            
+
             if let Some(bn) = self.base_name {
                 base_record.n = Some(bn);
             }
@@ -146,7 +146,7 @@ impl SenMLBuilder {
             if let Some(bs) = self.base_sum {
                 base_record.s = Some(bs);
             }
-            
+
             records.push(base_record);
         }
 
@@ -158,7 +158,7 @@ impl SenMLBuilder {
 
     /// Check if we have any base values set
     fn has_base_values(&self) -> bool {
-        self.base_name.is_some() 
+        self.base_name.is_some()
             || self.base_time.is_some()
             || self.base_unit.is_some()
             || self.base_value.is_some()
@@ -272,19 +272,22 @@ impl ConfigBuilder {
 
     /// Add a numeric parameter
     pub fn param_number<S: Into<String>>(mut self, name: S, value: f64) -> Self {
-        self.parameters.push((name.into(), SenMLValue::Number(value)));
+        self.parameters
+            .push((name.into(), SenMLValue::Number(value)));
         self
     }
 
     /// Add a string parameter
     pub fn param_string<S: Into<String>, V: Into<String>>(mut self, name: S, value: V) -> Self {
-        self.parameters.push((name.into(), SenMLValue::String(value.into())));
+        self.parameters
+            .push((name.into(), SenMLValue::String(value.into())));
         self
     }
 
     /// Add a boolean parameter
     pub fn param_bool<S: Into<String>>(mut self, name: S, value: bool) -> Self {
-        self.parameters.push((name.into(), SenMLValue::Boolean(value)));
+        self.parameters
+            .push((name.into(), SenMLValue::Boolean(value)));
         self
     }
 
@@ -324,7 +327,7 @@ mod tests {
             .build();
 
         assert_eq!(pack.records.len(), 3); // Base record + 2 measurements
-        
+
         let base = &pack.records[0];
         assert_eq!(base.n, Some("device1/".to_string()));
         assert_eq!(base.u, Some("Cel".to_string()));
@@ -354,7 +357,7 @@ mod tests {
             .build();
 
         assert!(pack.records.len() >= 3);
-        
+
         // Check base values are set
         let base = &pack.records[0];
         assert_eq!(base.n, Some("sensor1/temp".to_string()));
@@ -372,7 +375,7 @@ mod tests {
             .build();
 
         assert_eq!(pack.records.len(), 4); // Base + 3 params
-        
+
         let base = &pack.records[0];
         assert_eq!(base.n, Some("device1/config/".to_string()));
     }
@@ -393,9 +396,7 @@ mod tests {
 
     #[test]
     fn test_builder_with_no_base_values() {
-        let pack = SenMLBuilder::new()
-            .add_value("standalone", 42.0)
-            .build();
+        let pack = SenMLBuilder::new().add_value("standalone", 42.0).build();
 
         // Should not create base record if no base values
         assert_eq!(pack.records.len(), 1);

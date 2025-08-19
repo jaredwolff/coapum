@@ -52,10 +52,10 @@ mod connection_info_tests {
 
         // Verify timing constraints exist (from constants in serve.rs)
         const MIN_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
+        #[allow(dead_code)]
         const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
         assert!(MIN_RECONNECT_INTERVAL.as_secs() >= 5);
-        assert!(MAX_RECONNECT_ATTEMPTS >= 10);
 
         // Test that timing calculations work
         let elapsed = established_at.elapsed();
@@ -72,21 +72,26 @@ mod connection_info_tests {
         const MAX_RECONNECT_ATTEMPTS: u32 = 10;
         const MAX_IDENTITY_LENGTH: usize = 256;
 
+        #[allow(dead_code)]
+        const fn validate_constants() {
+            const _: () = assert!(MAX_RECONNECT_ATTEMPTS >= 10);
+            const _: () = assert!(
+                MAX_RECONNECT_ATTEMPTS >= 3,
+                "Should allow some reconnections"
+            );
+            const _: () = assert!(
+                MAX_IDENTITY_LENGTH >= 32,
+                "Should allow reasonable identity lengths"
+            );
+            const _: () = assert!(
+                MAX_IDENTITY_LENGTH <= 1024,
+                "Should prevent excessive identity lengths"
+            );
+        }
+
         assert!(
             MIN_RECONNECT_INTERVAL.as_secs() >= 1,
             "Reconnect interval should prevent rapid abuse"
-        );
-        assert!(
-            MAX_RECONNECT_ATTEMPTS >= 3,
-            "Should allow some reconnections"
-        );
-        assert!(
-            MAX_IDENTITY_LENGTH >= 32,
-            "Should allow reasonable identity lengths"
-        );
-        assert!(
-            MAX_IDENTITY_LENGTH <= 1024,
-            "Should prevent excessive identity lengths"
         );
     }
 }
@@ -162,7 +167,7 @@ mod path_validation_tests {
     #[test]
     fn test_path_validation_depth_limits() {
         // Create a path that exceeds the maximum depth (10 components)
-        let components = vec!["component"; 11];
+        let components = ["component"; 11];
         let deep_path = format!("/{}", components.join("/"));
 
         let result = test_path_validation(&deep_path);
@@ -388,9 +393,10 @@ mod config_integration_tests {
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
         // Verify state was modified
-        let counter = state.counter.lock().unwrap();
-        assert_eq!(*counter, 1);
-        drop(counter);
+        {
+            let counter = state.counter.lock().unwrap();
+            assert_eq!(*counter, 1);
+        }
 
         // Test error request
         let request = coapum::test_utils::create_test_request("/error");

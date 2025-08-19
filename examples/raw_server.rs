@@ -11,7 +11,7 @@ use coapum::{
         cipher_suite::CipherSuiteId,
         config::{Config, ExtendedMasterSecretType},
     },
-    observer::sled::SledObserver,
+    observer::memory::MemObserver,
     router::RouterBuilder,
     serve,
 };
@@ -46,7 +46,7 @@ async fn main() {
         psk_store_write.insert("goobie!".to_string(), PSK.to_vec());
     }
 
-    let obs = SledObserver::new("coapum.db");
+    let obs = MemObserver::new();
 
     let router = RouterBuilder::new((), obs).get("test", test).build();
 

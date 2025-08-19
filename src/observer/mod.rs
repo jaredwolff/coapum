@@ -130,7 +130,7 @@ pub fn path_to_json(path: &str, value: &Value) -> Value {
 /// * `b` - A reference to a `serde_json::Value` object representing the second JSON object to be merged.
 pub fn merge_json(a: &mut Value, b: &Value) {
     match (a, b) {
-        (&mut Value::Object(ref mut a), Value::Object(ref b)) => {
+        (&mut Value::Object(ref mut a), Value::Object(b)) => {
             for (k, v) in b {
                 match a.entry(k.clone()) {
                     Entry::Vacant(e) => {

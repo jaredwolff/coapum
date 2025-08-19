@@ -13,7 +13,6 @@ use coapum::{
     serve,
 };
 use coapum_senml::{SenMLBuilder, SenMLPack};
-use tokio;
 
 /// Simple application state to store sensor data
 #[derive(Debug, Default, Clone)]

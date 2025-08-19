@@ -23,10 +23,10 @@ jobs:
           -  # default features
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
 
@@ -53,9 +53,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install stable toolchain
+      - name: Install stable toolchain  
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -68,9 +68,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install stable toolchain
+      - name: Install stable toolchain  
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -92,13 +92,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install stable toolchain
+      - name: Install stable toolchain  
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked
 
       - name: Run cargo audit
         run: cargo audit
@@ -109,9 +109,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install stable toolchain
+      - name: Install stable toolchain  
         uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
@@ -144,7 +144,7 @@ jobs:
           -o coverage.lcov
 
       - name: Upload to codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           file: coverage.lcov
           fail_ci_if_error: true
@@ -157,9 +157,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install stable toolchain
+      - name: Install stable toolchain  
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
@@ -191,12 +191,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.70.0 # Adjust based on your MSRV
+          toolchain: 1.85.0 # Required for Rust edition 2024 support
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -215,9 +215,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install stable toolchain
+      - name: Install stable toolchain  
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
@@ -236,7 +236,7 @@ jobs:
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/master'
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: target/doc
@@ -248,9 +248,9 @@ jobs:
     needs: [test, clippy, fmt]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install stable toolchain
+      - name: Install stable toolchain  
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry

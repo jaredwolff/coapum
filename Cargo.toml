@@ -12,12 +12,13 @@ homepage = "https://github.com/jaredwolff/coapum"
 keywords = ["coap", "iot", "dtls", "async", "sensor"]
 categories = ["network-programming", "embedded", "api-bindings", "asynchronous"]
 readme = "README.md"
+
 [features]
 default = ["sled-observer"]
 sled-observer = ["sled"]
 
 [dependencies]
-async-trait = "0.1.88"
+async-trait = "0.1.89"
 ciborium = "0.2.2"
 coap-lite = "0.13.3"
 env_logger = "0.11.8"
@@ -25,8 +26,8 @@ futures = "0.3.31"
 log = "0.4.27"
 route-recognizer = "0.3.1"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.140"
-tokio = { version = "1.45.1", features = ["full"] }
+serde_json = "1.0.142"
+tokio = { version = "1.47.1", features = ["full"] }
 tower = { version = "0.5.2", features = [
     "tokio",
     "tokio-stream",
@@ -46,7 +47,7 @@ coapum-senml = { version = "0.1.0", path = "./coapum-senml" }
 
 [dev-dependencies]
 lazy_static = { version = "1.4.0" }
-criterion = { version = "0.6.0" }
+criterion = { version = "0.7.0" }
 
 [[bench]]
 name = "router_bench"

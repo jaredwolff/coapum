@@ -44,11 +44,11 @@
 //! Base fields reduce redundancy by providing default values that apply to
 //! subsequent records in the pack.
 
+pub mod builder;
 pub mod error;
+pub mod normalize;
 pub mod pack;
 pub mod record;
-pub mod builder;
-pub mod normalize;
 
 #[cfg(feature = "validation")]
 pub mod validation;
@@ -63,11 +63,11 @@ pub mod cbor;
 pub mod xml;
 
 // Re-export main types
-pub use error::{SenMLError, Result};
+pub use builder::SenMLBuilder;
+pub use error::{Result, SenMLError};
+pub use normalize::{NormalizedPack, NormalizedRecord};
 pub use pack::SenMLPack;
 pub use record::{SenMLRecord, SenMLValue};
-pub use builder::SenMLBuilder;
-pub use normalize::{NormalizedPack, NormalizedRecord};
 
 #[cfg(feature = "validation")]
 pub use validation::Validate;
@@ -102,7 +102,7 @@ mod tests {
             .base_name("urn:dev:sensor1")
             .add_value("temperature", 22.5)
             .build();
-        
+
         assert!(pack.records.len() == 2); // Base record + measurement record
         // Check that base name was stored in the first record
         assert_eq!(pack.records[0].n, Some("urn:dev:sensor1".to_string()));

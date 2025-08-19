@@ -253,7 +253,7 @@ mod handler_parameter_combinations {
         // Verify CBOR response
         let response_data: ResponseData =
             ciborium::de::from_reader(&response.message.payload[..]).unwrap();
-        assert_eq!(response_data.processed, true);
+        assert!(response_data.processed);
         assert_eq!(response_data.count, 42);
         assert_eq!(response_data.message, "test_payload");
     }
@@ -288,7 +288,7 @@ mod handler_parameter_combinations {
         // Verify JSON response
         let response_data: ResponseData =
             serde_json::from_slice(&response.message.payload).unwrap();
-        assert_eq!(response_data.processed, true);
+        assert!(response_data.processed);
         assert_eq!(response_data.count, 99);
         assert_eq!(response_data.message, "cbor_test");
     }

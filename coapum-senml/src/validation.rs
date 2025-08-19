@@ -1,6 +1,6 @@
 //! Validation support for SenML data according to RFC 8428
 
-use crate::{SenMLPack, SenMLRecord, NormalizedPack, Result, SenMLError};
+use crate::{NormalizedPack, Result, SenMLError, SenMLPack, SenMLRecord};
 
 /// Trait for validating SenML data structures
 pub trait Validate {
@@ -84,9 +84,9 @@ impl PackValidator {
 
     /// Require specific units for measurements
     pub fn require_unit<S1: Into<String>, S2: Into<String>>(
-        mut self, 
-        measurement: S1, 
-        unit: S2
+        mut self,
+        measurement: S1,
+        unit: S2,
     ) -> Self {
         self.required_units.insert(measurement.into(), unit.into());
         self
@@ -115,10 +115,9 @@ impl PackValidator {
 
         // Validate each record with extended rules
         for (i, record) in pack.iter().enumerate() {
-            self.validate_record(record)
-                .map_err(|e| SenMLError::validation(
-                    format!("Record {} validation failed: {}", i, e)
-                ))?;
+            self.validate_record(record).map_err(|e| {
+                SenMLError::validation(format!("Record {} validation failed: {}", i, e))
+            })?;
         }
 
         // Cross-record validation
@@ -143,15 +142,19 @@ impl PackValidator {
         if let Some(ref name) = record.n {
             if let Some(required_unit) = self.required_units.get(name) {
                 match &record.u {
-                    Some(unit) if unit == required_unit => {}, // OK
-                    Some(unit) => return Err(SenMLError::validation(
-                        format!("Measurement '{}' requires unit '{}', got '{}'", 
-                               name, required_unit, unit)
-                    )),
-                    None => return Err(SenMLError::validation(
-                        format!("Measurement '{}' requires unit '{}'", 
-                               name, required_unit)
-                    )),
+                    Some(unit) if unit == required_unit => {} // OK
+                    Some(unit) => {
+                        return Err(SenMLError::validation(format!(
+                            "Measurement '{}' requires unit '{}', got '{}'",
+                            name, required_unit, unit
+                        )));
+                    }
+                    None => {
+                        return Err(SenMLError::validation(format!(
+                            "Measurement '{}' requires unit '{}'",
+                            name, required_unit
+                        )));
+                    }
                 }
             }
         }
@@ -192,16 +195,17 @@ impl PackValidator {
 
         // Check for duplicate names at same timestamp
         let mut seen_entries = std::collections::HashSet::new();
-        
+
         for record in pack.iter() {
             if let Some(ref name) = record.n {
                 let time = record.t.unwrap_or(0.0);
                 let entry = (name.clone(), time as i64); // Use integer for floating point comparison
-                
+
                 if seen_entries.contains(&entry) {
-                    return Err(SenMLError::validation(
-                        format!("Duplicate entry for '{}' at time {}", name, time)
-                    ));
+                    return Err(SenMLError::validation(format!(
+                        "Duplicate entry for '{}' at time {}",
+                        name, time
+                    )));
                 }
                 seen_entries.insert(entry);
             }
@@ -218,22 +222,23 @@ impl PackValidator {
     /// Validate that timestamps are reasonably ordered
     fn validate_time_ordering(&self, pack: &SenMLPack, max_drift: f64) -> Result<()> {
         let mut last_time: Option<f64> = None;
-        
+
         for record in pack.iter() {
             if let Some(time) = record.t {
                 if let Some(prev_time) = last_time {
                     // Check for excessive backward drift
                     if prev_time - time > max_drift {
-                        return Err(SenMLError::validation(
-                            format!("Time goes backward by {:.2}s (max drift: {:.2}s)", 
-                                   prev_time - time, max_drift)
-                        ));
+                        return Err(SenMLError::validation(format!(
+                            "Time goes backward by {:.2}s (max drift: {:.2}s)",
+                            prev_time - time,
+                            max_drift
+                        )));
                     }
                 }
                 last_time = Some(time);
             }
         }
-        
+
         Ok(())
     }
 
@@ -247,10 +252,10 @@ impl PackValidator {
         let base_values = pack.base_values();
         let version = base_values.bver.unwrap_or(DEFAULT_SENML_VERSION);
         if version != DEFAULT_SENML_VERSION {
-            return Err(SenMLError::validation(
-                format!("Unsupported SenML version: {} (expected: {})", 
-                       version, DEFAULT_SENML_VERSION)
-            ));
+            return Err(SenMLError::validation(format!(
+                "Unsupported SenML version: {} (expected: {})",
+                version, DEFAULT_SENML_VERSION
+            )));
         }
 
         // Validate time handling - RFC 8428 Section 4.5.2
@@ -286,7 +291,7 @@ impl PackValidator {
             // Absolute time - should be reasonable Unix timestamp
             if time < 0.0 {
                 return Err(SenMLError::validation(
-                    "Absolute time values must be positive"
+                    "Absolute time values must be positive",
                 ));
             }
         }
@@ -299,9 +304,10 @@ impl PackValidator {
     fn validate_field_names(&self, name: &str) -> Result<()> {
         // RFC 8428: Fields ending with "_" are reserved
         if name.ends_with('_') {
-            return Err(SenMLError::validation(
-                format!("Field name '{}' ends with reserved '_' character", name)
-            ));
+            return Err(SenMLError::validation(format!(
+                "Field name '{}' ends with reserved '_' character",
+                name
+            )));
         }
         Ok(())
     }
@@ -312,7 +318,7 @@ impl PackValidator {
         if let Some(v) = record.v {
             if !v.is_finite() && !v.is_nan() {
                 return Err(SenMLError::validation(
-                    "Numeric values must be finite or NaN (IEEE 754)"
+                    "Numeric values must be finite or NaN (IEEE 754)",
                 ));
             }
         }
@@ -320,7 +326,7 @@ impl PackValidator {
         if let Some(s) = record.s {
             if !s.is_finite() && !s.is_nan() {
                 return Err(SenMLError::validation(
-                    "Sum values must be finite or NaN (IEEE 754)"
+                    "Sum values must be finite or NaN (IEEE 754)",
                 ));
             }
         }
@@ -328,7 +334,7 @@ impl PackValidator {
         if let Some(t) = record.t {
             if !t.is_finite() {
                 return Err(SenMLError::validation(
-                    "Time values must be finite (IEEE 754)"
+                    "Time values must be finite (IEEE 754)",
                 ));
             }
         }
@@ -336,7 +342,7 @@ impl PackValidator {
         if let Some(ut) = record.ut {
             if !ut.is_finite() || ut < 0.0 {
                 return Err(SenMLError::validation(
-                    "Update time must be finite and non-negative"
+                    "Update time must be finite and non-negative",
                 ));
             }
         }
@@ -371,9 +377,7 @@ pub mod validators {
 
     /// Relaxed validator for development/testing
     pub fn relaxed() -> PackValidator {
-        PackValidator::new()
-            .allow_empty()
-            .strict_names(false)
+        PackValidator::new().allow_empty().strict_names(false)
     }
 
     /// Strict validator for production systems
@@ -385,9 +389,7 @@ pub mod validators {
 
     /// RFC 8428 compliant validator
     pub fn rfc8428_compliant() -> PackValidator {
-        PackValidator::new()
-            .rfc_strict(true)
-            .strict_names(true)
+        PackValidator::new().rfc_strict(true).strict_names(true)
     }
 }
 
@@ -403,16 +405,18 @@ pub mod utils {
     /// Check if a unit string is valid SI unit
     pub fn is_valid_unit(unit: &str) -> bool {
         // Basic unit validation - in production you'd have a comprehensive list
-        !unit.is_empty() && 
-        !unit.contains(' ') && 
-        unit.chars().all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '%')
+        !unit.is_empty()
+            && !unit.contains(' ')
+            && unit
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '%')
     }
 
     /// Suggest corrections for common unit mistakes
     pub fn suggest_unit_correction(unit: &str) -> Option<&'static str> {
         match unit.to_lowercase().as_str() {
             "celsius" | "°c" | "degc" => Some("Cel"),
-            "fahrenheit" | "°f" | "degf" => Some("degF"), 
+            "fahrenheit" | "°f" | "degf" => Some("degF"),
             "percent" | "percentage" => Some("%"),
             "watts" | "watt" => Some("W"),
             "volts" | "volt" => Some("V"),
@@ -430,11 +434,11 @@ pub mod utils {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        
+
         // Allow 100 years in past, 10 years in future
         let min_time = now - (100.0 * 365.25 * 24.0 * 3600.0);
         let max_time = now + (10.0 * 365.25 * 24.0 * 3600.0);
-        
+
         timestamp >= min_time && timestamp <= max_time
     }
 
@@ -457,14 +461,12 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SenMLBuilder, SenMLRecord, SenMLPack};
-    use super::{validators, utils, TIME_THRESHOLD};
+    use super::{TIME_THRESHOLD, utils, validators};
+    use crate::{SenMLBuilder, SenMLPack, SenMLRecord};
 
     #[test]
     fn test_basic_validation() {
-        let pack = SenMLBuilder::new()
-            .add_value("temperature", 22.5)
-            .build();
+        let pack = SenMLBuilder::new().add_value("temperature", 22.5).build();
 
         let validator = PackValidator::new().allow_empty();
         assert!(validator.validate_pack(&pack).is_ok());
@@ -473,7 +475,7 @@ mod tests {
     #[test]
     fn test_empty_pack_validation() {
         let pack = SenMLPack::new();
-        
+
         let strict_validator = PackValidator::new();
         assert!(strict_validator.validate_pack(&pack).is_err());
 
@@ -487,8 +489,7 @@ mod tests {
             .add_measurement_with_unit("temperature", 22.5, "Cel", 0.0)
             .build();
 
-        let validator = PackValidator::new()
-            .require_unit("temperature", "Cel");
+        let validator = PackValidator::new().require_unit("temperature", "Cel");
         assert!(validator.validate_pack(&pack).is_ok());
 
         let wrong_unit_pack = SenMLBuilder::new()
@@ -506,7 +507,7 @@ mod tests {
         assert!(validator.validate_name("device1/temp").is_ok());
         assert!(validator.validate_name("sensor_01").is_ok());
 
-        // Invalid names  
+        // Invalid names
         assert!(validator.validate_name("").is_err()); // Empty
         assert!(validator.validate_name("temp with spaces").is_err()); // Spaces
         assert!(validator.validate_name("temp\twith\ttabs").is_err()); // Tabs
@@ -567,11 +568,13 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        
+
         assert!(utils::is_reasonable_timestamp(now));
         assert!(utils::is_reasonable_timestamp(now - 3600.0)); // 1 hour ago
         assert!(!utils::is_reasonable_timestamp(0.0)); // Too old
-        assert!(!utils::is_reasonable_timestamp(now + 365.25 * 24.0 * 3600.0 * 50.0)); // 50 years future
+        assert!(!utils::is_reasonable_timestamp(
+            now + 365.25 * 24.0 * 3600.0 * 50.0
+        )); // 50 years future
     }
 
     #[test]
@@ -594,11 +597,9 @@ mod tests {
     #[test]
     fn test_rfc8428_compliance_validator() {
         let validator = validators::rfc8428_compliant();
-        
+
         // Valid pack should pass
-        let pack = SenMLBuilder::new()
-            .add_value("temp", 22.5)
-            .build();
+        let pack = SenMLBuilder::new().add_value("temp", 22.5).build();
         assert!(validator.validate_pack(&pack).is_ok());
 
         // Pack with invalid field name should fail

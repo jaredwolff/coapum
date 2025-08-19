@@ -336,7 +336,7 @@ mod content_format_error_tests {
         let _response = router.call(request).await.unwrap();
         // Handler should handle missing content format gracefully
         // Just verify we get some response (success or error)
-        assert!(true);
+        // This test validates that the code path exists - assertion removed to fix clippy warning
     }
 
     #[tokio::test]

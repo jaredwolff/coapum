@@ -57,7 +57,7 @@ pub enum SenMLValue {
     /// Numeric value
     Number(f64),
     /// String value
-    String(String),  
+    String(String),
     /// Boolean value
     Boolean(bool),
     /// Binary data (base64 encoded)
@@ -164,7 +164,7 @@ impl SenMLRecord {
         // A record must have at least one value field
         if !self.has_value() && self.s.is_none() {
             return Err(crate::SenMLError::validation(
-                "Record must have at least one value field (v, vs, vb, vd, or s)"
+                "Record must have at least one value field (v, vs, vb, vd, or s)",
             ));
         }
 
@@ -177,7 +177,10 @@ impl SenMLRecord {
 
         if let Some(ut) = self.ut {
             if !ut.is_finite() || ut < 0.0 {
-                return Err(crate::SenMLError::invalid_field_value("ut", &ut.to_string()));
+                return Err(crate::SenMLError::invalid_field_value(
+                    "ut",
+                    &ut.to_string(),
+                ));
             }
         }
 
@@ -197,7 +200,10 @@ impl SenMLRecord {
         // Validate data field is valid base64
         if let Some(ref vd) = self.vd {
             if base64_decode(vd).is_err() {
-                return Err(crate::SenMLError::invalid_field_value("vd", "invalid base64"));
+                return Err(crate::SenMLError::invalid_field_value(
+                    "vd",
+                    "invalid base64",
+                ));
             }
         }
 
@@ -224,35 +230,46 @@ impl Default for SenMLRecord {
 impl From<SenMLValue> for SenMLRecord {
     fn from(value: SenMLValue) -> Self {
         match value {
-            SenMLValue::Number(n) => Self { v: Some(n), ..Default::default() },
-            SenMLValue::String(s) => Self { vs: Some(s), ..Default::default() },
-            SenMLValue::Boolean(b) => Self { vb: Some(b), ..Default::default() },
-            SenMLValue::Data(d) => Self { vd: Some(base64_encode(&d)), ..Default::default() },
+            SenMLValue::Number(n) => Self {
+                v: Some(n),
+                ..Default::default()
+            },
+            SenMLValue::String(s) => Self {
+                vs: Some(s),
+                ..Default::default()
+            },
+            SenMLValue::Boolean(b) => Self {
+                vb: Some(b),
+                ..Default::default()
+            },
+            SenMLValue::Data(d) => Self {
+                vd: Some(base64_encode(&d)),
+                ..Default::default()
+            },
         }
     }
 }
 
 // Helper functions for base64 encoding/decoding
 fn base64_encode(data: &[u8]) -> String {
-    
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    
+
     let mut result = String::new();
     let chunks = data.chunks_exact(3);
     let remainder = chunks.remainder();
-    
+
     for chunk in chunks {
         let b1 = chunk[0] as u32;
         let b2 = chunk[1] as u32;
         let b3 = chunk[2] as u32;
         let combined = (b1 << 16) | (b2 << 8) | b3;
-        
+
         result.push(ALPHABET[((combined >> 18) & 0x3F) as usize] as char);
         result.push(ALPHABET[((combined >> 12) & 0x3F) as usize] as char);
         result.push(ALPHABET[((combined >> 6) & 0x3F) as usize] as char);
         result.push(ALPHABET[(combined & 0x3F) as usize] as char);
     }
-    
+
     match remainder.len() {
         1 => {
             let b1 = remainder[0] as u32;
@@ -272,7 +289,7 @@ fn base64_encode(data: &[u8]) -> String {
         }
         _ => {}
     }
-    
+
     result
 }
 
@@ -280,12 +297,12 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
     // Simple base64 decoder - in production you'd use a proper library
     let chars: Vec<char> = s.chars().filter(|&c| c != '=').collect();
     let mut result = Vec::new();
-    
+
     for chunk in chars.chunks(4) {
         if chunk.len() < 2 {
             return Err("Invalid base64");
         }
-        
+
         let mut combined = 0u32;
         for (i, &c) in chunk.iter().enumerate() {
             let val = match c {
@@ -298,7 +315,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
             };
             combined |= val << (6 * (3 - i));
         }
-        
+
         result.push((combined >> 16) as u8);
         if chunk.len() > 2 {
             result.push((combined >> 8) as u8);
@@ -307,7 +324,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
             result.push(combined as u8);
         }
     }
-    
+
     Ok(result)
 }
 
@@ -324,8 +341,7 @@ mod tests {
 
     #[test]
     fn test_record_with_unit() {
-        let record = SenMLRecord::with_value("temperature", 22.5)
-            .with_unit("Cel");
+        let record = SenMLRecord::with_value("temperature", 22.5).with_unit("Cel");
         assert_eq!(record.u, Some("Cel".to_string()));
     }
 
@@ -365,9 +381,6 @@ mod tests {
             record.resolved_name(Some("device1/")),
             Some("device1/temp".to_string())
         );
-        assert_eq!(
-            record.resolved_name(None),
-            Some("temp".to_string())
-        );
+        assert_eq!(record.resolved_name(None), Some("temp".to_string()));
     }
 }

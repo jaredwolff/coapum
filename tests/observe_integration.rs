@@ -26,7 +26,7 @@ use coapum::{
         conn::DTLSConn,
     },
     extract::{Cbor, Path, State, StatusCode},
-    observer::{memory::MemObserver, sled::SledObserver},
+    observer::memory::MemObserver,
     router::RouterBuilder,
     serve,
     util::Conn,
@@ -267,7 +267,7 @@ async fn test_observe_registration_and_deregistration() {
         coapum::MessageClass::Response(ResponseType::Content)
     );
     assert!(
-        response.payload.len() > 0,
+        !response.payload.is_empty(),
         "Response should contain sensor data"
     );
 
@@ -386,6 +386,7 @@ async fn test_observe_notifications() {
     assert_eq!(received_data.humidity, 65.0);
 }
 
+#[cfg(feature = "sled-observer")]
 #[tokio::test]
 async fn test_observe_with_sled_backend() {
     let _ = env_logger::try_init();
@@ -398,7 +399,7 @@ async fn test_observe_with_sled_backend() {
     };
 
     // Start server with Sled observer (using temporary database)
-    let observer = SledObserver::new("test_observe_integration.db");
+    let observer = coapum::observer::sled::SledObserver::new("test_observe_integration.db");
     let server_addr = start_test_server(app_state.clone(), observer)
         .await
         .expect("Failed to start server");
