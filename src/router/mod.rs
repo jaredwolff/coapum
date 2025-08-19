@@ -370,10 +370,6 @@ pub struct ClientEntry {
 /// Shared client store type
 pub type ClientStore = Arc<RwLock<HashMap<String, ClientEntry>>>;
 
-pub trait Request: Send {
-    fn get_value(&self) -> &Value;
-    fn get_raw(&self) -> &CoapumRequest<SocketAddr>;
-}
 
 /// The CoapRouter is a struct responsible for managing routes, shared state and an observer database.
 ///
