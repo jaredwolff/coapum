@@ -175,7 +175,7 @@ impl<S> FromRequest<S> for ObserveFlag {
 ///
 /// This extractor provides access to the shared application state that was
 /// provided when creating the router. The state is automatically cloned for
-/// each request, avoiding the need to manage Arc<Mutex<T>> manually.
+/// each request, avoiding the need to manage `Arc<Mutex<T>>` manually.
 ///
 /// ## Database Connection Patterns
 ///

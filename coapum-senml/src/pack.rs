@@ -1,6 +1,6 @@
 //! SenML Pack - collection of SenML records
 
-use crate::{SenMLRecord, SenMLError, Result};
+use crate::{Result, SenMLError, SenMLRecord};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "validation")]
@@ -9,7 +9,7 @@ use validator::Validate;
 /// A SenML Pack represents a collection of SenML records with optional base values
 ///
 /// According to RFC 8428, a SenML Pack is an array of SenML Records. The first
-/// record can contain base values (fields starting with 'b') that apply to 
+/// record can contain base values (fields starting with 'b') that apply to
 /// subsequent records, reducing redundancy in the representation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -35,7 +35,7 @@ pub struct BaseValues {
     pub bu: Option<String>,
 
     /// Base Value - added to numeric record values
-    #[serde(skip_serializing_if = "Option::is_none")]  
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bv: Option<f64>,
 
     /// Base Sum - added to sum values
@@ -58,15 +58,15 @@ impl SenMLPack {
     /// Create a pack with base values
     pub fn with_base_values(base: BaseValues) -> Self {
         let mut base_record = SenMLRecord::default();
-        
+
         // Set base values in the first record
         if let Some(bn) = base.bn {
             base_record.n = Some(bn);
         }
-        
+
         // Note: Base values are typically stored as fields starting with 'b'
         // but serde flattening will handle this during serialization
-        
+
         Self {
             records: vec![base_record],
         }
@@ -78,7 +78,7 @@ impl SenMLPack {
     }
 
     /// Add multiple records to this pack
-    pub fn add_records<I>(&mut self, records: I) 
+    pub fn add_records<I>(&mut self, records: I)
     where
         I: IntoIterator<Item = SenMLRecord>,
     {
@@ -87,7 +87,8 @@ impl SenMLPack {
 
     /// Get base values from the first record (if any)
     pub fn base_values(&self) -> BaseValues {
-        self.records.first()
+        self.records
+            .first()
             .map(|record| self.extract_base_values(record))
             .unwrap_or_default()
     }
@@ -97,7 +98,7 @@ impl SenMLPack {
         if let Some(first) = self.records.first() {
             // Check if first record has base-like values
             first.n.as_ref().map_or(false, |n| n.ends_with('/'))
-                || first.t.is_some() 
+                || first.t.is_some()
                 || first.u.is_some()
         } else {
             false
@@ -132,10 +133,9 @@ impl SenMLPack {
 
         // Validate each record
         for (i, record) in self.records.iter().enumerate() {
-            record.validate()
-                .map_err(|e| SenMLError::validation(
-                    format!("Invalid record at index {}: {}", i, e)
-                ))?;
+            record.validate().map_err(|e| {
+                SenMLError::validation(format!("Invalid record at index {}: {}", i, e))
+            })?;
         }
 
         // Validate base values if present
@@ -216,22 +216,19 @@ impl SenMLPack {
     /// Serialize to JSON string
     #[cfg(feature = "json")]
     pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(self)
-            .map_err(|e| SenMLError::serialization(e.to_string()))
+        serde_json::to_string(self).map_err(|e| SenMLError::serialization(e.to_string()))
     }
 
     /// Serialize to pretty JSON string
     #[cfg(feature = "json")]
     pub fn to_json_pretty(&self) -> Result<String> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| SenMLError::serialization(e.to_string()))
+        serde_json::to_string_pretty(self).map_err(|e| SenMLError::serialization(e.to_string()))
     }
 
     /// Deserialize from JSON string
     #[cfg(feature = "json")]
     pub fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json)
-            .map_err(|e| SenMLError::deserialization(e.to_string()))
+        serde_json::from_str(json).map_err(|e| SenMLError::deserialization(e.to_string()))
     }
 
     /// Serialize to CBOR bytes
@@ -246,8 +243,7 @@ impl SenMLPack {
     /// Deserialize from CBOR bytes
     #[cfg(feature = "cbor")]
     pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
-        ciborium::de::from_reader(bytes)
-            .map_err(|e| SenMLError::deserialization(e.to_string()))
+        ciborium::de::from_reader(bytes).map_err(|e| SenMLError::deserialization(e.to_string()))
     }
 }
 
@@ -268,7 +264,7 @@ mod tests {
         let mut pack = SenMLPack::new();
         pack.add_record(SenMLRecord::with_value("temperature", 22.5));
         pack.add_record(SenMLRecord::with_value("humidity", 45.0));
-        
+
         assert_eq!(pack.len(), 2);
         assert!(!pack.is_empty());
     }
@@ -280,7 +276,7 @@ mod tests {
             SenMLRecord::with_value("humidity", 50.0),
         ];
         let pack: SenMLPack = records.into_iter().collect();
-        
+
         let mut count = 0;
         for record in &pack {
             count += 1;
@@ -293,9 +289,9 @@ mod tests {
     fn test_pack_validation() {
         let mut pack = SenMLPack::new();
         pack.add_record(SenMLRecord::with_value("temp", 25.0));
-        
+
         assert!(pack.validate().is_ok());
-        
+
         let empty_pack = SenMLPack::new();
         assert!(empty_pack.validate().is_err());
     }
@@ -305,10 +301,10 @@ mod tests {
     fn test_json_serialization() {
         let mut pack = SenMLPack::new();
         pack.add_record(SenMLRecord::with_value("temperature", 22.5));
-        
+
         let json = pack.to_json().unwrap();
         let deserialized = SenMLPack::from_json(&json).unwrap();
-        
+
         assert_eq!(pack, deserialized);
     }
 
@@ -317,10 +313,10 @@ mod tests {
     fn test_cbor_serialization() {
         let mut pack = SenMLPack::new();
         pack.add_record(SenMLRecord::with_value("temperature", 22.5));
-        
+
         let cbor = pack.to_cbor().unwrap();
         let deserialized = SenMLPack::from_cbor(&cbor).unwrap();
-        
+
         assert_eq!(pack, deserialized);
     }
 }

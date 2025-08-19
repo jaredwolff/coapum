@@ -1,6 +1,6 @@
 //! SenML normalization - converting packs to resolved form
 
-use crate::{SenMLPack, SenMLRecord, SenMLValue, Result, SenMLError};
+use crate::{Result, SenMLError, SenMLPack, SenMLRecord, SenMLValue};
 use serde::{Deserialize, Serialize};
 
 /// A normalized SenML pack where all base values have been resolved into individual records
@@ -39,7 +39,7 @@ impl NormalizedPack {
     /// Create a normalized pack from a regular SenML pack
     pub fn from_pack(pack: &SenMLPack) -> Self {
         let mut records = Vec::new();
-        
+
         if pack.records.is_empty() {
             return Self {
                 records,
@@ -52,7 +52,7 @@ impl NormalizedPack {
         let has_base_name = first_record.n.as_ref().map_or(false, |n| n.ends_with('/'));
         let has_only_base_values = !first_record.has_value() && first_record.s.is_none();
         let is_base_record = has_base_name || has_only_base_values;
-        
+
         let (base_name, base_time, base_unit, base_value, base_sum) = if is_base_record {
             // Extract base values from the base record
             (
@@ -66,18 +66,13 @@ impl NormalizedPack {
             // No base record - use empty base values
             (String::new(), 0.0, None, 0.0, 0.0)
         };
-        
+
         let start_index = if is_base_record { 1 } else { 0 };
 
         // Process each record (skip first if it's a base record)
         for record in &pack.records[start_index..] {
             if let Ok(normalized) = Self::normalize_record(
-                record, 
-                &base_name, 
-                base_time, 
-                &base_unit, 
-                base_value, 
-                base_sum
+                record, &base_name, base_time, &base_unit, base_value, base_sum,
             ) {
                 records.push(normalized);
             }
@@ -88,16 +83,16 @@ impl NormalizedPack {
         if is_base_record && first_record.has_value() {
             // Check if this is a pure base record (name ends with '/') with only base values
             let is_pure_base = first_record.n.as_ref().map_or(false, |n| n.ends_with('/'));
-            
+
             // Only include if it's not a pure base record OR if it has sum values
             if !is_pure_base || first_record.s.is_some() {
                 if let Ok(normalized) = Self::normalize_record(
                     first_record,
-                    "",  // No base name for base record itself
-                    0.0, // No base time
+                    "",    // No base name for base record itself
+                    0.0,   // No base time
                     &None, // No base unit
-                    0.0, // No base value
-                    0.0  // No base sum
+                    0.0,   // No base value
+                    0.0,   // No base sum
                 ) {
                     records.insert(0, normalized);
                 }
@@ -175,33 +170,39 @@ impl NormalizedPack {
 
     /// Convert back to a SenML pack (may not preserve original base structure)
     pub fn to_pack(&self) -> SenMLPack {
-        let records: Vec<SenMLRecord> = self.records.iter().map(|nr| {
-            let mut record = SenMLRecord::default();
-            record.n = Some(nr.name.clone());
-            record.u = nr.unit.clone();
-            record.v = nr.value;
-            record.vs = nr.string_value.clone();
-            record.vb = nr.bool_value;
-            record.vd = nr.data_value.as_ref().map(|data| base64_encode(data));
-            record.s = nr.sum;
-            record.t = nr.time;
-            record.ut = nr.update_time;
-            record
-        }).collect();
+        let records: Vec<SenMLRecord> = self
+            .records
+            .iter()
+            .map(|nr| {
+                let mut record = SenMLRecord::default();
+                record.n = Some(nr.name.clone());
+                record.u = nr.unit.clone();
+                record.v = nr.value;
+                record.vs = nr.string_value.clone();
+                record.vb = nr.bool_value;
+                record.vd = nr.data_value.as_ref().map(|data| base64_encode(data));
+                record.s = nr.sum;
+                record.t = nr.time;
+                record.ut = nr.update_time;
+                record
+            })
+            .collect();
 
         SenMLPack { records }
     }
 
     /// Get all records with a specific name pattern
     pub fn records_matching(&self, pattern: &str) -> Vec<&NormalizedRecord> {
-        self.records.iter()
+        self.records
+            .iter()
             .filter(|record| record.name.contains(pattern))
             .collect()
     }
 
     /// Get all records within a time range
     pub fn records_in_time_range(&self, start: f64, end: f64) -> Vec<&NormalizedRecord> {
-        self.records.iter()
+        self.records
+            .iter()
             .filter(|record| {
                 if let Some(time) = record.time {
                     time >= start && time <= end
@@ -214,10 +215,8 @@ impl NormalizedPack {
 
     /// Get the time range of this pack
     pub fn time_range(&self) -> Option<(f64, f64)> {
-        let times: Vec<f64> = self.records.iter()
-            .filter_map(|r| r.time)
-            .collect();
-        
+        let times: Vec<f64> = self.records.iter().filter_map(|r| r.time).collect();
+
         if times.is_empty() {
             None
         } else {
@@ -230,7 +229,7 @@ impl NormalizedPack {
     /// Group records by name prefix
     pub fn group_by_prefix(&self) -> std::collections::HashMap<String, Vec<&NormalizedRecord>> {
         let mut groups = std::collections::HashMap::new();
-        
+
         for record in &self.records {
             // Extract prefix (everything before the last '/')
             let prefix = if let Some(pos) = record.name.rfind('/') {
@@ -238,20 +237,19 @@ impl NormalizedPack {
             } else {
                 "".to_string()
             };
-            
+
             groups.entry(prefix).or_insert_with(Vec::new).push(record);
         }
-        
+
         groups
     }
 
     /// Validate the normalized pack
     pub fn validate(&self) -> Result<()> {
         for (i, record) in self.records.iter().enumerate() {
-            record.validate()
-                .map_err(|e| SenMLError::validation(
-                    format!("Invalid normalized record at index {}: {}", i, e)
-                ))?;
+            record.validate().map_err(|e| {
+                SenMLError::validation(format!("Invalid normalized record at index {}: {}", i, e))
+            })?;
         }
         Ok(())
     }
@@ -275,9 +273,9 @@ impl NormalizedRecord {
 
     /// Check if this record has any value
     pub fn has_value(&self) -> bool {
-        self.value.is_some() 
-            || self.string_value.is_some() 
-            || self.bool_value.is_some() 
+        self.value.is_some()
+            || self.string_value.is_some()
+            || self.bool_value.is_some()
             || self.data_value.is_some()
     }
 
@@ -305,7 +303,7 @@ impl NormalizedRecord {
         // Must have at least one value or sum
         if !self.has_value() && self.sum.is_none() {
             return Err(SenMLError::validation(
-                "Normalized record must have at least one value field"
+                "Normalized record must have at least one value field",
             ));
         }
 
@@ -330,7 +328,10 @@ impl NormalizedRecord {
 
         if let Some(ut) = self.update_time {
             if !ut.is_finite() || ut < 0.0 {
-                return Err(SenMLError::invalid_field_value("update_time", &ut.to_string()));
+                return Err(SenMLError::invalid_field_value(
+                    "update_time",
+                    &ut.to_string(),
+                ));
             }
         }
 
@@ -342,23 +343,23 @@ impl NormalizedRecord {
 fn base64_encode(data: &[u8]) -> String {
     // Same implementation as in record.rs
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    
+
     let mut result = String::new();
     let chunks = data.chunks_exact(3);
     let remainder = chunks.remainder();
-    
+
     for chunk in chunks {
         let b1 = chunk[0] as u32;
         let b2 = chunk[1] as u32;
         let b3 = chunk[2] as u32;
         let combined = (b1 << 16) | (b2 << 8) | b3;
-        
+
         result.push(ALPHABET[((combined >> 18) & 0x3F) as usize] as char);
         result.push(ALPHABET[((combined >> 12) & 0x3F) as usize] as char);
         result.push(ALPHABET[((combined >> 6) & 0x3F) as usize] as char);
         result.push(ALPHABET[(combined & 0x3F) as usize] as char);
     }
-    
+
     match remainder.len() {
         1 => {
             let b1 = remainder[0] as u32;
@@ -378,19 +379,19 @@ fn base64_encode(data: &[u8]) -> String {
         }
         _ => {}
     }
-    
+
     result
 }
 
 fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, &'static str> {
     let chars: Vec<char> = s.chars().filter(|&c| c != '=').collect();
     let mut result = Vec::new();
-    
+
     for chunk in chars.chunks(4) {
         if chunk.len() < 2 {
             return Err("Invalid base64");
         }
-        
+
         let mut combined = 0u32;
         for (i, &c) in chunk.iter().enumerate() {
             let val = match c {
@@ -403,7 +404,7 @@ fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, &'static str> {
             };
             combined |= val << (6 * (3 - i));
         }
-        
+
         result.push((combined >> 16) as u8);
         if chunk.len() > 2 {
             result.push((combined >> 8) as u8);
@@ -412,7 +413,7 @@ fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, &'static str> {
             result.push(combined as u8);
         }
     }
-    
+
     Ok(result)
 }
 
@@ -431,7 +432,7 @@ mod tests {
             .build();
 
         let normalized = pack.normalize();
-        
+
         assert_eq!(normalized.records.len(), 1);
         let record = &normalized.records[0];
         assert_eq!(record.name, "device1/temp");
@@ -450,7 +451,7 @@ mod tests {
             .build();
 
         let normalized = pack.normalize();
-        
+
         assert_eq!(normalized.records.len(), 1);
         let record = &normalized.records[0];
         assert_eq!(record.name, "sensor/temp");
@@ -462,9 +463,9 @@ mod tests {
     fn test_normalization_without_base_record() {
         let mut pack = SenMLPack::new();
         pack.add_record(SenMLRecord::with_value("standalone", 42.0));
-        
+
         let normalized = pack.normalize();
-        
+
         assert_eq!(normalized.records.len(), 1);
         let record = &normalized.records[0];
         assert_eq!(record.name, "standalone");
@@ -481,7 +482,7 @@ mod tests {
 
         let normalized = pack.normalize();
         let range = normalized.time_range();
-        
+
         assert_eq!(range, Some((100.0, 200.0)));
     }
 
@@ -489,13 +490,13 @@ mod tests {
     fn test_records_in_time_range() {
         let pack = SenMLBuilder::new()
             .add_measurement("temp1", 20.0, 100.0)
-            .add_measurement("temp2", 25.0, 200.0) 
+            .add_measurement("temp2", 25.0, 200.0)
             .add_measurement("temp3", 30.0, 300.0)
             .build();
 
         let normalized = pack.normalize();
         let filtered = normalized.records_in_time_range(150.0, 250.0);
-        
+
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name, "temp2");
     }
@@ -510,7 +511,7 @@ mod tests {
 
         let normalized = pack.normalize();
         let groups = normalized.group_by_prefix();
-        
+
         assert_eq!(groups.len(), 2);
         assert!(groups.contains_key("device1"));
         assert!(groups.contains_key("device2"));
@@ -522,19 +523,17 @@ mod tests {
     fn test_local_and_base_name() {
         let mut pack = SenMLPack::new();
         pack.add_record(SenMLRecord::with_value("device1/sensor/temperature", 22.5));
-        
+
         let normalized = pack.normalize();
         let record = &normalized.records[0];
-        
+
         assert_eq!(record.base_name(), Some("device1/sensor/"));
         assert_eq!(record.local_name(), "temperature");
     }
 
     #[test]
     fn test_normalization_validation() {
-        let pack = SenMLBuilder::new()
-            .add_value("valid", 25.0)
-            .build();
+        let pack = SenMLBuilder::new().add_value("valid", 25.0).build();
 
         let normalized = pack.normalize();
         assert!(normalized.validate().is_ok());
@@ -549,7 +548,7 @@ mod tests {
 
         let normalized = original.normalize();
         let restored = normalized.to_pack();
-        
+
         // Should have same number of records (though structure may differ)
         assert_eq!(restored.records.len(), original.records.len());
     }
