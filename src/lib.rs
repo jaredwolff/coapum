@@ -19,8 +19,8 @@ pub use extract::{
 };
 pub use handler::{into_handler, Handler, HandlerFn};
 pub use router::{
-    NotificationTrigger, RouterBuilder, StateUpdateHandle, StateUpdateError,
-    ClientManager, ClientManagerError, ClientMetadata,
+    ClientManager, ClientManagerError, ClientMetadata, NotificationTrigger, RouterBuilder,
+    StateUpdateError, StateUpdateHandle,
 };
 
 // Re-export CoAP types

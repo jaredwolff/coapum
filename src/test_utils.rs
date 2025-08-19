@@ -31,9 +31,9 @@ pub fn create_test_request_with_payload(path: &str, payload: Vec<u8>) -> CoapumR
 
 /// Create a test POST request with payload and content format
 pub fn create_test_request_with_content(
-    path: &str, 
-    payload: Vec<u8>, 
-    content_format: crate::ContentFormat
+    path: &str,
+    payload: Vec<u8>,
+    content_format: crate::ContentFormat,
 ) -> CoapumRequest<SocketAddr> {
     let mut request = CoapRequest::from_packet(
         Packet::new(),

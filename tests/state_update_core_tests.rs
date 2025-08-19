@@ -1,10 +1,6 @@
 //! Core tests for external state update functionality
 
-use coapum::{
-    router::CoapRouter,
-    observer::memory::MemObserver,
-    StateUpdateError,
-};
+use coapum::{observer::memory::MemObserver, router::CoapRouter, StateUpdateError};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,10 +34,12 @@ async fn test_state_update_handle_creation() {
     assert!(router.state_update_handle().is_some());
 
     // Test basic state update functionality
-    let result = state_handle.update(|state: &mut TestAppState| {
-        state.counter += 1;
-    }).await;
-    
+    let result = state_handle
+        .update(|state: &mut TestAppState| {
+            state.counter += 1;
+        })
+        .await;
+
     assert!(result.is_ok());
 }
 
@@ -58,19 +56,30 @@ async fn test_external_state_updates() {
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // Test counter update
-    state_handle.update(|state: &mut TestAppState| {
-        state.counter = 42;
-    }).await.unwrap();
+    state_handle
+        .update(|state: &mut TestAppState| {
+            state.counter = 42;
+        })
+        .await
+        .unwrap();
 
     // Test data update
-    state_handle.update(|state: &mut TestAppState| {
-        state.data.insert("test_key".to_string(), "test_value".to_string());
-    }).await.unwrap();
+    state_handle
+        .update(|state: &mut TestAppState| {
+            state
+                .data
+                .insert("test_key".to_string(), "test_value".to_string());
+        })
+        .await
+        .unwrap();
 
     // Test boolean flag update
-    state_handle.update(|state: &mut TestAppState| {
-        state.enabled = false;
-    }).await.unwrap();
+    state_handle
+        .update(|state: &mut TestAppState| {
+            state.enabled = false;
+        })
+        .await
+        .unwrap();
 
     // Give updates time to process
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -94,13 +103,19 @@ async fn test_multiple_state_handles() {
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // Test that both handles work
-    state_handle1.update(|state: &mut TestAppState| {
-        state.counter += 10;
-    }).await.unwrap();
+    state_handle1
+        .update(|state: &mut TestAppState| {
+            state.counter += 10;
+        })
+        .await
+        .unwrap();
 
-    state_handle2.update(|state: &mut TestAppState| {
-        state.counter += 5;
-    }).await.unwrap();
+    state_handle2
+        .update(|state: &mut TestAppState| {
+            state.counter += 5;
+        })
+        .await
+        .unwrap();
 
     // Give updates time to process
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -146,21 +161,31 @@ async fn test_state_update_with_complex_operations() {
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // Test complex state operation
-    state_handle.update(|state: &mut TestAppState| {
-        // Simulate complex state changes
-        for i in 0..10 {
-            state.data.insert(format!("key_{}", i), format!("value_{}", i));
-        }
-        state.counter = state.data.len() as i32;
-        state.enabled = state.counter > 5;
-    }).await.unwrap();
+    state_handle
+        .update(|state: &mut TestAppState| {
+            // Simulate complex state changes
+            for i in 0..10 {
+                state
+                    .data
+                    .insert(format!("key_{}", i), format!("value_{}", i));
+            }
+            state.counter = state.data.len() as i32;
+            state.enabled = state.counter > 5;
+        })
+        .await
+        .unwrap();
 
     // Test batch updates
     for i in 10..20 {
-        state_handle.update(move |state: &mut TestAppState| {
-            state.data.insert(format!("batch_key_{}", i), format!("batch_value_{}", i));
-            state.counter += 1;
-        }).await.unwrap();
+        state_handle
+            .update(move |state: &mut TestAppState| {
+                state
+                    .data
+                    .insert(format!("batch_key_{}", i), format!("batch_value_{}", i));
+                state.counter += 1;
+            })
+            .await
+            .unwrap();
     }
 
     // Give all updates time to process
@@ -182,13 +207,19 @@ async fn test_state_handle_cloning() {
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // Test that both original and cloned handles work
-    state_handle.update(|state: &mut TestAppState| {
-        state.counter = 100;
-    }).await.unwrap();
+    state_handle
+        .update(|state: &mut TestAppState| {
+            state.counter = 100;
+        })
+        .await
+        .unwrap();
 
-    cloned_handle.update(|state: &mut TestAppState| {
-        state.counter += 50;
-    }).await.unwrap();
+    cloned_handle
+        .update(|state: &mut TestAppState| {
+            state.counter += 50;
+        })
+        .await
+        .unwrap();
 
     // Give updates time to process
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -206,15 +237,17 @@ async fn test_state_update_error_types() {
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // Test that error types work correctly
-    let result = state_handle.update(|state: &mut TestAppState| {
-        state.counter = 1;
-    }).await;
+    let result = state_handle
+        .update(|state: &mut TestAppState| {
+            state.counter = 1;
+        })
+        .await;
     assert!(result.is_ok());
 
     // Test error display and debug
     let error = StateUpdateError::ChannelFull;
     assert_eq!(error.to_string(), "State update channel is full");
-    
+
     let error = StateUpdateError::ChannelClosed;
     assert_eq!(error.to_string(), "State update channel is closed");
 }
@@ -232,14 +265,19 @@ async fn test_concurrent_state_updates() {
 
     // Spawn multiple tasks that update the state concurrently
     let mut handles = Vec::new();
-    
+
     for i in 0..10 {
         let handle = state_handle.clone();
         let task = tokio::spawn(async move {
-            handle.update(move |state: &mut TestAppState| {
-                state.data.insert(format!("concurrent_{}", i), format!("value_{}", i));
-                state.counter += 1;
-            }).await.unwrap();
+            handle
+                .update(move |state: &mut TestAppState| {
+                    state
+                        .data
+                        .insert(format!("concurrent_{}", i), format!("value_{}", i));
+                    state.counter += 1;
+                })
+                .await
+                .unwrap();
         });
         handles.push(task);
     }

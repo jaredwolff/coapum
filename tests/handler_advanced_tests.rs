@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use coapum::{
-    extract::{Bytes, Cbor, Json, Path, State, StatusCode, Source},
-    router::RouterBuilder,
+    extract::{Bytes, Cbor, Json, Path, Source, State, StatusCode},
     observer::memory::MemObserver,
+    router::RouterBuilder,
     ContentFormat,
 };
 use serde::{Deserialize, Serialize};
@@ -199,7 +199,8 @@ mod handler_parameter_combinations {
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
         // Verify path was extracted
-        let json_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+        let json_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data["extracted_id"], "test123");
     }
 
@@ -212,13 +213,15 @@ mod handler_parameter_combinations {
             .build();
 
         let payload = vec![1, 2, 3, 4, 5];
-        let request = coapum::test_utils::create_test_request_with_payload("/bytes", payload.clone());
+        let request =
+            coapum::test_utils::create_test_request_with_payload("/bytes", payload.clone());
 
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
-        let json_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+        let json_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data["payload_size"], 5);
     }
 
@@ -238,9 +241,9 @@ mod handler_parameter_combinations {
         let json_data = serde_json::to_vec(&test_payload).unwrap();
 
         let request = coapum::test_utils::create_test_request_with_content(
-            "/json", 
-            json_data, 
-            ContentFormat::ApplicationJSON
+            "/json",
+            json_data,
+            ContentFormat::ApplicationJSON,
         );
 
         let response = router.call(request).await.unwrap();
@@ -248,7 +251,8 @@ mod handler_parameter_combinations {
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
         // Verify CBOR response
-        let response_data: ResponseData = ciborium::de::from_reader(&response.message.payload[..]).unwrap();
+        let response_data: ResponseData =
+            ciborium::de::from_reader(&response.message.payload[..]).unwrap();
         assert_eq!(response_data.processed, true);
         assert_eq!(response_data.count, 42);
         assert_eq!(response_data.message, "test_payload");
@@ -267,14 +271,14 @@ mod handler_parameter_combinations {
             name: "cbor_test".to_string(),
             data: vec![4, 5, 6],
         };
-        
+
         let mut cbor_data = Vec::new();
         ciborium::ser::into_writer(&test_payload, &mut cbor_data).unwrap();
 
         let request = coapum::test_utils::create_test_request_with_content(
-            "/cbor", 
-            cbor_data, 
-            ContentFormat::ApplicationCBOR
+            "/cbor",
+            cbor_data,
+            ContentFormat::ApplicationCBOR,
         );
 
         let response = router.call(request).await.unwrap();
@@ -282,7 +286,8 @@ mod handler_parameter_combinations {
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
         // Verify JSON response
-        let response_data: ResponseData = serde_json::from_slice(&response.message.payload).unwrap();
+        let response_data: ResponseData =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(response_data.processed, true);
         assert_eq!(response_data.count, 99);
         assert_eq!(response_data.message, "cbor_test");
@@ -302,7 +307,8 @@ mod handler_parameter_combinations {
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
         // Verify response
-        let json_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+        let json_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data["id"], "device123");
         assert_eq!(json_data["count"], 1);
 
@@ -322,13 +328,15 @@ mod handler_parameter_combinations {
             .build();
 
         let payload = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let request = coapum::test_utils::create_test_request_with_payload("/three/sensor789", payload);
+        let request =
+            coapum::test_utils::create_test_request_with_payload("/three/sensor789", payload);
 
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
-        let json_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+        let json_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data["id"], "sensor789");
         assert_eq!(json_data["payload_size"], 8);
         assert_eq!(json_data["count"], 1);
@@ -356,14 +364,15 @@ mod handler_parameter_combinations {
         let request = coapum::test_utils::create_test_request_with_content(
             "/four/gateway456",
             json_data,
-            ContentFormat::ApplicationJSON
+            ContentFormat::ApplicationJSON,
         );
 
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
-        let json_response: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+        let json_response: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_response["id"], "gateway456");
         assert_eq!(json_response["payload_id"], 777);
         assert_eq!(json_response["payload_name"], "four_param_test");
@@ -405,7 +414,8 @@ mod handler_error_scenarios {
     }
 
     // Handler that might fail to convert response
-    async fn handler_response_conversion_issue() -> Json<std::collections::HashMap<String, String>> {
+    async fn handler_response_conversion_issue() -> Json<std::collections::HashMap<String, String>>
+    {
         // This should work fine, but tests response conversion path
         let mut map = std::collections::HashMap::new();
         map.insert("status".to_string(), "ok".to_string());
@@ -452,7 +462,7 @@ mod handler_error_scenarios {
         let request = coapum::test_utils::create_test_request_with_content(
             "/expect_json",
             vec![0xFF, 0xFE, 0xFD], // Invalid JSON bytes
-            ContentFormat::ApplicationJSON
+            ContentFormat::ApplicationJSON,
         );
 
         let response = router.call(request).await.unwrap();
@@ -473,7 +483,7 @@ mod handler_error_scenarios {
         let request = coapum::test_utils::create_test_request_with_content(
             "/expect_cbor",
             vec![0xFF, 0xFF, 0xFF], // Invalid CBOR bytes
-            ContentFormat::ApplicationCBOR
+            ContentFormat::ApplicationCBOR,
         );
 
         let response = router.call(request).await.unwrap();
@@ -496,7 +506,8 @@ mod handler_error_scenarios {
 
         // Should succeed but return error in JSON
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        let json_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+        let json_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data["error"], "invalid number");
     }
 
@@ -513,8 +524,9 @@ mod handler_error_scenarios {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
-        let json_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+
+        let json_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data["number"], 42);
     }
 
@@ -530,9 +542,9 @@ mod handler_error_scenarios {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
+
         // Verify the response can be deserialized
-        let json_data: std::collections::HashMap<String, String> = 
+        let json_data: std::collections::HashMap<String, String> =
             serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data.get("status"), Some(&"ok".to_string()));
     }
@@ -547,11 +559,11 @@ mod handler_concurrent_access {
     async fn concurrent_handler(State(state): State<HandlerTestState>) -> Json<serde_json::Value> {
         // Simulate some processing time
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        
+
         let global_count = CONCURRENT_COUNTER.fetch_add(1, Ordering::SeqCst);
         let mut local_count = state.request_count.lock().unwrap();
         *local_count += 1;
-        
+
         Json(serde_json::json!({
             "global_count": global_count,
             "local_count": *local_count
@@ -561,7 +573,7 @@ mod handler_concurrent_access {
     #[tokio::test]
     async fn test_concurrent_handler_execution() {
         CONCURRENT_COUNTER.store(0, Ordering::SeqCst);
-        
+
         let state = HandlerTestState::default();
         let observer = MemObserver::new();
         let router = RouterBuilder::new(state.clone(), observer)
@@ -589,7 +601,7 @@ mod handler_concurrent_access {
 
         // Verify all handlers were called
         assert_eq!(CONCURRENT_COUNTER.load(Ordering::SeqCst), 5);
-        
+
         // Verify local state counter
         let local_count = state.request_count.lock().unwrap();
         assert_eq!(*local_count, 5);
@@ -597,7 +609,8 @@ mod handler_concurrent_access {
         // Verify each response has unique global counts
         let mut global_counts = vec![];
         for result in results {
-            let json_data: serde_json::Value = serde_json::from_slice(&result.message.payload).unwrap();
+            let json_data: serde_json::Value =
+                serde_json::from_slice(&result.message.payload).unwrap();
             global_counts.push(json_data["global_count"].as_u64().unwrap());
         }
 

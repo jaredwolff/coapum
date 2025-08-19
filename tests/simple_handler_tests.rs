@@ -3,12 +3,12 @@
 //! These tests validate that handlers work correctly with different
 //! parameter combinations and error scenarios.
 
-use std::sync::Arc;
 use coapum::{
     extract::{State, StatusCode},
-    router::RouterBuilder,
     observer::memory::MemObserver,
+    router::RouterBuilder,
 };
+use std::sync::Arc;
 use tower::Service;
 
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ async fn test_stateful_handler_execution() {
     let response = router.call(request).await.unwrap();
 
     assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-    
+
     // Verify state was modified
     let counter = state.counter.lock().unwrap();
     assert_eq!(*counter, 1);
@@ -88,7 +88,10 @@ async fn test_error_handler_execution() {
     let request = coapum::test_utils::create_test_request("/error");
     let response = router.call(request).await.unwrap();
 
-    assert_eq!(*response.get_status(), coapum::ResponseType::InternalServerError);
+    assert_eq!(
+        *response.get_status(),
+        coapum::ResponseType::InternalServerError
+    );
 }
 
 #[tokio::test]
@@ -113,7 +116,12 @@ async fn test_multiple_handlers_in_same_router() {
     for (path, expected_status) in paths_and_expected {
         let request = coapum::test_utils::create_test_request(path);
         let response = router.call(request).await.unwrap();
-        assert_eq!(*response.get_status(), expected_status, "Failed for path: {}", path);
+        assert_eq!(
+            *response.get_status(),
+            expected_status,
+            "Failed for path: {}",
+            path
+        );
     }
 
     // Verify stateful handler was called

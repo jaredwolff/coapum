@@ -44,23 +44,23 @@ mod connection_info_tests {
     #[test]
     fn test_connection_info_creation() {
         let (_tx, _rx) = tokio::sync::mpsc::channel::<()>(1);
-        
+
         // Test connection info structure
         // Note: ConnectionInfo is private, so we test the concepts it represents
         let established_at = Instant::now();
         let reconnect_count = 0u32;
-        
+
         // Verify timing constraints exist (from constants in serve.rs)
         const MIN_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
         const MAX_RECONNECT_ATTEMPTS: u32 = 10;
-        
+
         assert!(MIN_RECONNECT_INTERVAL.as_secs() >= 5);
         assert!(MAX_RECONNECT_ATTEMPTS >= 10);
-        
+
         // Test that timing calculations work
         let elapsed = established_at.elapsed();
         assert!(elapsed < Duration::from_secs(1)); // Should be very recent
-        
+
         // Test reconnection logic
         assert!(reconnect_count < MAX_RECONNECT_ATTEMPTS);
     }
@@ -71,18 +71,30 @@ mod connection_info_tests {
         const MIN_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
         const MAX_RECONNECT_ATTEMPTS: u32 = 10;
         const MAX_IDENTITY_LENGTH: usize = 256;
-        
-        assert!(MIN_RECONNECT_INTERVAL.as_secs() >= 1, "Reconnect interval should prevent rapid abuse");
-        assert!(MAX_RECONNECT_ATTEMPTS >= 3, "Should allow some reconnections");
-        assert!(MAX_IDENTITY_LENGTH >= 32, "Should allow reasonable identity lengths");
-        assert!(MAX_IDENTITY_LENGTH <= 1024, "Should prevent excessive identity lengths");
+
+        assert!(
+            MIN_RECONNECT_INTERVAL.as_secs() >= 1,
+            "Reconnect interval should prevent rapid abuse"
+        );
+        assert!(
+            MAX_RECONNECT_ATTEMPTS >= 3,
+            "Should allow some reconnections"
+        );
+        assert!(
+            MAX_IDENTITY_LENGTH >= 32,
+            "Should allow reasonable identity lengths"
+        );
+        assert!(
+            MAX_IDENTITY_LENGTH <= 1024,
+            "Should prevent excessive identity lengths"
+        );
     }
 }
 
 mod path_validation_tests {
 
     // Since validate_observer_path is private, we need to create a public wrapper for testing
-    // or test the behavior through integration tests. Let's create utility functions that 
+    // or test the behavior through integration tests. Let's create utility functions that
     // replicate the validation logic for testing purposes.
 
     fn test_path_validation(path: &str) -> Result<String, String> {
@@ -96,9 +108,7 @@ mod path_validation_tests {
         }
 
         // Normalize and validate path components
-        let components: Vec<&str> = path.split('/')
-            .filter(|s| !s.is_empty())
-            .collect();
+        let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
         // Security: Limit path depth to prevent resource exhaustion
         const MAX_PATH_DEPTH: usize = 10;
@@ -108,7 +118,10 @@ mod path_validation_tests {
 
         // Security: Validate each path component for safe characters only
         for component in &components {
-            if !component.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            if !component
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
                 return Err("Path contains invalid characters".to_string());
             }
         }
@@ -151,7 +164,7 @@ mod path_validation_tests {
         // Create a path that exceeds the maximum depth (10 components)
         let components = vec!["component"; 11];
         let deep_path = format!("/{}", components.join("/"));
-        
+
         let result = test_path_validation(&deep_path);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Path too deep"));
@@ -182,19 +195,30 @@ mod path_validation_tests {
             "/device_123/temperature",
             "/data-source/readings",
             "/sensors/device_1/temp",
-            "sensors/data", // Without leading slash
+            "sensors/data",         // Without leading slash
             "/a/b/c/d/e/f/g/h/i/j", // Exactly at depth limit (10 components)
         ];
 
         for valid_path in valid_paths {
             let result = test_path_validation(valid_path);
-            assert!(result.is_ok(), "Should accept valid path: {} - Error: {:?}", valid_path, result.err());
+            assert!(
+                result.is_ok(),
+                "Should accept valid path: {} - Error: {:?}",
+                valid_path,
+                result.err()
+            );
 
             let normalized = result.unwrap();
             // Should always start with /
-            assert!(normalized.starts_with('/'), "Normalized path should start with /");
+            assert!(
+                normalized.starts_with('/'),
+                "Normalized path should start with /"
+            );
             // Should not have double slashes
-            assert!(!normalized.contains("//"), "Should not contain double slashes");
+            assert!(
+                !normalized.contains("//"),
+                "Should not contain double slashes"
+            );
         }
     }
 
@@ -209,7 +233,12 @@ mod path_validation_tests {
         for (input, expected) in test_cases {
             let result = test_path_validation(input);
             assert!(result.is_ok(), "Should normalize path: {}", input);
-            assert_eq!(result.unwrap(), expected, "Incorrect normalization for: {}", input);
+            assert_eq!(
+                result.unwrap(),
+                expected,
+                "Incorrect normalization for: {}",
+                input
+            );
         }
     }
 }
@@ -219,21 +248,22 @@ mod identity_sanitization_tests {
     // Test identity sanitization logic based on serve.rs implementation
     fn test_identity_sanitization(identity: &str) -> Result<String, String> {
         const MAX_IDENTITY_LENGTH: usize = 256;
-        
+
         if identity.len() > MAX_IDENTITY_LENGTH {
             return Err(format!("Identity too long: {} bytes", identity.len()));
         }
-        
+
         // Sanitize identity to prevent injection attacks
-        let sanitized: String = identity.chars()
+        let sanitized: String = identity
+            .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
             .take(MAX_IDENTITY_LENGTH)
             .collect();
-        
+
         if sanitized.is_empty() {
             return Err("Identity contains no valid characters".to_string());
         }
-        
+
         Ok(sanitized)
     }
 
@@ -244,14 +274,18 @@ mod identity_sanitization_tests {
             "device-sensor_1",
             "gateway.domain.com",
             "sensor_node-42",
-            "a", // Single character
+            "a",           // Single character
             "A1_b2-c3.d4", // Mixed valid characters
         ];
 
         for identity in valid_identities {
             let result = test_identity_sanitization(identity);
             assert!(result.is_ok(), "Should accept valid identity: {}", identity);
-            assert_eq!(result.unwrap(), identity, "Should not change valid identity");
+            assert_eq!(
+                result.unwrap(),
+                identity,
+                "Should not change valid identity"
+            );
         }
     }
 
@@ -269,7 +303,12 @@ mod identity_sanitization_tests {
         for (input, expected) in test_cases {
             let result = test_identity_sanitization(input);
             assert!(result.is_ok(), "Should sanitize identity: {}", input);
-            assert_eq!(result.unwrap(), expected, "Incorrect sanitization for: {}", input);
+            assert_eq!(
+                result.unwrap(),
+                expected,
+                "Incorrect sanitization for: {}",
+                input
+            );
         }
     }
 
@@ -284,15 +323,19 @@ mod identity_sanitization_tests {
     #[test]
     fn test_empty_after_sanitization() {
         let invalid_identities = vec![
-            "!@#$%^&*()", // All invalid characters
-            "\x00\x01\x02", // All non-printable
-            "   ", // Only spaces (filtered out)
+            "!@#$%^&*()",          // All invalid characters
+            "\x00\x01\x02",        // All non-printable
+            "   ",                 // Only spaces (filtered out)
             "+=[]{}|\\:;\"'<>,?/", // All symbols
         ];
 
         for identity in invalid_identities {
             let result = test_identity_sanitization(identity);
-            assert!(result.is_err(), "Should reject identity with no valid chars: {}", identity);
+            assert!(
+                result.is_err(),
+                "Should reject identity with no valid chars: {}",
+                identity
+            );
             assert!(result.unwrap_err().contains("no valid characters"));
         }
     }
@@ -303,7 +346,7 @@ mod identity_sanitization_tests {
         let base = "a".repeat(200);
         let extra = "b".repeat(100); // Total would be 300
         let long_valid_identity = format!("{}{}", base, extra);
-        
+
         let result = test_identity_sanitization(&long_valid_identity);
         assert!(result.is_err(), "Should reject overly long identity");
     }
@@ -315,11 +358,14 @@ mod config_integration_tests {
     #[test]
     fn test_config_defaults_for_server() {
         let config = Config::default();
-        
+
         // Test that default configuration is sensible for server use
         assert!(config.timeout > 0, "Timeout should be positive");
-        assert!(config.buffer_size() >= 1024, "Buffer should be reasonable size");
-        
+        assert!(
+            config.buffer_size() >= 1024,
+            "Buffer should be reasonable size"
+        );
+
         // Test that DTLS config exists
         // Note: DTLSConfig fields are mostly private, but we can verify it exists
         let _dtls_config = &config.dtls_cfg;
@@ -340,7 +386,7 @@ mod config_integration_tests {
         let request = coapum::test_utils::create_test_request("/test");
         let response = router.call(request).await.unwrap();
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
+
         // Verify state was modified
         let counter = state.counter.lock().unwrap();
         assert_eq!(*counter, 1);
@@ -349,7 +395,10 @@ mod config_integration_tests {
         // Test error request
         let request = coapum::test_utils::create_test_request("/error");
         let response = router.call(request).await.unwrap();
-        assert_eq!(*response.get_status(), coapum::ResponseType::InternalServerError);
+        assert_eq!(
+            *response.get_status(),
+            coapum::ResponseType::InternalServerError
+        );
     }
 
     #[tokio::test]
@@ -399,7 +448,7 @@ mod observer_integration_tests {
             counter: Arc::new(std::sync::Mutex::new(0)),
         };
         let observer = MemObserver::new();
-        
+
         // Test that observe routes work with valid paths
         let mut router = RouterBuilder::new(state, observer)
             .observe("/valid_path-123", test_handler, test_handler)

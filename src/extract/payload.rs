@@ -238,11 +238,12 @@ where
         // Security: Deserialize CBOR data with size constraints
         // Note: ciborium doesn't expose public deserializer configuration,
         // but the from_reader function already has internal protections
-        let value = ciborium::de::from_reader(&req.message.payload[..]).map_err(|e| CborRejection {
-            kind: CborRejectionKind::InvalidCborData {
-                error: e.to_string(),
-            },
-        })?;
+        let value =
+            ciborium::de::from_reader(&req.message.payload[..]).map_err(|e| CborRejection {
+                kind: CborRejectionKind::InvalidCborData {
+                    error: e.to_string(),
+                },
+            })?;
 
         Ok(Cbor(value))
     }
@@ -498,7 +499,7 @@ impl IntoResponse for Raw {
 
 /// Extract and serialize SenML (Sensor Measurement Lists) payloads
 ///
-/// This extractor automatically deserializes SenML payloads (JSON or CBOR format) 
+/// This extractor automatically deserializes SenML payloads (JSON or CBOR format)
 /// into SenMLPack and can serialize responses back to the appropriate format.
 /// Supports RFC 8428 compliant SenML with validation and normalization.
 ///
@@ -597,7 +598,9 @@ impl IntoResponse for SenMLRejection {
                 StatusCode::UnsupportedContentFormat.into_response()
             }
             SenMLRejectionKind::EmptyPayload => StatusCode::BadRequest.into_response(),
-            SenMLRejectionKind::PayloadTooLarge => StatusCode::RequestEntityTooLarge.into_response(),
+            SenMLRejectionKind::PayloadTooLarge => {
+                StatusCode::RequestEntityTooLarge.into_response()
+            }
         }
     }
 }
@@ -646,15 +649,13 @@ where
                     SenMLPack::from_cbor(&req.message.payload)
                 }
                 // Fallback to generic formats
-                ContentFormat::ApplicationJSON => {
-                    SenMLPack::from_json(std::str::from_utf8(&req.message.payload).map_err(
-                        |e| SenMLRejection {
-                            kind: SenMLRejectionKind::InvalidSenMLData {
-                                error: format!("Invalid UTF-8: {}", e),
-                            },
+                ContentFormat::ApplicationJSON => SenMLPack::from_json(
+                    std::str::from_utf8(&req.message.payload).map_err(|e| SenMLRejection {
+                        kind: SenMLRejectionKind::InvalidSenMLData {
+                            error: format!("Invalid UTF-8: {}", e),
                         },
-                    )?)
-                }
+                    })?,
+                ),
                 ContentFormat::ApplicationCBOR => SenMLPack::from_cbor(&req.message.payload),
                 _ => {
                     return Err(SenMLRejection {
@@ -705,9 +706,11 @@ impl IntoResponse for SenML {
         })?;
 
         response.message.payload = payload.into_bytes();
-        
+
         // Use the official SenML JSON content format
-        response.message.set_content_format(ContentFormat::ApplicationSenmlJSON);
+        response
+            .message
+            .set_content_format(ContentFormat::ApplicationSenmlJSON);
         response.set_status(ResponseType::Content);
         Ok(response)
     }
@@ -870,7 +873,8 @@ mod tests {
 
         let json = pack.to_json().unwrap();
         let mut req = create_test_request_with_payload(json.into_bytes());
-        req.message.set_content_format(ContentFormat::ApplicationSenmlJSON);
+        req.message
+            .set_content_format(ContentFormat::ApplicationSenmlJSON);
 
         let result = SenML::from_request(&req, &()).await;
         assert!(result.is_ok());
@@ -889,7 +893,8 @@ mod tests {
 
         let cbor = pack.to_cbor().unwrap();
         let mut req = create_test_request_with_payload(cbor);
-        req.message.set_content_format(ContentFormat::ApplicationSenmlCBOR);
+        req.message
+            .set_content_format(ContentFormat::ApplicationSenmlCBOR);
 
         let result = SenML::from_request(&req, &()).await;
         assert!(result.is_ok());
@@ -901,14 +906,12 @@ mod tests {
     async fn test_senml_auto_detection() {
         use coapum_senml::SenMLBuilder;
 
-        let pack = SenMLBuilder::new()
-            .add_value("standalone", 42.0)
-            .build();
+        let pack = SenMLBuilder::new().add_value("standalone", 42.0).build();
 
         // Test JSON auto-detection (no content format specified)
         let json = pack.to_json().unwrap();
         let req = create_test_request_with_payload(json.into_bytes());
-        
+
         let result = SenML::from_request(&req, &()).await;
         assert!(result.is_ok());
         let extracted = result.unwrap();
@@ -955,33 +958,36 @@ mod tests {
 
         let result = SenML::from_request(&req, &()).await;
         assert!(result.is_err());
-        
+
         // Should be a deserialization error
         let err = result.unwrap_err();
-        assert!(matches!(err.kind, SenMLRejectionKind::InvalidSenMLData { .. }));
+        assert!(matches!(
+            err.kind,
+            SenMLRejectionKind::InvalidSenMLData { .. }
+        ));
     }
 
     #[tokio::test]
     async fn test_senml_fallback_to_generic_formats() {
         use coapum_senml::SenMLBuilder;
 
-        let pack = SenMLBuilder::new()
-            .add_value("test", 123.0)
-            .build();
+        let pack = SenMLBuilder::new().add_value("test", 123.0).build();
 
         // Test fallback to generic JSON
         let json = pack.to_json().unwrap();
         let mut req = create_test_request_with_payload(json.into_bytes());
-        req.message.set_content_format(ContentFormat::ApplicationJSON);
-        
+        req.message
+            .set_content_format(ContentFormat::ApplicationJSON);
+
         let result = SenML::from_request(&req, &()).await;
         assert!(result.is_ok());
 
         // Test fallback to generic CBOR
         let cbor = pack.to_cbor().unwrap();
         let mut req = create_test_request_with_payload(cbor);
-        req.message.set_content_format(ContentFormat::ApplicationCBOR);
-        
+        req.message
+            .set_content_format(ContentFormat::ApplicationCBOR);
+
         let result = SenML::from_request(&req, &()).await;
         assert!(result.is_ok());
     }

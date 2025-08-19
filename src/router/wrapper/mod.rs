@@ -5,7 +5,6 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::{fmt::Formatter, hash::Hasher};
 
-
 use super::CoapumRequest;
 use crate::handler::ErasedHandler;
 
@@ -113,7 +112,6 @@ where
         Ok(response)
     }
 }
-
 
 impl IntoCoapResponse for &CoapumRequest<SocketAddr> {
     fn into_response(self) -> CoapResponseResult {

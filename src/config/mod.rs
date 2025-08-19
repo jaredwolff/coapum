@@ -12,7 +12,7 @@ pub struct Config {
 
     /// Optional initial client store (identity -> PSK) for dynamic client management
     pub initial_clients: Option<std::collections::HashMap<String, Vec<u8>>>,
-    
+
     /// Buffer size for client management commands (only used if initial_clients is Some)
     pub client_command_buffer: usize,
 }
@@ -27,7 +27,11 @@ impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConfigError::InvalidBufferSize { size, min, max } => {
-                write!(f, "Invalid buffer size: {} (must be between {} and {})", size, min, max)
+                write!(
+                    f,
+                    "Invalid buffer size: {} (must be between {} and {})",
+                    size, min, max
+                )
             }
             ConfigError::InvalidTimeout(timeout) => {
                 write!(f, "Invalid timeout: {} (must be > 0)", timeout)
@@ -45,12 +49,12 @@ impl Config {
     pub const MAX_BUFFER_SIZE: usize = 65536;
     /// Default buffer size (8KB)
     pub const DEFAULT_BUFFER_SIZE: usize = 8192;
-    
+
     /// Get the current buffer size
     pub fn buffer_size(&self) -> usize {
         self.buffer_size
     }
-    
+
     /// Set buffer size with validation
     pub fn set_buffer_size(&mut self, size: usize) -> Result<(), ConfigError> {
         if !(Self::MIN_BUFFER_SIZE..=Self::MAX_BUFFER_SIZE).contains(&size) {
@@ -63,7 +67,7 @@ impl Config {
         self.buffer_size = size;
         Ok(())
     }
-    
+
     /// Set timeout with validation
     pub fn set_timeout(&mut self, timeout: u64) -> Result<(), ConfigError> {
         if timeout == 0 {
@@ -72,18 +76,21 @@ impl Config {
         self.timeout = timeout;
         Ok(())
     }
-    
+
     /// Enable client management with initial clients
-    pub fn with_client_management(mut self, initial_clients: std::collections::HashMap<String, Vec<u8>>) -> Self {
+    pub fn with_client_management(
+        mut self,
+        initial_clients: std::collections::HashMap<String, Vec<u8>>,
+    ) -> Self {
         self.initial_clients = Some(initial_clients);
         self
     }
-    
+
     /// Set client command buffer size
     pub fn set_client_command_buffer(&mut self, size: usize) {
         self.client_command_buffer = size;
     }
-    
+
     /// Check if client management is enabled
     pub fn has_client_management(&self) -> bool {
         self.initial_clients.is_some()
@@ -112,36 +119,44 @@ mod tests {
         assert_eq!(config.timeout, 60);
         assert_eq!(config.buffer_size(), Config::DEFAULT_BUFFER_SIZE);
     }
-    
+
     #[test]
     fn test_buffer_size_validation() {
         let mut config = Config::default();
-        
+
         // Valid size
         assert!(config.set_buffer_size(1024).is_ok());
         assert_eq!(config.buffer_size(), 1024);
-        
+
         // Too small
         assert_eq!(
             config.set_buffer_size(256),
-            Err(ConfigError::InvalidBufferSize { size: 256, min: 512, max: 65536 })
+            Err(ConfigError::InvalidBufferSize {
+                size: 256,
+                min: 512,
+                max: 65536
+            })
         );
-        
+
         // Too large
         assert_eq!(
             config.set_buffer_size(100000),
-            Err(ConfigError::InvalidBufferSize { size: 100000, min: 512, max: 65536 })
+            Err(ConfigError::InvalidBufferSize {
+                size: 100000,
+                min: 512,
+                max: 65536
+            })
         );
     }
-    
+
     #[test]
     fn test_timeout_validation() {
         let mut config = Config::default();
-        
+
         // Valid timeout
         assert!(config.set_timeout(30).is_ok());
         assert_eq!(config.timeout, 30);
-        
+
         // Invalid timeout
         assert_eq!(config.set_timeout(0), Err(ConfigError::InvalidTimeout(0)));
     }

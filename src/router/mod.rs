@@ -86,12 +86,12 @@ where
     }
 
     /// Update the application state using a closure
-    /// 
+    ///
     /// This allows external components to modify the shared state safely.
     /// The update is queued and applied asynchronously by the router.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```rust,no_run
     /// # use coapum::StateUpdateHandle;
     /// # #[derive(Clone)]
@@ -108,7 +108,7 @@ where
     /// state_handle.update(|state: &mut MyAppState| {
     ///     state.counter += 1;
     /// }).await?;
-    /// 
+    ///
     /// // Update database connection pool size
     /// state_handle.update(|state: &mut MyAppState| {
     ///     state.config.max_db_connections = 50;
@@ -127,7 +127,7 @@ where
     }
 
     /// Attempt to update the state without blocking
-    /// 
+    ///
     /// Returns an error if the update channel is full or closed.
     pub fn try_update<F>(&self, updater: F) -> Result<(), StateUpdateError>
     where
@@ -173,30 +173,22 @@ pub struct ClientManager {
 #[derive(Debug)]
 pub enum ClientCommand {
     /// Add a new client with PSK authentication
-    AddClient { 
-        identity: String, 
+    AddClient {
+        identity: String,
         key: Vec<u8>,
         metadata: Option<ClientMetadata>,
     },
     /// Remove a client
-    RemoveClient { 
-        identity: String 
-    },
+    RemoveClient { identity: String },
     /// Update an existing client's key
-    UpdateKey { 
-        identity: String, 
-        key: Vec<u8> 
-    },
+    UpdateKey { identity: String, key: Vec<u8> },
     /// Update client metadata
     UpdateMetadata {
         identity: String,
         metadata: ClientMetadata,
     },
     /// Enable or disable a client
-    SetClientEnabled {
-        identity: String,
-        enabled: bool,
-    },
+    SetClientEnabled { identity: String, enabled: bool },
     /// Get all client identities (response via oneshot channel)
     ListClients {
         response: tokio::sync::oneshot::Sender<Vec<String>>,
@@ -225,15 +217,15 @@ impl ClientManager {
     }
 
     /// Add a new client with PSK authentication
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```rust,no_run
     /// # use coapum::router::ClientManager;
     /// # async fn example(client_manager: ClientManager) -> Result<(), Box<dyn std::error::Error>> {
     /// // Add a simple client
     /// client_manager.add_client("device_001", b"secret_key_123").await?;
-    /// 
+    ///
     /// // Add a client with metadata
     /// let metadata = coapum::router::ClientMetadata {
     ///     name: Some("Temperature Sensor".to_string()),
@@ -258,8 +250,8 @@ impl ClientManager {
 
     /// Add a new client with metadata
     pub async fn add_client_with_metadata(
-        &self, 
-        identity: &str, 
+        &self,
+        identity: &str,
         key: &[u8],
         metadata: ClientMetadata,
     ) -> Result<(), ClientManagerError> {
@@ -296,9 +288,9 @@ impl ClientManager {
 
     /// Update client metadata
     pub async fn update_metadata(
-        &self, 
-        identity: &str, 
-        metadata: ClientMetadata
+        &self,
+        identity: &str,
+        metadata: ClientMetadata,
     ) -> Result<(), ClientManagerError> {
         self.sender
             .send(ClientCommand::UpdateMetadata {
@@ -311,9 +303,9 @@ impl ClientManager {
 
     /// Enable or disable a client
     pub async fn set_client_enabled(
-        &self, 
-        identity: &str, 
-        enabled: bool
+        &self,
+        identity: &str,
+        enabled: bool,
     ) -> Result<(), ClientManagerError> {
         self.sender
             .send(ClientCommand::SetClientEnabled {
@@ -327,14 +319,13 @@ impl ClientManager {
     /// List all registered client identities
     pub async fn list_clients(&self) -> Result<Vec<String>, ClientManagerError> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        
+
         self.sender
             .send(ClientCommand::ListClients { response: tx })
             .await
             .map_err(|_| ClientManagerError::ChannelClosed)?;
-            
-        rx.await
-            .map_err(|_| ClientManagerError::ResponseFailed)
+
+        rx.await.map_err(|_| ClientManagerError::ResponseFailed)
     }
 }
 
@@ -351,7 +342,9 @@ impl std::fmt::Display for ClientManagerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ClientManagerError::ChannelClosed => write!(f, "Client manager channel is closed"),
-            ClientManagerError::ResponseFailed => write!(f, "Failed to receive response from client manager"),
+            ClientManagerError::ResponseFailed => {
+                write!(f, "Failed to receive response from client manager")
+            }
         }
     }
 }
@@ -369,7 +362,6 @@ pub struct ClientEntry {
 
 /// Shared client store type
 pub type ClientStore = Arc<RwLock<HashMap<String, ClientEntry>>>;
-
 
 /// The CoapRouter is a struct responsible for managing routes, shared state and an observer database.
 ///
@@ -483,21 +475,21 @@ where
     }
 
     /// Enable external state updates and return a handle for external components
-    /// 
+    ///
     /// This creates a channel that allows external components to safely update
     /// the shared application state. Returns a StateUpdateHandle and starts
     /// a background task to process state updates.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `buffer_size` - The size of the update channel buffer (default: 1000)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns a StateUpdateHandle that external components can use to queue state updates.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```rust,no_run
     /// # use coapum::router::CoapRouter;
     /// # use coapum::observer::memory::MemObserver;
@@ -510,7 +502,7 @@ where
     /// # let observer = MemObserver::new();
     /// let mut router = CoapRouter::new(app_state, observer);
     /// let state_handle = router.enable_state_updates(1000);
-    /// 
+    ///
     /// // External component can now update state:
     /// state_handle.update(|state| {
     ///     state.counter += 1;
@@ -521,24 +513,21 @@ where
     pub fn enable_state_updates(&mut self, buffer_size: usize) -> StateUpdateHandle<S> {
         let (sender, receiver) = mpsc::channel(buffer_size);
         self.state_update_sender = Some(sender.clone());
-        
+
         // Spawn background task to process state updates
         let state = Arc::clone(&self.state);
         tokio::spawn(async move {
             Self::process_state_updates(state, receiver).await;
         });
-        
+
         StateUpdateHandle::new(sender)
     }
 
     /// Process state updates from the channel
-    /// 
+    ///
     /// This runs in a background task and applies state updates sequentially
     /// to maintain consistency.
-    async fn process_state_updates(
-        state: Arc<Mutex<S>>,
-        mut receiver: StateUpdateReceiver<S>,
-    ) {
+    async fn process_state_updates(state: Arc<Mutex<S>>, mut receiver: StateUpdateReceiver<S>) {
         while let Some(update) = receiver.recv().await {
             let mut state_guard = state.lock().await;
             update(&mut *state_guard);
@@ -546,7 +535,7 @@ where
     }
 
     /// Get a state update handle if state updates are enabled
-    /// 
+    ///
     /// Returns None if enable_state_updates() has not been called.
     pub fn state_update_handle(&self) -> Option<StateUpdateHandle<S>> {
         self.state_update_sender
@@ -763,19 +752,19 @@ where
     }
 
     /// Enable external state updates and return a handle for external components
-    /// 
+    ///
     /// This is a convenience method that calls enable_state_updates on the underlying router.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `buffer_size` - The size of the update channel buffer (default: 1000)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns a StateUpdateHandle that external components can use to queue state updates.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```rust,no_run
     /// # use coapum::RouterBuilder;
     /// # use coapum::observer::memory::MemObserver;
@@ -788,11 +777,11 @@ where
     /// # let observer = MemObserver::new();
     /// let mut builder = RouterBuilder::new(app_state, observer);
     /// let state_handle = builder.enable_state_updates(1000);
-    /// 
+    ///
     /// let router = builder
     ///     // .get("/api/data", handler)
     ///     .build();
-    /// 
+    ///
     /// // External component can now update state:
     /// state_handle.update(|state| {
     ///     state.counter += 1;
@@ -805,7 +794,7 @@ where
     }
 
     /// Get a state update handle if state updates are enabled
-    /// 
+    ///
     /// Returns None if enable_state_updates() has not been called.
     pub fn state_update_handle(&self) -> Option<StateUpdateHandle<S>> {
         self.router.state_update_handle()

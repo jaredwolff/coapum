@@ -1,7 +1,7 @@
 //! Tests for real-time client/key management functionality
 
 use coapum::{
-    router::{ClientManager, ClientCommand, ClientMetadata, ClientStore, ClientEntry},
+    router::{ClientCommand, ClientEntry, ClientManager, ClientMetadata, ClientStore},
     ClientManagerError,
 };
 use std::collections::HashMap;
@@ -19,12 +19,19 @@ async fn test_client_manager_add_remove() {
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                ClientCommand::AddClient { identity, key, metadata } => {
+                ClientCommand::AddClient {
+                    identity,
+                    key,
+                    metadata,
+                } => {
                     let mut store = store_clone.write().await;
-                    store.insert(identity, ClientEntry {
-                        key,
-                        metadata: metadata.unwrap_or_default(),
-                    });
+                    store.insert(
+                        identity,
+                        ClientEntry {
+                            key,
+                            metadata: metadata.unwrap_or_default(),
+                        },
+                    );
                 }
                 ClientCommand::RemoveClient { identity } => {
                     let mut store = store_clone.write().await;
@@ -73,10 +80,13 @@ async fn test_client_manager_update_key() {
     // Initialize with a client
     {
         let mut store = client_store.write().await;
-        store.insert("device1".to_string(), ClientEntry {
-            key: b"original_key".to_vec(),
-            metadata: ClientMetadata::default(),
-        });
+        store.insert(
+            "device1".to_string(),
+            ClientEntry {
+                key: b"original_key".to_vec(),
+                metadata: ClientMetadata::default(),
+            },
+        );
     }
 
     // Spawn processor
@@ -96,7 +106,10 @@ async fn test_client_manager_update_key() {
     });
 
     // Update the key
-    client_manager.update_key("device1", b"new_key").await.unwrap();
+    client_manager
+        .update_key("device1", b"new_key")
+        .await
+        .unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // Verify key was updated
@@ -117,12 +130,19 @@ async fn test_client_manager_metadata() {
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                ClientCommand::AddClient { identity, key, metadata } => {
+                ClientCommand::AddClient {
+                    identity,
+                    key,
+                    metadata,
+                } => {
                     let mut store = store_clone.write().await;
-                    store.insert(identity, ClientEntry {
-                        key,
-                        metadata: metadata.unwrap_or_default(),
-                    });
+                    store.insert(
+                        identity,
+                        ClientEntry {
+                            key,
+                            metadata: metadata.unwrap_or_default(),
+                        },
+                    );
                 }
                 ClientCommand::UpdateMetadata { identity, metadata } => {
                     let mut store = store_clone.write().await;
@@ -149,7 +169,10 @@ async fn test_client_manager_metadata() {
         tags: vec!["sensor".to_string(), "outdoor".to_string()],
         custom: HashMap::new(),
     };
-    client_manager.add_client_with_metadata("sensor1", b"key1", metadata.clone()).await.unwrap();
+    client_manager
+        .add_client_with_metadata("sensor1", b"key1", metadata.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // Verify metadata was stored
@@ -167,7 +190,10 @@ async fn test_client_manager_metadata() {
         enabled: false,
         ..Default::default()
     };
-    client_manager.update_metadata("sensor1", new_metadata).await.unwrap();
+    client_manager
+        .update_metadata("sensor1", new_metadata)
+        .await
+        .unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // Verify metadata was updated
@@ -179,7 +205,10 @@ async fn test_client_manager_metadata() {
     }
 
     // Test enable/disable
-    client_manager.set_client_enabled("sensor1", true).await.unwrap();
+    client_manager
+        .set_client_enabled("sensor1", true)
+        .await
+        .unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     {
@@ -197,18 +226,27 @@ async fn test_client_manager_list_clients() {
     // Initialize with some clients
     {
         let mut store = client_store.write().await;
-        store.insert("device1".to_string(), ClientEntry {
-            key: b"key1".to_vec(),
-            metadata: ClientMetadata::default(),
-        });
-        store.insert("device2".to_string(), ClientEntry {
-            key: b"key2".to_vec(),
-            metadata: ClientMetadata::default(),
-        });
-        store.insert("device3".to_string(), ClientEntry {
-            key: b"key3".to_vec(),
-            metadata: ClientMetadata::default(),
-        });
+        store.insert(
+            "device1".to_string(),
+            ClientEntry {
+                key: b"key1".to_vec(),
+                metadata: ClientMetadata::default(),
+            },
+        );
+        store.insert(
+            "device2".to_string(),
+            ClientEntry {
+                key: b"key2".to_vec(),
+                metadata: ClientMetadata::default(),
+            },
+        );
+        store.insert(
+            "device3".to_string(),
+            ClientEntry {
+                key: b"key3".to_vec(),
+                metadata: ClientMetadata::default(),
+            },
+        );
     }
 
     // Spawn processor
@@ -245,12 +283,19 @@ async fn test_client_manager_concurrent_operations() {
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                ClientCommand::AddClient { identity, key, metadata } => {
+                ClientCommand::AddClient {
+                    identity,
+                    key,
+                    metadata,
+                } => {
                     let mut store = store_clone.write().await;
-                    store.insert(identity, ClientEntry {
-                        key,
-                        metadata: metadata.unwrap_or_default(),
-                    });
+                    store.insert(
+                        identity,
+                        ClientEntry {
+                            key,
+                            metadata: metadata.unwrap_or_default(),
+                        },
+                    );
                 }
                 ClientCommand::RemoveClient { identity } => {
                     let mut store = store_clone.write().await;
@@ -269,12 +314,15 @@ async fn test_client_manager_concurrent_operations() {
 
     // Spawn multiple tasks doing concurrent operations
     let mut handles = Vec::new();
-    
+
     // Add clients concurrently
     for i in 0..10 {
         let manager = client_manager.clone();
         let handle = tokio::spawn(async move {
-            manager.add_client(&format!("device{}", i), format!("key{}", i).as_bytes()).await.unwrap();
+            manager
+                .add_client(&format!("device{}", i), format!("key{}", i).as_bytes())
+                .await
+                .unwrap();
         });
         handles.push(handle);
     }
@@ -284,7 +332,10 @@ async fn test_client_manager_concurrent_operations() {
         let manager = client_manager.clone();
         let handle = tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
-            manager.update_key(&format!("device{}", i), format!("newkey{}", i).as_bytes()).await.unwrap();
+            manager
+                .update_key(&format!("device{}", i), format!("newkey{}", i).as_bytes())
+                .await
+                .unwrap();
         });
         handles.push(handle);
     }
@@ -299,15 +350,21 @@ async fn test_client_manager_concurrent_operations() {
     // Verify results
     let store = client_store.read().await;
     assert_eq!(store.len(), 10);
-    
+
     // Check updated keys
     for i in 0..5 {
-        assert_eq!(store.get(&format!("device{}", i)).unwrap().key, format!("newkey{}", i).as_bytes());
+        assert_eq!(
+            store.get(&format!("device{}", i)).unwrap().key,
+            format!("newkey{}", i).as_bytes()
+        );
     }
-    
+
     // Check non-updated keys
     for i in 5..10 {
-        assert_eq!(store.get(&format!("device{}", i)).unwrap().key, format!("key{}", i).as_bytes());
+        assert_eq!(
+            store.get(&format!("device{}", i)).unwrap().key,
+            format!("key{}", i).as_bytes()
+        );
     }
 }
 
@@ -316,20 +373,20 @@ async fn test_client_manager_error_handling() {
     // Test with a closed channel
     let (tx, rx) = mpsc::channel::<ClientCommand>(1);
     drop(rx); // Close the receiver
-    
+
     let client_manager = ClientManager::new(tx);
-    
+
     // All operations should return ChannelClosed error
     assert_eq!(
         client_manager.add_client("test", b"key").await.unwrap_err(),
         ClientManagerError::ChannelClosed
     );
-    
+
     assert_eq!(
         client_manager.remove_client("test").await.unwrap_err(),
         ClientManagerError::ChannelClosed
     );
-    
+
     assert_eq!(
         client_manager.update_key("test", b"key").await.unwrap_err(),
         ClientManagerError::ChannelClosed

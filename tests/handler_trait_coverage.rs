@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use coapum::{
-    extract::{Bytes, Cbor, Json, Path, State, StatusCode, Source},
-    router::RouterBuilder,
+    extract::{Bytes, Cbor, Json, Path, Source, State, StatusCode},
     observer::memory::MemObserver,
+    router::RouterBuilder,
     ContentFormat,
 };
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ async fn handler_3_params(
     *counter += 1;
     let mut data = state.data.lock().unwrap();
     *data = format!("id:{},bytes:{}", id, bytes.len());
-    
+
     Json(serde_json::json!({
         "id": id,
         "byte_count": bytes.len(),
@@ -83,7 +83,7 @@ async fn handler_4_params(
 ) -> Cbor<TestData> {
     let mut counter = state.counter.lock().unwrap();
     *counter += 1;
-    
+
     Cbor(TestData {
         id: payload.id + *counter,
         message: format!("{}:{}:{}", id, payload.message, addr.port()),
@@ -99,11 +99,11 @@ async fn handler_max_params(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut counter = state.counter.lock().unwrap();
     *counter += 1;
-    
+
     if payload.id == 0 {
         return Err(StatusCode::BadRequest);
     }
-    
+
     Ok(Json(serde_json::json!({
         "id": id,
         "payload_id": payload.id,
@@ -160,7 +160,7 @@ mod handler_trait_implementation_tests {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
+
         // Verify state was modified
         let counter = state.counter.lock().unwrap();
         assert_eq!(*counter, 1);
@@ -182,8 +182,9 @@ mod handler_trait_implementation_tests {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
-        let json_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+
+        let json_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data["id"], "xyz789");
         assert_eq!(json_data["byte_count"], 5);
         assert_eq!(json_data["counter"], 1);
@@ -212,7 +213,7 @@ mod handler_trait_implementation_tests {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
+
         let cbor_data: TestData = ciborium::de::from_reader(&response.message.payload[..]).unwrap();
         assert_eq!(cbor_data.id, 101); // 100 + 1 counter
         assert!(cbor_data.message.contains("item001"));
@@ -231,7 +232,7 @@ mod handler_trait_implementation_tests {
             id: 200,
             message: "complex test".to_string(),
         };
-        
+
         let mut cbor_data = Vec::new();
         ciborium::ser::into_writer(&test_payload, &mut cbor_data).unwrap();
 
@@ -244,8 +245,9 @@ mod handler_trait_implementation_tests {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
-        let json_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+
+        let json_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(json_data["id"], "comp001");
         assert_eq!(json_data["payload_id"], 200);
         assert_eq!(json_data["payload_message"], "complex test");
@@ -265,7 +267,7 @@ mod handler_trait_implementation_tests {
             id: 0, // This will trigger error in handler
             message: "error test".to_string(),
         };
-        
+
         let mut cbor_data = Vec::new();
         ciborium::ser::into_writer(&test_payload, &mut cbor_data).unwrap();
 
@@ -295,7 +297,10 @@ mod handler_result_and_response_tests {
         let request = coapum::test_utils::create_test_request("/error");
         let response = router.call(request).await.unwrap();
 
-        assert_eq!(*response.get_status(), coapum::ResponseType::InternalServerError);
+        assert_eq!(
+            *response.get_status(),
+            coapum::ResponseType::InternalServerError
+        );
     }
 
     #[tokio::test]
@@ -324,7 +329,7 @@ mod handler_result_and_response_tests {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
+
         let test_data: TestData = serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(test_data.id, 42);
         assert_eq!(test_data.message, "json response test");
@@ -342,7 +347,7 @@ mod handler_result_and_response_tests {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
+
         let test_data: TestData = ciborium::de::from_reader(&response.message.payload[..]).unwrap();
         assert_eq!(test_data.id, 99);
         assert_eq!(test_data.message, "cbor response test");
@@ -360,7 +365,7 @@ mod handler_result_and_response_tests {
         let response = router.call(request).await.unwrap();
 
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
+
         // Verify async handler was executed
         let counter = state.counter.lock().unwrap();
         assert_eq!(*counter, 1);

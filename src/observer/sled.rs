@@ -9,7 +9,7 @@ use tokio::sync::{
 
 use super::{Observer, ObserverValue};
 
-// Type aliases to reduce complexity warnings  
+// Type aliases to reduce complexity warnings
 type ObserverSender = Arc<Sender<ObserverValue>>;
 type PathChannels = HashMap<String, ObserverSender>;
 type DeviceChannels = HashMap<String, PathChannels>;

@@ -48,7 +48,7 @@ async fn post_sensor_reading(
     StatusCode::Created
 }
 
-// Based on raw_server.rs example  
+// Based on raw_server.rs example
 async fn get_status() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
@@ -66,7 +66,7 @@ async fn test_cbor_server_example_functionality() {
     let app_state = ExampleAppState {
         readings: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
-    
+
     let observer = MemObserver::new();
     let mut router = RouterBuilder::new(app_state.clone(), observer)
         .get("/sensors", get_sensor_readings)
@@ -82,7 +82,7 @@ async fn test_cbor_server_example_functionality() {
 
     let mut cbor_data = Vec::new();
     ciborium::ser::into_writer(&test_reading, &mut cbor_data).unwrap();
-    
+
     let post_request = coapum::test_utils::create_test_request_with_content(
         "/sensors",
         cbor_data,
@@ -98,7 +98,8 @@ async fn test_cbor_server_example_functionality() {
     assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
     // Verify the reading was stored
-    let readings: Vec<SensorReading> = ciborium::de::from_reader(&response.message.payload[..]).unwrap();
+    let readings: Vec<SensorReading> =
+        ciborium::de::from_reader(&response.message.payload[..]).unwrap();
     assert_eq!(readings.len(), 1);
     assert_eq!(readings[0], test_reading);
 }
@@ -108,7 +109,7 @@ async fn test_raw_server_example_functionality() {
     let app_state = ExampleAppState {
         readings: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
-    
+
     let observer = MemObserver::new();
     let mut router = RouterBuilder::new(app_state, observer)
         .get("/status", get_status)
@@ -135,7 +136,7 @@ async fn test_concurrency_example_simulation() {
     let app_state = ExampleAppState {
         readings: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
-    
+
     let observer = MemObserver::new();
     let router = RouterBuilder::new(app_state.clone(), observer)
         .post("/sensors", post_sensor_reading)
@@ -144,7 +145,7 @@ async fn test_concurrency_example_simulation() {
 
     // Simulate concurrent requests like in concurrency.rs example
     let mut handles = Vec::new();
-    
+
     for i in 0..5 {
         let mut router_clone = router.clone();
         let handle = tokio::spawn(async move {
@@ -156,7 +157,7 @@ async fn test_concurrency_example_simulation() {
 
             let mut cbor_data = Vec::new();
             ciborium::ser::into_writer(&reading, &mut cbor_data).unwrap();
-            
+
             let request = coapum::test_utils::create_test_request_with_content(
                 "/sensors",
                 cbor_data,
@@ -187,7 +188,7 @@ async fn test_client_server_interaction_simulation() {
     let app_state = ExampleAppState {
         readings: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
-    
+
     let observer = MemObserver::new();
     let mut router = RouterBuilder::new(app_state.clone(), observer)
         .get("/sensors", get_sensor_readings)
@@ -196,16 +197,28 @@ async fn test_client_server_interaction_simulation() {
 
     // Simulate client sending multiple readings
     let client_readings = vec![
-        SensorReading { temperature: 18.0, humidity: 45.0, timestamp: 1000 },
-        SensorReading { temperature: 22.0, humidity: 55.0, timestamp: 2000 },
-        SensorReading { temperature: 25.0, humidity: 65.0, timestamp: 3000 },
+        SensorReading {
+            temperature: 18.0,
+            humidity: 45.0,
+            timestamp: 1000,
+        },
+        SensorReading {
+            temperature: 22.0,
+            humidity: 55.0,
+            timestamp: 2000,
+        },
+        SensorReading {
+            temperature: 25.0,
+            humidity: 65.0,
+            timestamp: 3000,
+        },
     ];
 
     // Post each reading
     for reading in &client_readings {
         let mut cbor_data = Vec::new();
         ciborium::ser::into_writer(reading, &mut cbor_data).unwrap();
-        
+
         let request = coapum::test_utils::create_test_request_with_content(
             "/sensors",
             cbor_data,
@@ -221,9 +234,10 @@ async fn test_client_server_interaction_simulation() {
     let response = router.call(get_request).await.unwrap();
     assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 
-    let server_readings: Vec<SensorReading> = ciborium::de::from_reader(&response.message.payload[..]).unwrap();
+    let server_readings: Vec<SensorReading> =
+        ciborium::de::from_reader(&response.message.payload[..]).unwrap();
     assert_eq!(server_readings.len(), 3);
-    
+
     // Verify readings match what client sent
     for (sent, received) in client_readings.iter().zip(server_readings.iter()) {
         assert_eq!(sent, received);
@@ -235,7 +249,7 @@ async fn test_error_handling_in_examples() {
     let app_state = ExampleAppState {
         readings: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
-    
+
     let observer = MemObserver::new();
     let mut router = RouterBuilder::new(app_state, observer)
         .post("/sensors", post_sensor_reading)
@@ -259,7 +273,7 @@ async fn test_timeout_and_reliability() {
     let app_state = ExampleAppState {
         readings: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
-    
+
     let observer = MemObserver::new();
     let mut router = RouterBuilder::new(app_state, observer)
         .get("/sensors", get_sensor_readings)
@@ -267,10 +281,10 @@ async fn test_timeout_and_reliability() {
 
     // Test with timeout to simulate network conditions
     let request = coapum::test_utils::create_test_request("/sensors");
-    
+
     let response = timeout(Duration::from_secs(5), router.call(request)).await;
     assert!(response.is_ok(), "Request should complete within timeout");
-    
+
     let response = response.unwrap().unwrap();
     assert_eq!(*response.get_status(), coapum::ResponseType::Content);
 }

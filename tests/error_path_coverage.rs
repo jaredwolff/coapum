@@ -103,7 +103,7 @@ mod error_handling_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(true)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .get("/state_error", handler_with_state_error)
@@ -112,7 +112,10 @@ mod error_handling_tests {
         let request = coapum::test_utils::create_test_request("/state_error");
         let response = router.call(request).await.unwrap();
 
-        assert_eq!(*response.get_status(), coapum::ResponseType::InternalServerError);
+        assert_eq!(
+            *response.get_status(),
+            coapum::ResponseType::InternalServerError
+        );
     }
 
     #[tokio::test]
@@ -120,7 +123,7 @@ mod error_handling_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .post("/json_test", handler_response_serialization_test)
@@ -143,7 +146,7 @@ mod error_handling_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .post("/cbor_test", handler_cbor_serialization_test)
@@ -166,7 +169,7 @@ mod error_handling_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .post("/serialize_error", handler_response_serialization_test)
@@ -177,7 +180,7 @@ mod error_handling_tests {
             force_error: true,
         };
         let json_data = serde_json::to_vec(&error_data).unwrap();
-        
+
         let request = coapum::test_utils::create_test_request_with_content(
             "/serialize_error",
             json_data,
@@ -185,7 +188,10 @@ mod error_handling_tests {
         );
 
         let response = router.call(request).await.unwrap();
-        assert_eq!(*response.get_status(), coapum::ResponseType::InternalServerError);
+        assert_eq!(
+            *response.get_status(),
+            coapum::ResponseType::InternalServerError
+        );
     }
 
     #[tokio::test]
@@ -193,7 +199,7 @@ mod error_handling_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .post("/error_codes", handler_complex_error_scenarios)
@@ -222,7 +228,7 @@ mod error_handling_tests {
                 force_error: false,
             };
             let json_data = serde_json::to_vec(&error_data).unwrap();
-            
+
             let request = coapum::test_utils::create_test_request_with_content(
                 "/error_codes",
                 json_data,
@@ -230,7 +236,12 @@ mod error_handling_tests {
             );
 
             let response = router.call(request).await.unwrap();
-            assert_eq!(*response.get_status(), expected_status, "Failed for error ID: {}", error_id);
+            assert_eq!(
+                *response.get_status(),
+                expected_status,
+                "Failed for error ID: {}",
+                error_id
+            );
         }
     }
 
@@ -239,7 +250,7 @@ mod error_handling_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .post("/error_codes", handler_complex_error_scenarios)
@@ -251,7 +262,7 @@ mod error_handling_tests {
             force_error: false,
         };
         let json_data = serde_json::to_vec(&success_data).unwrap();
-        
+
         let request = coapum::test_utils::create_test_request_with_content(
             "/error_codes",
             json_data,
@@ -260,8 +271,9 @@ mod error_handling_tests {
 
         let response = router.call(request).await.unwrap();
         assert_eq!(*response.get_status(), coapum::ResponseType::Content);
-        
-        let response_data: serde_json::Value = serde_json::from_slice(&response.message.payload).unwrap();
+
+        let response_data: serde_json::Value =
+            serde_json::from_slice(&response.message.payload).unwrap();
         assert_eq!(response_data["id"], 999);
         assert_eq!(response_data["status"], "success");
     }
@@ -275,7 +287,7 @@ mod content_format_error_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .post("/format_test", handler_response_serialization_test)
@@ -286,7 +298,7 @@ mod content_format_error_tests {
             "force_error": false
         });
         let json_bytes = serde_json::to_vec(&valid_json_data).unwrap();
-        
+
         // Send JSON data but claim it's CBOR
         let request = coapum::test_utils::create_test_request_with_content(
             "/format_test",
@@ -304,7 +316,7 @@ mod content_format_error_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .post("/no_format", handler_response_serialization_test)
@@ -315,7 +327,7 @@ mod content_format_error_tests {
             "force_error": false
         });
         let json_bytes = serde_json::to_vec(&valid_json_data).unwrap();
-        
+
         // Create request without explicit content format
         let mut request = coapum::test_utils::create_test_request("/no_format");
         request.message.payload = json_bytes;
@@ -332,7 +344,7 @@ mod content_format_error_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .post("/empty_payload", handler_response_serialization_test)
@@ -359,7 +371,7 @@ mod router_error_path_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .get("/existing", handler_with_state_error)
@@ -378,17 +390,15 @@ mod router_error_path_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .get("/get_only", handler_with_state_error) // Only GET is registered
             .build();
 
         // Try to POST to a GET-only route
-        let request = coapum::test_utils::create_test_request_with_payload(
-            "/get_only",
-            vec![1, 2, 3],
-        );
+        let request =
+            coapum::test_utils::create_test_request_with_payload("/get_only", vec![1, 2, 3]);
 
         let response = router.call(request).await.unwrap();
         // Should handle method not allowed
@@ -400,7 +410,7 @@ mod router_error_path_tests {
         let state = ErrorTestState {
             should_error: Arc::new(std::sync::Mutex::new(false)),
         };
-        
+
         let observer = MemObserver::new();
         let mut router = RouterBuilder::new(state, observer)
             .get("/test/:id", handler_with_state_error)
@@ -408,7 +418,7 @@ mod router_error_path_tests {
 
         // Test with various potentially problematic paths
         let problematic_paths = vec![
-            "/test/", // Empty parameter
+            "/test/",  // Empty parameter
             "/test//", // Double slash
             "/test/id%with%encoded%chars",
             "/test/very_long_parameter_that_might_cause_issues_with_parsing_or_memory",
@@ -417,7 +427,7 @@ mod router_error_path_tests {
         for path in problematic_paths {
             let request = coapum::test_utils::create_test_request(path);
             let response = router.call(request).await;
-            
+
             // Should handle malformed paths gracefully
             assert!(response.is_ok(), "Failed to handle path: {}", path);
         }
