@@ -1,0 +1,35 @@
+[package]
+name = "coapum-senml"
+version = "0.1.0"
+edition = "2021"
+authors = ["CoAPum Contributors"]
+description = "Rust implementation of Sensor Measurement Lists (SenML) RFC 8428"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/coapum/coapum-senml"
+documentation = "https://docs.rs/coapum-senml"
+keywords = ["senml", "sensor", "iot", "coap", "rfc8428"]
+categories = ["encoding", "data-structures", "embedded"]
+
+[features]
+default = ["json", "cbor"]
+json = ["serde_json"]
+cbor = ["ciborium"]
+xml = ["quick-xml", "serde-xml-rs"]
+validation = ["validator"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+time = { version = "0.3", features = ["serde", "parsing", "formatting"] }
+
+# Optional serialization formats
+serde_json = { version = "1.0", optional = true }
+ciborium = { version = "0.2", optional = true }
+quick-xml = { version = "0.31", optional = true }
+serde-xml-rs = { version = "0.6", optional = true }
+
+# Optional validation
+validator = { version = "0.16", optional = true, features = ["derive"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
