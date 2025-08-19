@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+# Pre-commit hook for Rust projects
+# Runs formatting checks, linting, and tests before allowing commit
+
+echo "Running pre-commit checks..."
+
+# Check code formatting
+echo "Checking code formatting..."
+if ! cargo fmt -- --check; then
+    echo "❌ Code formatting issues found."
+    echo "Run 'cargo fmt' to fix formatting, then commit again."
+    exit 1
+fi
+
+# Run clippy for linting
+echo "Running clippy..."
+if ! cargo clippy --all-targets --all-features -- -D warnings; then
+    echo "❌ Clippy found issues."
+    echo "Fix the issues above, then commit again."
+    exit 1
+fi
+
+# Run tests (optional - comment out if too slow)
+echo "Running tests..."
+if ! cargo test --all; then
+    echo "❌ Tests failed."
+    echo "Fix failing tests, then commit again."
+    exit 1
+fi
+
+echo "✅ All pre-commit checks passed!"
