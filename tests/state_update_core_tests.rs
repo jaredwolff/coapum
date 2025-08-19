@@ -1,6 +1,6 @@
 //! Core tests for external state update functionality
 
-use coapum::{observer::memory::MemObserver, router::CoapRouter, StateUpdateError};
+use coapum::{StateUpdateError, observer::memory::MemObserver, router::CoapRouter};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]

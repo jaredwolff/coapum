@@ -51,9 +51,9 @@ use std::{
 
 use coapum::{
     dtls::{
+        Error,
         cipher_suite::CipherSuiteId,
         config::{Config, ExtendedMasterSecretType},
-        Error,
     },
     extract::{Cbor, Identity, Path, State, StatusCode},
     observer::sled::SledObserver,

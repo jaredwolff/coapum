@@ -17,7 +17,7 @@ pub use extract::{
     Bytes, Cbor, FromRequest, Identity, IntoResponse, Json, ObserveFlag, Path, Raw, Source, State,
     StatusCode,
 };
-pub use handler::{into_handler, Handler, HandlerFn};
+pub use handler::{Handler, HandlerFn, into_handler};
 pub use router::{
     ClientManager, ClientManagerError, ClientMetadata, NotificationTrigger, RouterBuilder,
     StateUpdateError, StateUpdateHandle,

@@ -7,11 +7,11 @@
 //! Run with: cargo run --example external_state_updates
 
 use coapum::{
-    config::Config, observer::memory::MemObserver, router::RouterBuilder, serve::serve,
-    StateUpdateHandle,
+    StateUpdateHandle, config::Config, observer::memory::MemObserver, router::RouterBuilder,
+    serve::serve,
 };
 use std::collections::HashMap;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 
 #[derive(Clone, Debug)]
 struct AppState {

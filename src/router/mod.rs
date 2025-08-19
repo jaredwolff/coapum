@@ -17,7 +17,7 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::{Mutex, RwLock};
 use tower::Service;
 
-use crate::handler::{into_erased_handler, into_handler, ErasedHandler, Handler, HandlerFn};
+use crate::handler::{ErasedHandler, Handler, HandlerFn, into_erased_handler, into_handler};
 use crate::observer::{Observer, ObserverRequest, ObserverValue};
 use crate::router::wrapper::IntoCoapResponse;
 

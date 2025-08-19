@@ -6,11 +6,11 @@
 //! Run with: cargo run --example dynamic_client_management
 
 use coapum::{
-    config::Config, observer::memory::MemObserver, serve::serve_with_client_management,
-    ClientManager, RouterBuilder,
+    ClientManager, RouterBuilder, config::Config, observer::memory::MemObserver,
+    serve::serve_with_client_management,
 };
 use std::collections::HashMap;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 
 #[derive(Clone, Debug)]
 struct AppState {

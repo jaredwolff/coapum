@@ -7,11 +7,11 @@ use std::{
 };
 
 use tokio::sync::{
-    mpsc::{self, channel, Sender},
     Mutex, RwLock,
+    mpsc::{self, Sender, channel},
 };
 use tower::Service;
-use webrtc_dtls::{conn::DTLSConn, listener, Error};
+use webrtc_dtls::{Error, conn::DTLSConn, listener};
 use webrtc_util::conn::Listener;
 
 use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType, ResponseType};
@@ -191,7 +191,9 @@ where
                         if old_conn.established_at.elapsed() < MIN_RECONNECT_INTERVAL {
                             log::warn!(
                                 "Rate limited: Rapid reconnection attempt from {} for identity '{}' (interval: {:?})",
-                                socket_addr, identity, old_conn.established_at.elapsed()
+                                socket_addr,
+                                identity,
+                                old_conn.established_at.elapsed()
                             );
                             return; // Skip this connection attempt
                         }
@@ -200,7 +202,9 @@ where
                         if old_conn.reconnect_count > MAX_RECONNECT_ATTEMPTS {
                             log::error!(
                                 "Security: Too many reconnection attempts from {} for identity '{}' (count: {})",
-                                socket_addr, identity, old_conn.reconnect_count
+                                socket_addr,
+                                identity,
+                                old_conn.reconnect_count
                             );
                             return; // Block this identity
                         }

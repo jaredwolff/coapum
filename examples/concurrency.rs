@@ -3,14 +3,14 @@ use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 
 use coapum::{
+    CoapRequest, ContentFormat, Packet, RequestType,
     dtls::{
+        Error,
         cipher_suite::CipherSuiteId,
         config::{Config, ExtendedMasterSecretType},
         conn::DTLSConn,
-        Error,
     },
     util::Conn,
-    CoapRequest, ContentFormat, Packet, RequestType,
 };
 
 // const IDENTITY: &[u8] = "goobie!".as_bytes();

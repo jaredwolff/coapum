@@ -1,12 +1,12 @@
 //! Tests for real-time client/key management functionality
 
 use coapum::{
-    router::{ClientCommand, ClientEntry, ClientManager, ClientMetadata, ClientStore},
     ClientManagerError,
+    router::{ClientCommand, ClientEntry, ClientManager, ClientMetadata, ClientStore},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 #[tokio::test]
 async fn test_client_manager_add_remove() {

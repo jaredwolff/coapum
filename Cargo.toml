@@ -1,9 +1,17 @@
 [package]
 name = "coapum"
 version = "0.2.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2024"
+rust-version = "1.85.0"
+authors = ["Jared Wolff <jared@jaredwolff.com>"]
+description = "A modern, ergonomic CoAP (Constrained Application Protocol) library for Rust with support for DTLS, observers, and asynchronous handlers"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jaredwolff/coapum"
+documentation = "https://docs.rs/coapum"
+homepage = "https://github.com/jaredwolff/coapum"
+keywords = ["coap", "iot", "dtls", "async", "sensor"]
+categories = ["network-programming", "embedded", "api-bindings", "asynchronous"]
+readme = "README.md"
 [features]
 default = ["sled-observer"]
 sled-observer = ["sled"]
@@ -33,7 +41,7 @@ webrtc-dtls = { version = "0.12" }
 webrtc-util = { version = "0.11" }
 
 # SenML
-coapum-senml = { path = "./coapum-senml" }
+coapum-senml = { version = "0.1.0", path = "./coapum-senml" }
 
 
 [dev-dependencies]

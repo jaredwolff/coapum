@@ -24,6 +24,9 @@ Add Coapum to your `Cargo.toml`:
 ```toml
 [dependencies]
 coapum = "0.2.0"
+
+# For standalone SenML usage
+coapum-senml = "0.1.0"
 ```
 
 ### Basic Server
@@ -31,7 +34,7 @@ coapum = "0.2.0"
 ```rust
 use coapum::{
     router::RouterBuilder,
-    observer::memory::MemoryObserver,
+    observer::memory::MemObserver,
     serve,
     extract::{Json, Path, StatusCode},
 };
@@ -63,7 +66,7 @@ async fn get_device_state(Path(device_id): Path<String>) -> Json<DeviceState> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create router with ergonomic builder API
-    let router = RouterBuilder::new((), MemoryObserver::new())
+    let router = RouterBuilder::new((), MemObserver::new())
         .post("/device/:id", update_device)
         .get("/device/:id", get_device_state)
         .observe("/device/:id", get_device_state, get_device_state)
@@ -100,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Create router with persistent observer storage
-    let router = RouterBuilder::new((), SledObserver::new("observer.db"))
+    let router = RouterBuilder::new((), SledObserver::new("observer.db").unwrap())
         .get("/status", || async { "OK" })
         .build();
 
@@ -197,10 +200,13 @@ Coapum automatically extracts data from requests using type-safe extractors:
 - `Path<T>` - Extract path parameters
 - `Json<T>` - Parse JSON payload
 - `Cbor<T>` - Parse CBOR payload
+- `SenML` - Parse SenML (Sensor Measurement Lists) payload
 - `Bytes` - Raw byte payload
+- `Raw` - Raw payload data
 - `State<T>` - Access shared application state
 - `Identity` - Client identity from DTLS
 - `ObserveFlag` - CoAP observe option
+- `Source` - Request source information
 
 ```rust
 async fn handler(
@@ -209,6 +215,15 @@ async fn handler(
     State(db): State<Database>,         // Access shared state
 ) -> Result<Json<User>, StatusCode> {
     // Handler logic here
+}
+
+// SenML handler example
+async fn sensor_handler(
+    Path(device_id): Path<String>,      // Extract device ID
+    SenML(measurements): SenML,         // Parse SenML payload
+) -> Result<StatusCode, StatusCode> {
+    println!("Device {}: {} measurements", device_id, measurements.len());
+    Ok(StatusCode::Changed)
 }
 ```
 
@@ -231,16 +246,44 @@ async fn notify_temp() -> Json<Temperature> {
 }
 ```
 
+### SenML Support
+
+Coapum includes built-in support for Sensor Measurement Lists (SenML) RFC 8428:
+
+```rust
+use coapum::extract::SenML;
+use coapum_senml::SenMLBuilder;
+
+// Handler accepting SenML sensor data
+async fn sensor_data(SenML(measurements): SenML) -> SenML {
+    println!("Received {} measurements", measurements.len());
+    
+    // Create response using SenML builder
+    let response = SenMLBuilder::new()
+        .base_name("urn:controller/")
+        .add_string_value("status", "received")
+        .add_value("count", measurements.len() as f64)
+        .build();
+    
+    SenML(response)
+}
+```
+
+SenML supports multiple formats:
+- **JSON** - Standard SenML JSON format
+- **CBOR** - Compact binary format for IoT devices
+- **XML** - Legacy XML format (with `xml` feature)
+
 ### Storage Backends
 
 Choose from multiple observer storage backends:
 
 ```rust
 // In-memory (for testing/development)
-let observer = MemoryObserver::new();
+let observer = MemObserver::new();
 
 // Persistent storage with Sled
-let observer = SledObserver::new("observers.db");
+let observer = SledObserver::new("observers.db").unwrap();
 ```
 
 ## Configuration
@@ -278,19 +321,31 @@ let dtls_config = Config {
 ```toml
 [dependencies]
 coapum = { version = "0.2.0", features = ["sled-observer"] }
+coapum-senml = { version = "0.1.0", features = ["json", "cbor", "xml"] }
 ```
 
+### Coapum Features
 - `sled-observer` - Enable Sled database backend for observers (default)
+
+### SenML Features  
+- `json` - JSON serialization support (default)
+- `cbor` - CBOR serialization support (default)
+- `xml` - XML serialization support
+- `validation` - Input validation support
 
 ## Examples
 
 The `examples/` directory contains complete examples:
 
 - `cbor_server.rs` - CBOR payload handling with device state management
-- `raw_server.rs` - Raw payload handling
 - `cbor_client.rs` - CBOR client implementation
+- `raw_server.rs` - Raw payload handling
 - `raw_client.rs` - Raw client implementation
+- `senml_example.rs` - Advanced SenML payload handling with time-series data
+- `senml_simple.rs` - Simple SenML payload handling demonstration
 - `concurrency.rs` - Concurrent request handling
+- `dynamic_client_management.rs` - Dynamic client management example
+- `external_state_updates.rs` - External state update handling
 
 Run an example:
 

@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::sync::{mpsc::Sender, RwLock};
+use tokio::sync::{RwLock, mpsc::Sender};
 
 use super::{Observer, ObserverValue};
 
@@ -359,13 +359,15 @@ mod tests {
             .unregister("123", "/observe_and_write")
             .await
             .unwrap();
-        assert!(!observer
-            .channels
-            .read()
-            .await
-            .get("123")
-            .map(|device_channels| device_channels.contains_key("/observe_and_write"))
-            .unwrap_or(false));
+        assert!(
+            !observer
+                .channels
+                .read()
+                .await
+                .get("123")
+                .map(|device_channels| device_channels.contains_key("/observe_and_write"))
+                .unwrap_or(false)
+        );
 
         observer
             .register("123", "/observe_and_write", Arc::new(tx.clone()))

@@ -5,14 +5,15 @@ use std::{
 };
 
 use coapum::{
+    Raw,
     dtls::{
+        Error,
         cipher_suite::CipherSuiteId,
         config::{Config, ExtendedMasterSecretType},
-        Error,
     },
     observer::sled::SledObserver,
     router::RouterBuilder,
-    serve, Raw,
+    serve,
 };
 
 type PskStore = Arc<RwLock<HashMap<String, Vec<u8>>>>;
