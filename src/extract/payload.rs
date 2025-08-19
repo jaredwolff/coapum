@@ -566,7 +566,6 @@ enum SenMLRejectionKind {
     UnsupportedContentFormat,
     EmptyPayload,
     PayloadTooLarge,
-    ValidationError { error: String },
 }
 
 impl fmt::Display for SenMLRejection {
@@ -584,9 +583,6 @@ impl fmt::Display for SenMLRejection {
             SenMLRejectionKind::PayloadTooLarge => {
                 write!(f, "Payload too large")
             }
-            SenMLRejectionKind::ValidationError { error } => {
-                write!(f, "SenML validation error: {}", error)
-            }
         }
     }
 }
@@ -602,7 +598,6 @@ impl IntoResponse for SenMLRejection {
             }
             SenMLRejectionKind::EmptyPayload => StatusCode::BadRequest.into_response(),
             SenMLRejectionKind::PayloadTooLarge => StatusCode::RequestEntityTooLarge.into_response(),
-            SenMLRejectionKind::ValidationError { .. } => StatusCode::BadRequest.into_response(),
         }
     }
 }

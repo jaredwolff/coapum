@@ -27,6 +27,15 @@ pub mod wrapper;
 
 pub type RouterError = Box<(dyn std::error::Error + Send + Sync + 'static)>;
 
+/// Type alias for complex state update function type
+type StateUpdateFn<S> = Box<dyn FnOnce(&mut S) + Send + 'static>;
+
+/// Type alias for state update channel sender
+type StateUpdateSender<S> = mpsc::Sender<StateUpdateFn<S>>;
+
+/// Type alias for state update channel receiver
+type StateUpdateReceiver<S> = mpsc::Receiver<StateUpdateFn<S>>;
+
 /// A handle that allows external code to trigger observer notifications
 /// without having direct access to the router.
 #[derive(Clone)]
@@ -64,7 +73,7 @@ pub struct StateUpdateHandle<S>
 where
     S: Send + Sync + Clone + 'static,
 {
-    sender: mpsc::Sender<Box<dyn FnOnce(&mut S) + Send + 'static>>,
+    sender: StateUpdateSender<S>,
 }
 
 impl<S> StateUpdateHandle<S>
@@ -72,7 +81,7 @@ where
     S: Send + Sync + Clone + 'static,
 {
     /// Create a new state update handle
-    pub fn new(sender: mpsc::Sender<Box<dyn FnOnce(&mut S) + Send + 'static>>) -> Self {
+    pub fn new(sender: StateUpdateSender<S>) -> Self {
         Self { sender }
     }
 
@@ -391,7 +400,7 @@ where
     state: Arc<Mutex<S>>, // Shared state
     db: O,
     // Channel for external state updates
-    state_update_sender: Option<mpsc::Sender<Box<dyn FnOnce(&mut S) + Send + 'static>>>,
+    state_update_sender: Option<StateUpdateSender<S>>,
 }
 
 /// Provides methods for creating a new CoapRouter, registering and unregistering observers,
@@ -532,7 +541,7 @@ where
     /// to maintain consistency.
     async fn process_state_updates(
         state: Arc<Mutex<S>>,
-        mut receiver: mpsc::Receiver<Box<dyn FnOnce(&mut S) + Send + 'static>>,
+        mut receiver: StateUpdateReceiver<S>,
     ) {
         while let Some(update) = receiver.recv().await {
             let mut state_guard = state.lock().await;

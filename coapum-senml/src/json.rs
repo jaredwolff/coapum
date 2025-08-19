@@ -33,8 +33,6 @@ impl SenMLPack {
 /// JSON-specific utilities
 #[cfg(feature = "json")]
 pub mod utils {
-    use super::*;
-    
     /// Content-Type for SenML JSON format
     pub const SENML_JSON_CONTENT_TYPE: &str = "application/senml+json";
     

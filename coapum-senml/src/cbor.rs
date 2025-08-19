@@ -46,8 +46,6 @@ impl SenMLPack {
 /// CBOR-specific utilities  
 #[cfg(feature = "cbor")]
 pub mod utils {
-    use super::*;
-
     /// Content-Type for SenML CBOR format
     pub const SENML_CBOR_CONTENT_TYPE: &str = "application/senml+cbor";
     
