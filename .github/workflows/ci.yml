@@ -155,31 +155,24 @@ jobs:
     name: Benchmark
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: write  # needed for auto-push
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
-      - name: Install stable toolchain  
+      - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
-
       - name: Run benchmarks
-        run: cargo bench --all-features
+        run: cargo bench --bench router_bench --all-features -- --output-format bencher | tee bench-output.txt
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
-        if: github.ref == 'refs/heads/master'
         with:
-          tool: "cargo"
-          output-file-path: target/criterion/coap_router/base/estimates.json
+          name: coapum Criterion
+          tool: 'cargo'
+          output-file-path: bench-output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true
@@ -213,8 +206,6 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout sources
         uses: actions/checkout@v5
