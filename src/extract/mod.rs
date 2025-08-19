@@ -15,7 +15,7 @@ pub mod payload;
 pub mod state;
 
 pub use path::Path;
-pub use payload::{Bytes, Cbor, Json, Raw};
+pub use payload::{Bytes, Cbor, Json, Raw, SenML};
 pub use state::{Identity, ObserveFlag, Source, State};
 
 /// Trait for extracting data from CoAP requests
