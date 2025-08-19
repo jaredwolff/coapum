@@ -9,14 +9,19 @@ pub mod serve;
 #[cfg(test)]
 mod tests;
 
+pub mod test_utils;
+
 // Re-export commonly used types from the ergonomic API
 pub use extract::state::FullRequest;
 pub use extract::{
     Bytes, Cbor, FromRequest, Identity, IntoResponse, Json, ObserveFlag, Path, Raw, Source, State,
     StatusCode,
 };
-pub use handler::{into_handler, Handler, HandlerFn};
-pub use router::RouterBuilder;
+pub use handler::{Handler, HandlerFn, into_handler};
+pub use router::{
+    ClientManager, ClientManagerError, ClientMetadata, NotificationTrigger, RouterBuilder,
+    StateUpdateError, StateUpdateHandle,
+};
 
 // Re-export CoAP types
 pub use coap_lite::{

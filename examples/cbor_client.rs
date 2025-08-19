@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 
 use coapum::{
-    dtls::{cipher_suite::CipherSuiteId, config::Config, conn::DTLSConn, Error},
+    dtls::{Error, cipher_suite::CipherSuiteId, config::Config, conn::DTLSConn},
     util::Conn,
     {CoapRequest, ContentFormat, Packet, RequestType},
 };

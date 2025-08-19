@@ -13,11 +13,11 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::{Mutex, RwLock};
 use tower::Service;
 
-use crate::handler::{into_erased_handler, into_handler, ErasedHandler, Handler, HandlerFn};
+use crate::handler::{ErasedHandler, Handler, HandlerFn, into_erased_handler, into_handler};
 use crate::observer::{Observer, ObserverRequest, ObserverValue};
 use crate::router::wrapper::IntoCoapResponse;
 
@@ -27,10 +27,341 @@ pub mod wrapper;
 
 pub type RouterError = Box<(dyn std::error::Error + Send + Sync + 'static)>;
 
-pub trait Request: Send {
-    fn get_value(&self) -> &Value;
-    fn get_raw(&self) -> &CoapumRequest<SocketAddr>;
+/// Type alias for complex state update function type
+type StateUpdateFn<S> = Box<dyn FnOnce(&mut S) + Send + 'static>;
+
+/// Type alias for state update channel sender
+type StateUpdateSender<S> = mpsc::Sender<StateUpdateFn<S>>;
+
+/// Type alias for state update channel receiver
+type StateUpdateReceiver<S> = mpsc::Receiver<StateUpdateFn<S>>;
+
+/// A handle that allows external code to trigger observer notifications
+/// without having direct access to the router.
+#[derive(Clone)]
+pub struct NotificationTrigger<O>
+where
+    O: Observer + Send + Sync + Clone + 'static,
+{
+    observer: O,
 }
+
+impl<O> NotificationTrigger<O>
+where
+    O: Observer + Send + Sync + Clone + 'static,
+{
+    /// Create a new notification trigger
+    pub fn new(observer: O) -> Self {
+        Self { observer }
+    }
+
+    /// Trigger a notification for observers of a specific device and path
+    pub async fn trigger_notification(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), O::Error> {
+        self.observer.write(device_id, path, payload).await
+    }
+}
+
+/// A handle that allows external code to update the application state
+/// without having direct access to the router.
+#[derive(Clone)]
+pub struct StateUpdateHandle<S>
+where
+    S: Send + Sync + Clone + 'static,
+{
+    sender: StateUpdateSender<S>,
+}
+
+impl<S> StateUpdateHandle<S>
+where
+    S: Send + Sync + Clone + 'static,
+{
+    /// Create a new state update handle
+    pub fn new(sender: StateUpdateSender<S>) -> Self {
+        Self { sender }
+    }
+
+    /// Update the application state using a closure
+    ///
+    /// This allows external components to modify the shared state safely.
+    /// The update is queued and applied asynchronously by the router.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use coapum::StateUpdateHandle;
+    /// # #[derive(Clone)]
+    /// # struct MyAppState {
+    /// #     counter: i32,
+    /// #     config: Config,
+    /// # }
+    /// # #[derive(Clone)]
+    /// # struct Config {
+    /// #     max_db_connections: usize,
+    /// # }
+    /// # async fn example(state_handle: StateUpdateHandle<MyAppState>) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Update a counter in the state
+    /// state_handle.update(|state: &mut MyAppState| {
+    ///     state.counter += 1;
+    /// }).await?;
+    ///
+    /// // Update database connection pool size
+    /// state_handle.update(|state: &mut MyAppState| {
+    ///     state.config.max_db_connections = 50;
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update<F>(&self, updater: F) -> Result<(), StateUpdateError>
+    where
+        F: FnOnce(&mut S) + Send + 'static,
+    {
+        self.sender
+            .send(Box::new(updater))
+            .await
+            .map_err(|_| StateUpdateError::ChannelClosed)
+    }
+
+    /// Attempt to update the state without blocking
+    ///
+    /// Returns an error if the update channel is full or closed.
+    pub fn try_update<F>(&self, updater: F) -> Result<(), StateUpdateError>
+    where
+        F: FnOnce(&mut S) + Send + 'static,
+    {
+        self.sender
+            .try_send(Box::new(updater))
+            .map_err(|e| match e {
+                mpsc::error::TrySendError::Full(_) => StateUpdateError::ChannelFull,
+                mpsc::error::TrySendError::Closed(_) => StateUpdateError::ChannelClosed,
+            })
+    }
+}
+
+/// Error type for state update operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum StateUpdateError {
+    /// The update channel is full (try_update only)
+    ChannelFull,
+    /// The update channel is closed (router dropped)
+    ChannelClosed,
+}
+
+impl std::fmt::Display for StateUpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StateUpdateError::ChannelFull => write!(f, "State update channel is full"),
+            StateUpdateError::ChannelClosed => write!(f, "State update channel is closed"),
+        }
+    }
+}
+
+impl std::error::Error for StateUpdateError {}
+
+/// A handle that allows external code to manage client authentication
+/// without having direct access to the server's PSK store.
+#[derive(Clone)]
+pub struct ClientManager {
+    sender: mpsc::Sender<ClientCommand>,
+}
+
+/// Commands for client management operations
+#[derive(Debug)]
+pub enum ClientCommand {
+    /// Add a new client with PSK authentication
+    AddClient {
+        identity: String,
+        key: Vec<u8>,
+        metadata: Option<ClientMetadata>,
+    },
+    /// Remove a client
+    RemoveClient { identity: String },
+    /// Update an existing client's key
+    UpdateKey { identity: String, key: Vec<u8> },
+    /// Update client metadata
+    UpdateMetadata {
+        identity: String,
+        metadata: ClientMetadata,
+    },
+    /// Enable or disable a client
+    SetClientEnabled { identity: String, enabled: bool },
+    /// Get all client identities (response via oneshot channel)
+    ListClients {
+        response: tokio::sync::oneshot::Sender<Vec<String>>,
+    },
+}
+
+/// Metadata associated with a client
+#[derive(Debug, Clone, Default)]
+pub struct ClientMetadata {
+    /// Optional friendly name for the client
+    pub name: Option<String>,
+    /// Optional description
+    pub description: Option<String>,
+    /// Whether the client is enabled
+    pub enabled: bool,
+    /// Optional tags for categorization
+    pub tags: Vec<String>,
+    /// Custom key-value pairs
+    pub custom: HashMap<String, String>,
+}
+
+impl ClientManager {
+    /// Create a new client manager
+    pub fn new(sender: mpsc::Sender<ClientCommand>) -> Self {
+        Self { sender }
+    }
+
+    /// Add a new client with PSK authentication
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use coapum::router::ClientManager;
+    /// # async fn example(client_manager: ClientManager) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Add a simple client
+    /// client_manager.add_client("device_001", b"secret_key_123").await?;
+    ///
+    /// // Add a client with metadata
+    /// let metadata = coapum::router::ClientMetadata {
+    ///     name: Some("Temperature Sensor".to_string()),
+    ///     enabled: true,
+    ///     tags: vec!["sensor".to_string(), "outdoor".to_string()],
+    ///     ..Default::default()
+    /// };
+    /// client_manager.add_client_with_metadata("device_002", b"secret_key_456", metadata).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn add_client(&self, identity: &str, key: &[u8]) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::AddClient {
+                identity: identity.to_string(),
+                key: key.to_vec(),
+                metadata: None,
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Add a new client with metadata
+    pub async fn add_client_with_metadata(
+        &self,
+        identity: &str,
+        key: &[u8],
+        metadata: ClientMetadata,
+    ) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::AddClient {
+                identity: identity.to_string(),
+                key: key.to_vec(),
+                metadata: Some(metadata),
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Remove a client
+    pub async fn remove_client(&self, identity: &str) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::RemoveClient {
+                identity: identity.to_string(),
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Update a client's PSK key
+    pub async fn update_key(&self, identity: &str, key: &[u8]) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::UpdateKey {
+                identity: identity.to_string(),
+                key: key.to_vec(),
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Update client metadata
+    pub async fn update_metadata(
+        &self,
+        identity: &str,
+        metadata: ClientMetadata,
+    ) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::UpdateMetadata {
+                identity: identity.to_string(),
+                metadata,
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// Enable or disable a client
+    pub async fn set_client_enabled(
+        &self,
+        identity: &str,
+        enabled: bool,
+    ) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::SetClientEnabled {
+                identity: identity.to_string(),
+                enabled,
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
+
+    /// List all registered client identities
+    pub async fn list_clients(&self) -> Result<Vec<String>, ClientManagerError> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        self.sender
+            .send(ClientCommand::ListClients { response: tx })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)?;
+
+        rx.await.map_err(|_| ClientManagerError::ResponseFailed)
+    }
+}
+
+/// Error type for client manager operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClientManagerError {
+    /// The command channel is closed
+    ChannelClosed,
+    /// Failed to receive response
+    ResponseFailed,
+}
+
+impl std::fmt::Display for ClientManagerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClientManagerError::ChannelClosed => write!(f, "Client manager channel is closed"),
+            ClientManagerError::ResponseFailed => {
+                write!(f, "Failed to receive response from client manager")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ClientManagerError {}
+
+/// Internal client store entry
+#[derive(Debug, Clone)]
+pub struct ClientEntry {
+    /// The PSK key
+    pub key: Vec<u8>,
+    /// Client metadata
+    pub metadata: ClientMetadata,
+}
+
+/// Shared client store type
+pub type ClientStore = Arc<RwLock<HashMap<String, ClientEntry>>>;
 
 /// The CoapRouter is a struct responsible for managing routes, shared state and an observer database.
 ///
@@ -56,6 +387,8 @@ where
     inner: Router<HashMap<RequestTypeWrapper, RouteHandler<S>>>,
     state: Arc<Mutex<S>>, // Shared state
     db: O,
+    // Channel for external state updates
+    state_update_sender: Option<StateUpdateSender<S>>,
 }
 
 /// Provides methods for creating a new CoapRouter, registering and unregistering observers,
@@ -76,6 +409,7 @@ where
             inner: Router::new(),
             state: Arc::new(Mutex::new(state)),
             db,
+            state_update_sender: None,
         }
     }
 
@@ -103,6 +437,11 @@ where
         self.db.unregister(device_id, path).await
     }
 
+    /// Unregisters all observers for a given device.
+    pub async fn unregister_all(&mut self, _device_id: &str) -> Result<(), O::Error> {
+        self.db.unregister_all().await
+    }
+
     /// Writes a payload to a path in the backend.
     pub async fn backend_write(
         &mut self,
@@ -113,6 +452,19 @@ where
         self.db.write(device_id, path, payload).await
     }
 
+    /// Triggers observer notifications for a specific device and path.
+    /// This is useful when the application needs to notify observers
+    /// about changes that happened outside of the normal request flow.
+    pub async fn trigger_notification(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), O::Error> {
+        // Use backend_write which will trigger the observer notifications
+        self.backend_write(device_id, path, payload).await
+    }
+
     /// Reads a value from a path in the backend.
     pub async fn backend_read(
         &mut self,
@@ -120,6 +472,75 @@ where
         path: &str,
     ) -> Result<Option<Value>, O::Error> {
         self.db.read(device_id, path).await
+    }
+
+    /// Enable external state updates and return a handle for external components
+    ///
+    /// This creates a channel that allows external components to safely update
+    /// the shared application state. Returns a StateUpdateHandle and starts
+    /// a background task to process state updates.
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer_size` - The size of the update channel buffer (default: 1000)
+    ///
+    /// # Returns
+    ///
+    /// Returns a StateUpdateHandle that external components can use to queue state updates.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use coapum::router::CoapRouter;
+    /// # use coapum::observer::memory::MemObserver;
+    /// # #[derive(Clone, Debug)]
+    /// # struct AppState {
+    /// #     counter: i32,
+    /// # }
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let app_state = AppState { counter: 0 };
+    /// # let observer = MemObserver::new();
+    /// let mut router = CoapRouter::new(app_state, observer);
+    /// let state_handle = router.enable_state_updates(1000);
+    ///
+    /// // External component can now update state:
+    /// state_handle.update(|state| {
+    ///     state.counter += 1;
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_state_updates(&mut self, buffer_size: usize) -> StateUpdateHandle<S> {
+        let (sender, receiver) = mpsc::channel(buffer_size);
+        self.state_update_sender = Some(sender.clone());
+
+        // Spawn background task to process state updates
+        let state = Arc::clone(&self.state);
+        tokio::spawn(async move {
+            Self::process_state_updates(state, receiver).await;
+        });
+
+        StateUpdateHandle::new(sender)
+    }
+
+    /// Process state updates from the channel
+    ///
+    /// This runs in a background task and applies state updates sequentially
+    /// to maintain consistency.
+    async fn process_state_updates(state: Arc<Mutex<S>>, mut receiver: StateUpdateReceiver<S>) {
+        while let Some(update) = receiver.recv().await {
+            let mut state_guard = state.lock().await;
+            update(&mut *state_guard);
+        }
+    }
+
+    /// Get a state update handle if state updates are enabled
+    ///
+    /// Returns None if enable_state_updates() has not been called.
+    pub fn state_update_handle(&self) -> Option<StateUpdateHandle<S>> {
+        self.state_update_sender
+            .as_ref()
+            .map(|sender| StateUpdateHandle::new(sender.clone()))
     }
 
     /// Adds a route handler for a given route.
@@ -141,6 +562,7 @@ where
 
     /// Looks up an observer handler for a given path.
     pub fn lookup_observer_handler(&self, path: &str) -> Option<Box<dyn ErasedHandler<S>>> {
+        log::debug!("Looking up observer handler for path: '{}'", path);
         match self.inner.recognize(path) {
             Ok(matched) => {
                 let handler = matched.handler();
@@ -151,19 +573,26 @@ where
                 log::debug!("Matched route: {:?}", matched);
                 match handler.get(&reqtype) {
                     Some(h) => {
-                        log::debug!("Matched handler: {:?}", h);
+                        log::debug!(
+                            "Matched handler, has observe_handler: {}",
+                            h.observe_handler.is_some()
+                        );
                         h.observe_handler
                             .as_ref()
                             .map(|handler| handler.clone_erased())
                     }
                     None => {
-                        log::debug!("No handler found");
+                        log::debug!("No handler found for GET method");
                         None
                     }
                 }
             }
             Err(e) => {
-                log::warn!("Unable to recognize. Err: {}", e);
+                log::warn!(
+                    "Unable to recognize observer handler path '{}'. Err: {}",
+                    path,
+                    e
+                );
                 None
             }
         }
@@ -317,6 +746,60 @@ where
         self.router
     }
 
+    /// Create a notification trigger handle for external code to trigger observer notifications
+    pub fn notification_trigger(&self) -> NotificationTrigger<O> {
+        NotificationTrigger::new(self.router.db.clone())
+    }
+
+    /// Enable external state updates and return a handle for external components
+    ///
+    /// This is a convenience method that calls enable_state_updates on the underlying router.
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer_size` - The size of the update channel buffer (default: 1000)
+    ///
+    /// # Returns
+    ///
+    /// Returns a StateUpdateHandle that external components can use to queue state updates.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use coapum::RouterBuilder;
+    /// # use coapum::observer::memory::MemObserver;
+    /// # #[derive(Clone, Debug)]
+    /// # struct AppState {
+    /// #     counter: i32,
+    /// # }
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let app_state = AppState { counter: 0 };
+    /// # let observer = MemObserver::new();
+    /// let mut builder = RouterBuilder::new(app_state, observer);
+    /// let state_handle = builder.enable_state_updates(1000);
+    ///
+    /// let router = builder
+    ///     // .get("/api/data", handler)
+    ///     .build();
+    ///
+    /// // External component can now update state:
+    /// state_handle.update(|state| {
+    ///     state.counter += 1;
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_state_updates(&mut self, buffer_size: usize) -> StateUpdateHandle<S> {
+        self.router.enable_state_updates(buffer_size)
+    }
+
+    /// Get a state update handle if state updates are enabled
+    ///
+    /// Returns None if enable_state_updates() has not been called.
+    pub fn state_update_handle(&self) -> Option<StateUpdateHandle<S>> {
+        self.router.state_update_handle()
+    }
+
     /// Get a mutable reference to the underlying router for advanced usage
     pub fn router_mut(&mut self) -> &mut CoapRouter<O, S> {
         &mut self.router
@@ -456,21 +939,24 @@ where
     fn call(&mut self, request: ObserverRequest<SocketAddr>) -> Self::Future {
         let state = self.state.clone(); // Clone the state so it can be moved into the async block
 
+        log::debug!("Processing ObserverRequest for path: {}", request.path);
         match self.lookup_observer_handler(&request.path) {
             Some(handler) => {
                 log::debug!("Handler found for route: {:?}", &request.path);
 
                 let packet = Packet::default();
-                let raw = CoapRequest::from_packet(packet, request.source);
+                let mut raw = CoapRequest::from_packet(packet, request.source);
+                // Set the path in the request for proper parameter extraction
+                raw.set_path(&request.path);
 
                 let mut coap_request: CoapumRequest<SocketAddr> = raw.into();
-                // Set the value for the observer request
-                coap_request.identity = request.path.clone();
+                // Identity should be empty or properly set - not the path
+                coap_request.identity = String::new();
 
                 Box::pin(async move { handler.call_erased(coap_request, state).await })
             }
             None => {
-                log::info!("No observer handler found for: {}", request.path);
+                log::debug!("No observer handler found for: {}", request.path);
 
                 // If no observer handler is found, return a bad request error
                 Box::pin(async move { (ResponseType::BadRequest).into_response() })

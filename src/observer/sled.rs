@@ -3,17 +3,23 @@ use std::{collections::HashMap, fmt, sync::Arc};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::{
-    mpsc::{channel, Sender},
     RwLock,
+    mpsc::{Sender, channel},
 };
 
 use super::{Observer, ObserverValue};
+
+// Type aliases to reduce complexity warnings
+type ObserverSender = Arc<Sender<ObserverValue>>;
+type PathChannels = HashMap<String, ObserverSender>;
+type DeviceChannels = HashMap<String, PathChannels>;
 
 #[derive(Clone, Debug)]
 pub struct SledObserver {
     pub db: sled::Db,
     channel: Option<Sender<()>>,
-    channels: Arc<RwLock<HashMap<String, Arc<Sender<ObserverValue>>>>>,
+    // Changed to store channels by device_id and then by path
+    channels: Arc<RwLock<DeviceChannels>>, // device_id -> path -> channel
 }
 
 impl SledObserver {
@@ -78,9 +84,17 @@ impl Observer for SledObserver {
         sender: Arc<Sender<ObserverValue>>,
     ) -> Result<(), Self::Error> {
         // Add to channels
-        {
-            self.channels.write().await.insert(path.to_string(), sender);
-        }
+        let mut channels = self.channels.write().await;
+        channels
+            .entry(device_id.to_string())
+            .or_insert_with(HashMap::new)
+            .insert(path.to_string(), sender);
+
+        log::debug!(
+            "Registered observer for device '{}' at path '{}'",
+            device_id,
+            path
+        );
 
         // Check if task exists. Theree should only be one per observer
         if self.channel.is_none() {
@@ -92,7 +106,6 @@ impl Observer for SledObserver {
 
             // Cloned id
             let id = device_id.to_string();
-            let path = path.to_string();
 
             // Save channel
             self.channel = Some(tx);
@@ -105,10 +118,10 @@ impl Observer for SledObserver {
                 tokio::select! {
                     _ = async {
 
-                        log::info!("Starting wait..");
+                        log::debug!("Starting sled watcher for device: {}", id);
                         while let Some(sled::Event::Insert { key, value }) = (&mut sub).await {
 
-                            log::info!("Got event for {} with value: {}", String::from_utf8(key.to_vec()).unwrap(), String::from_utf8(value.to_vec()).unwrap());
+                            log::debug!("Got sled event for {} with value: {}", String::from_utf8(key.to_vec()).unwrap(), String::from_utf8(value.to_vec()).unwrap());
 
                             // Check to make sure they're equal
                             if key == id
@@ -120,25 +133,34 @@ impl Observer for SledObserver {
                                 match value {
                                     Ok(value) => {
 
-                                        let channels = {
-                                            channels.read().await
-                                        };
+                                        let channels = channels.read().await;
 
-                                        // Iterate through all subscribed channels
-                                        for (path,sender) in channels.iter() {
+                                        log::debug!("Looking for observers for device '{}'", id);
 
-                                            // Get the pointed value
-                                            if let Some(value) = value.pointer(path) {
-
-                                                let out = ObserverValue{
-                                                    value: value.clone(),
-                                                    path: path.clone()
+                                        if let Some(device_channels) = channels.get(&id) {
+                                            log::debug!("Found device '{}' with {} observers", id, device_channels.len());
+                                            // Iterate through all subscribed channels for this device
+                                            for (obs_path, sender) in device_channels.iter() {
+                                                // Convert path to JSON pointer format (add leading slash if not present)
+                                                let json_pointer = if obs_path.starts_with('/') {
+                                                    obs_path.clone()
+                                                } else {
+                                                    format!("/{}", obs_path)
                                                 };
 
-                                                // Send the value..
-                                                let _ = sender.send(out).await;
-                                            }
+                                                // Get the pointed value
+                                                if let Some(pointed_value) = value.pointer(&json_pointer) {
+                                                    let out = ObserverValue {
+                                                        value: pointed_value.clone(),
+                                                        path: obs_path.clone(),
+                                                    };
 
+                                                    // Send the value..
+                                                    let _ = sender.send(out).await;
+                                                }
+                                            }
+                                        } else {
+                                            log::warn!("No observers found for device '{}'", id);
                                         }
                                     }
                                     Err(e)=>log::warn!("Unable to fetch value from db. Err: {}",e)
@@ -146,10 +168,10 @@ impl Observer for SledObserver {
                             }
                         }
 
-                        log::info!("thread done");
+                        log::debug!("sled watcher thread done for device: {}", id);
                     } => {}
                     _ = rx.recv() => {
-                        log::info!("Terminating subscriber for: {}", path);
+                        log::debug!("Terminating sled subscriber for device: {}", id);
                     }
                 }
             });
@@ -158,13 +180,15 @@ impl Observer for SledObserver {
         Ok(())
     }
 
-    async fn unregister(&mut self, _device_id: &str, path: &str) -> Result<(), Self::Error> {
+    async fn unregister(&mut self, device_id: &str, path: &str) -> Result<(), Self::Error> {
         // Remove single entry
-        {
-            self.channels.write().await.remove(path);
+        let mut channels = self.channels.write().await;
+        if let Some(device_channels) = channels.get_mut(device_id) {
+            device_channels.remove(path);
+            if device_channels.is_empty() {
+                channels.remove(device_id);
+            }
         }
-
-        let channels = { self.channels.read().await };
 
         // If channels is empty stop task
         if channels.is_empty() {
@@ -207,27 +231,31 @@ impl Observer for SledObserver {
         // Set value at correct provided path
         let new_value = super::path_to_json(path, payload);
 
-        log::info!("New value: {:?}", new_value);
+        log::debug!("New value: {:?} for path: {}", new_value, path);
+
+        let mut current_value = Value::Null;
 
         // Check if we have a value and update the pointer
-        let value = if let Ok(Some(value)) = self.db.get(device_id) {
-            let value: Result<Value, _> = serde_json::from_slice(&value);
+        let value = if let Ok(Some(stored_value)) = self.db.get(device_id) {
+            let stored_value: Result<Value, _> = serde_json::from_slice(&stored_value);
 
-            match value {
-                Ok(value) => {
-                    let mut merged_value = value;
+            match stored_value {
+                Ok(stored_value) => {
+                    current_value = stored_value.clone();
+
+                    // Create merged path
+                    let mut merged_value = stored_value;
 
                     // Perform merge
                     super::merge_json(&mut merged_value, &new_value);
 
-                    log::info!("Merged value: {:?}", merged_value);
+                    log::debug!("Merged value: {:?}", merged_value);
 
                     // Return merged result
                     merged_value
                 }
                 Err(e) => {
                     log::warn!("Unable to serialize. Err: {}", e);
-
                     new_value
                 }
             }
@@ -235,7 +263,76 @@ impl Observer for SledObserver {
             new_value
         };
 
-        log::info!("Value to write: {:?}", value);
+        // Only check observers for this specific device
+        let channels = self.channels.read().await;
+
+        log::debug!(
+            "Looking for observers for device '{}' with write to path '{}'",
+            device_id,
+            path
+        );
+        log::debug!(
+            "Currently registered devices: {:?}",
+            channels.keys().collect::<Vec<_>>()
+        );
+
+        if let Some(device_channels) = channels.get(device_id) {
+            log::debug!(
+                "Found device '{}' with {} observers",
+                device_id,
+                device_channels.len()
+            );
+            // Callback if there were differences
+            for (obs_path, sender) in device_channels.iter() {
+                // Check if the observer path is affected by this write
+                // Convert path to JSON pointer format (add leading slash if not present)
+                let json_pointer = if obs_path.starts_with('/') {
+                    obs_path.clone()
+                } else {
+                    format!("/{}", obs_path)
+                };
+                let current_value_at_path = current_value.pointer(&json_pointer);
+                let incoming_value_at_path = value.pointer(&json_pointer);
+
+                log::debug!("Comparing paths: {} for device: {}", obs_path, device_id);
+                log::debug!("Current value at path: {:?}", current_value_at_path);
+                log::debug!("Incoming value at path: {:?}", incoming_value_at_path);
+
+                // Get the pointed value
+                if current_value_at_path != incoming_value_at_path {
+                    log::debug!(
+                        "Value changed at path: {} for device: {}",
+                        obs_path,
+                        device_id
+                    );
+
+                    let notification_value = match incoming_value_at_path {
+                        Some(value) => value.clone(),
+                        None => Value::Null,
+                    };
+
+                    // If not equal then send the value from the path
+                    if let Err(e) = sender
+                        .send(ObserverValue {
+                            path: obs_path.clone(),
+                            value: notification_value,
+                        })
+                        .await
+                    {
+                        log::warn!(
+                            "Failed to send observer notification for device {} path {}: {}",
+                            device_id,
+                            obs_path,
+                            e
+                        );
+                    }
+                }
+            }
+        } else {
+            log::warn!("No observers found for device '{}'", device_id);
+        }
+
+        log::debug!("Value to write: {:?}", value);
 
         // Then write it back
         match serde_json::to_vec(&value) {
@@ -258,12 +355,12 @@ impl Observer for SledObserver {
             Ok(Some(value)) => {
                 let value: Value = serde_json::from_slice(&value)?;
 
-                log::info!("Got value: {:?}", value);
+                log::debug!("Got value: {:?}", value);
 
                 // Get the value ad the indicated path
                 let pointer_value = value.pointer(path).cloned();
 
-                log::info!("Pointer value: {:?}", pointer_value);
+                log::debug!("Pointer value: {:?}", pointer_value);
 
                 Ok(pointer_value)
             }
@@ -388,11 +485,15 @@ mod tests {
             .unregister("123", "/observe_and_write")
             .await
             .unwrap();
-        assert!(!observer
-            .channels
-            .read()
-            .await
-            .contains_key("/observe_and_write"));
+        assert!(
+            !observer
+                .channels
+                .read()
+                .await
+                .get("123")
+                .map(|device_channels| device_channels.contains_key("/observe_and_write"))
+                .unwrap_or(false)
+        );
         assert!(observer.channel.is_none());
 
         observer

@@ -4,9 +4,9 @@
 //! into CoAP handlers that can be used with the router. It supports automatic
 //! extraction of parameters from requests and conversion of return values to responses.
 
+use crate::CoapResponse;
 use crate::extract::{FromRequest, IntoResponse};
 use crate::router::CoapumRequest;
-use crate::CoapResponse;
 use async_trait::async_trait;
 use std::{convert::Infallible, future::Future, marker::PhantomData, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;

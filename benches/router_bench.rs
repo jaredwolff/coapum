@@ -1,11 +1,12 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use coapum::{
+    Raw,
     router::{CoapumRequest, RouterBuilder},
-    Raw, {CoapRequest, Packet},
+    {CoapRequest, Packet},
 };
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use serde_json::json;
 use tower::Service; // make sure to use your actual project name and import path
 

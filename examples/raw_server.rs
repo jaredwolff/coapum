@@ -5,14 +5,15 @@ use std::{
 };
 
 use coapum::{
+    Raw,
     dtls::{
+        Error,
         cipher_suite::CipherSuiteId,
         config::{Config, ExtendedMasterSecretType},
-        Error,
     },
-    observer::sled::SledObserver,
+    observer::memory::MemObserver,
     router::RouterBuilder,
-    serve, Raw,
+    serve,
 };
 
 type PskStore = Arc<RwLock<HashMap<String, Vec<u8>>>>;
@@ -45,7 +46,7 @@ async fn main() {
         psk_store_write.insert("goobie!".to_string(), PSK.to_vec());
     }
 
-    let obs = SledObserver::new("coapum.db");
+    let obs = MemObserver::new();
 
     let router = RouterBuilder::new((), obs).get("test", test).build();
 

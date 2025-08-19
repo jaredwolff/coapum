@@ -51,12 +51,12 @@ use std::{
 
 use coapum::{
     dtls::{
+        Error,
         cipher_suite::CipherSuiteId,
         config::{Config, ExtendedMasterSecretType},
-        Error,
     },
     extract::{Cbor, Identity, Path, State, StatusCode},
-    observer::sled::SledObserver,
+    observer::memory::MemObserver,
     router::RouterBuilder,
     serve,
 };
@@ -226,7 +226,7 @@ async fn main() {
     };
 
     // Create observer database
-    let observer = SledObserver::new("coapum.db");
+    let observer = MemObserver::new();
 
     // Build router with ergonomic API
     let router = RouterBuilder::new(app_state, observer)
