@@ -14,6 +14,7 @@ use tokio::time::{interval, Duration};
 
 #[derive(Clone, Debug)]
 struct AppState {
+    #[allow(dead_code)]
     message: String,
 }
 

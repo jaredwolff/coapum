@@ -93,14 +93,11 @@ async fn test_client_manager_update_key() {
     let store_clone = Arc::clone(&client_store);
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
-            match cmd {
-                ClientCommand::UpdateKey { identity, key } => {
-                    let mut store = store_clone.write().await;
-                    if let Some(entry) = store.get_mut(&identity) {
-                        entry.key = key;
-                    }
+            if let ClientCommand::UpdateKey { identity, key } = cmd {
+                let mut store = store_clone.write().await;
+                if let Some(entry) = store.get_mut(&identity) {
+                    entry.key = key;
                 }
-                _ => {}
             }
         }
     });
@@ -253,13 +250,10 @@ async fn test_client_manager_list_clients() {
     let store_clone = Arc::clone(&client_store);
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
-            match cmd {
-                ClientCommand::ListClients { response } => {
-                    let store = store_clone.read().await;
-                    let clients: Vec<String> = store.keys().cloned().collect();
-                    let _ = response.send(clients);
-                }
-                _ => {}
+            if let ClientCommand::ListClients { response } = cmd {
+                let store = store_clone.read().await;
+                let clients: Vec<String> = store.keys().cloned().collect();
+                let _ = response.send(clients);
             }
         }
     });

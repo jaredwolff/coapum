@@ -267,7 +267,7 @@ async fn test_observe_registration_and_deregistration() {
         coapum::MessageClass::Response(ResponseType::Content)
     );
     assert!(
-        response.payload.len() > 0,
+        !response.payload.is_empty(),
         "Response should contain sensor data"
     );
 
