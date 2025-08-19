@@ -1,7 +1,8 @@
 [package]
 name = "coapum-senml"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85.0"
 authors = ["CoAPum Contributors"]
 description = "Rust implementation of Sensor Measurement Lists (SenML) RFC 8428"
 license = "MIT OR Apache-2.0"

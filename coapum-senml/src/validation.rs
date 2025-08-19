@@ -147,13 +147,13 @@ impl PackValidator {
                         return Err(SenMLError::validation(format!(
                             "Measurement '{}' requires unit '{}', got '{}'",
                             name, required_unit, unit
-                        )))
+                        )));
                     }
                     None => {
                         return Err(SenMLError::validation(format!(
                             "Measurement '{}' requires unit '{}'",
                             name, required_unit
-                        )))
+                        )));
                     }
                 }
             }
@@ -461,7 +461,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::{utils, validators, TIME_THRESHOLD};
+    use super::{TIME_THRESHOLD, utils, validators};
     use crate::{SenMLBuilder, SenMLPack, SenMLRecord};
 
     #[test]

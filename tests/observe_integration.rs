@@ -12,24 +12,24 @@ use std::{
 
 use tokio::{
     net::UdpSocket,
-    sync::{broadcast, Mutex},
+    sync::{Mutex, broadcast},
     time::timeout,
 };
 
 use coapum::{
+    CoapRequest, ContentFormat, Packet, RequestType, ResponseType,
     config::Config as ServerConfig,
     dtls::{
+        Error as DtlsError,
         cipher_suite::CipherSuiteId,
         config::{Config as DtlsConfig, ExtendedMasterSecretType},
         conn::DTLSConn,
-        Error as DtlsError,
     },
     extract::{Cbor, Path, State, StatusCode},
     observer::memory::MemObserver,
     router::RouterBuilder,
     serve,
     util::Conn,
-    CoapRequest, ContentFormat, Packet, RequestType, ResponseType,
 };
 
 use coap_lite::ObserveOption;

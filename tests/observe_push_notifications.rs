@@ -18,19 +18,19 @@ use tokio::{
 };
 
 use coapum::{
+    CoapRequest, Packet, RequestType, ResponseType,
     config::Config as ServerConfig,
     dtls::{
+        Error as DtlsError,
         cipher_suite::CipherSuiteId,
         config::{Config as DtlsConfig, ExtendedMasterSecretType},
         conn::DTLSConn,
-        Error as DtlsError,
     },
     extract::{Cbor, Path, State, StatusCode},
-    observer::{memory::MemObserver, Observer},
+    observer::{Observer, memory::MemObserver},
     router::RouterBuilder,
     serve,
     util::Conn,
-    CoapRequest, Packet, RequestType, ResponseType,
 };
 
 use coap_lite::ObserveOption;

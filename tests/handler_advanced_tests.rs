@@ -6,10 +6,10 @@
 use std::sync::Arc;
 
 use coapum::{
+    ContentFormat,
     extract::{Bytes, Cbor, Json, Path, Source, State, StatusCode},
     observer::memory::MemObserver,
     router::RouterBuilder,
-    ContentFormat,
 };
 use serde::{Deserialize, Serialize};
 use tower::Service;

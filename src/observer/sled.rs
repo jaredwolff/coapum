@@ -3,8 +3,8 @@ use std::{collections::HashMap, fmt, sync::Arc};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::{
-    mpsc::{channel, Sender},
     RwLock,
+    mpsc::{Sender, channel},
 };
 
 use super::{Observer, ObserverValue};
@@ -485,13 +485,15 @@ mod tests {
             .unregister("123", "/observe_and_write")
             .await
             .unwrap();
-        assert!(!observer
-            .channels
-            .read()
-            .await
-            .get("123")
-            .map(|device_channels| device_channels.contains_key("/observe_and_write"))
-            .unwrap_or(false));
+        assert!(
+            !observer
+                .channels
+                .read()
+                .await
+                .get("123")
+                .map(|device_channels| device_channels.contains_key("/observe_and_write"))
+                .unwrap_or(false)
+        );
         assert!(observer.channel.is_none());
 
         observer

@@ -6,7 +6,7 @@
 //! 3. Demonstrate both JSON and CBOR format support
 
 use coapum::{
-    extract::SenML, observer::memory::MemObserver, router::RouterBuilder, serve, StatusCode,
+    StatusCode, extract::SenML, observer::memory::MemObserver, router::RouterBuilder, serve,
 };
 use coapum_senml::SenMLBuilder;
 

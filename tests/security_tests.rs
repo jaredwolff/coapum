@@ -4,10 +4,10 @@
 //! path validation, connection management, and injection attack prevention.
 
 use coapum::{
+    CoapRequest, ContentFormat, Packet,
     extract::{Cbor, FromRequest, Json},
     observer::memory::MemObserver,
     router::RouterBuilder,
-    CoapRequest, ContentFormat, Packet,
 };
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -118,10 +118,12 @@ mod payload_security_tests {
 
         let cbor_result = Cbor::<TestPayload>::from_request(&req, &()).await;
         assert!(cbor_result.is_err(), "CBOR should reject empty payload");
-        assert!(cbor_result
-            .unwrap_err()
-            .to_string()
-            .contains("Empty payload"));
+        assert!(
+            cbor_result
+                .unwrap_err()
+                .to_string()
+                .contains("Empty payload")
+        );
 
         // Test JSON empty payload
         let mut req = create_test_request_with_payload(empty_payload);
@@ -130,10 +132,12 @@ mod payload_security_tests {
 
         let json_result = Json::<TestPayload>::from_request(&req, &()).await;
         assert!(json_result.is_err(), "JSON should reject empty payload");
-        assert!(json_result
-            .unwrap_err()
-            .to_string()
-            .contains("Empty payload"));
+        assert!(
+            json_result
+                .unwrap_err()
+                .to_string()
+                .contains("Empty payload")
+        );
     }
 
     #[tokio::test]
@@ -150,10 +154,12 @@ mod payload_security_tests {
 
         let result = Cbor::<TestPayload>::from_request(&req, &()).await;
         assert!(result.is_err(), "Should reject wrong content type");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Expected CBOR content type"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Expected CBOR content type")
+        );
     }
 }
 

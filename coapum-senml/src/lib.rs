@@ -104,7 +104,7 @@ mod tests {
             .build();
 
         assert!(pack.records.len() == 2); // Base record + measurement record
-                                          // Check that base name was stored in the first record
+        // Check that base name was stored in the first record
         assert_eq!(pack.records[0].n, Some("urn:dev:sensor1".to_string()));
         // Check that measurement record exists
         assert_eq!(pack.records[1].v, Some(22.5));
