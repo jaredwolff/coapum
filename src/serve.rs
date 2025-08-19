@@ -1,11 +1,11 @@
 use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 
 use tokio::sync::{
-    mpsc::{channel, Sender},
-    Mutex,
+    mpsc::{self, channel, Sender},
+    Mutex, RwLock,
 };
 use tower::Service;
-use webrtc_dtls::{conn::DTLSConn, listener};
+use webrtc_dtls::{conn::DTLSConn, listener, Error};
 use webrtc_util::conn::Listener;
 
 use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType, ResponseType};
@@ -13,7 +13,7 @@ use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType, ResponseType};
 use crate::{
     config::Config,
     observer::{Observer, ObserverValue},
-    router::{CoapRouter, CoapumRequest},
+    router::{CoapRouter, CoapumRequest, ClientStore, ClientEntry, ClientCommand, ClientManager, ClientMetadata},
 };
 
 /// Connection information for security tracking and rate limiting
@@ -89,13 +89,15 @@ fn validate_observer_path(path: &str) -> Result<String, PathValidationError> {
     }
 }
 
-pub async fn serve<O, S>(
+
+/// Start basic CoAP server without client management
+pub async fn serve_basic<O, S>(
     addr: String,
     config: Config,
     router: CoapRouter<O, S>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    S: Debug + Clone + Send + Sync + 'static, // The shared state needs to be Send and Sync to be shared across threads
+    S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
     let dtls_config = config.dtls_cfg.clone();
@@ -366,61 +368,246 @@ where
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::router::wrapper::get;
+/// Start a basic CoAP server without client management
+/// 
+/// This function runs a CoAP server that blocks forever, handling incoming requests
+/// using the provided router. For client management capabilities, use
+/// `serve_with_client_management()` instead.
+/// 
+/// # Example
+/// 
+/// ```rust,no_run
+/// # use coapum::{RouterBuilder, observer::memory::MemObserver, config::Config};
+/// # use coapum::serve::serve;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[derive(Clone, Debug)]
+/// # struct AppState {}
+/// # let state = AppState {};
+/// # let observer = MemObserver::new();
+/// # let router = RouterBuilder::new(state, observer).build();
+/// 
+/// let config = Config::default();
+/// serve("0.0.0.0:5683".to_string(), config, router).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn serve<O, S>(
+    addr: String,
+    config: Config,
+    router: CoapRouter<O, S>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+{
+    serve_basic(addr, config, router).await
+}
 
-//     use super::*;
-//     use coap_lite::{CoapRequest, CoapResponse, Packet, RequestType, ResponseType};
-//     use std::net::SocketAddr;
+/// Start a CoAP server with dynamic client management capability
+/// 
+/// This function sets up client management and returns both a ClientManager for real-time
+/// client operations and a Future that runs the server. The user controls when and how
+/// to execute the server future.
+/// 
+/// # Returns
+/// 
+/// Returns a tuple of:
+/// - A ClientManager handle for managing clients
+/// - A Future that runs the server (user must execute it)
+/// 
+/// # Example
+/// 
+/// ```rust,no_run
+/// # use coapum::{RouterBuilder, observer::memory::MemObserver, config::Config};
+/// # use coapum::serve::serve_with_client_management;
+/// # use std::collections::HashMap;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[derive(Clone, Debug)]
+/// # struct AppState {}
+/// # let state = AppState {};
+/// # let observer = MemObserver::new();
+/// # let router = RouterBuilder::new(state, observer).build();
+/// 
+/// // Configure initial clients
+/// let mut initial_clients = HashMap::new();
+/// initial_clients.insert("device_001".to_string(), b"secret_key_123".to_vec());
+/// 
+/// let config = Config::default().with_client_management(initial_clients);
+/// 
+/// // Setup client management and get server future
+/// let (client_manager, server_future) = serve_with_client_management(
+///     "0.0.0.0:5683".to_string(),
+///     config,
+///     router
+/// ).await?;
+/// 
+/// // Add a new client before starting server
+/// client_manager.add_client("device_002", b"new_secret").await?;
+/// 
+/// // User controls how to run the server
+/// tokio::spawn(async move {
+///     if let Err(e) = server_future.await {
+///         log::error!("Server error: {}", e);
+///     }
+/// });
+/// 
+/// // Continue using client manager
+/// client_manager.update_key("device_001", b"rotated_key").await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn serve_with_client_management<O, S>(
+    addr: String,
+    config: Config,
+    router: CoapRouter<O, S>,
+) -> Result<(ClientManager, impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>), Box<dyn std::error::Error>>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+{
+    // Check if client management is enabled
+    let initial_clients = config.initial_clients.as_ref()
+        .ok_or("Client management not enabled. Use Config::with_client_management() to enable.")?;
+        
+    // Initialize client store with initial clients
+    let mut store_map = HashMap::new();
+    for (identity, key) in initial_clients.iter() {
+        store_map.insert(identity.clone(), ClientEntry {
+            key: key.clone(),
+            metadata: ClientMetadata {
+                enabled: true,
+                ..Default::default()
+            },
+        });
+    }
+    let client_store: ClientStore = Arc::new(RwLock::new(store_map));
+    
+    // Create client management channel
+    let (cmd_sender, mut cmd_receiver) = mpsc::channel(config.client_command_buffer);
+    let client_manager = ClientManager::new(cmd_sender);
+    
+    // Clone for the command processor
+    let store_for_processor = Arc::clone(&client_store);
+    
+    // Spawn client command processor
+    tokio::spawn(async move {
+        while let Some(cmd) = cmd_receiver.recv().await {
+            process_client_command(cmd, &store_for_processor).await;
+        }
+    });
+    
+    // Create DTLS config with dynamic PSK callback
+    let store_for_psk = Arc::clone(&client_store);
+    let mut dtls_cfg = config.dtls_cfg.clone();
+    
+    // Set up PSK callback that uses our dynamic client store
+    dtls_cfg.psk = Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
+        let hint_str = String::from_utf8(hint.to_vec())
+            .map_err(|_| Error::ErrIdentityNoPsk)?;
+        
+        log::debug!("PSK callback for identity: {}", hint_str);
+        
+        // Use blocking read since we're in a sync context
+        let store = store_for_psk.blocking_read();
+        
+        if let Some(entry) = store.get(&hint_str) {
+            if entry.metadata.enabled {
+                log::info!("PSK found for identity: {}", hint_str);
+                Ok(entry.key.clone())
+            } else {
+                log::warn!("Client {} is disabled", hint_str);
+                Err(Error::ErrIdentityNoPsk)
+            }
+        } else {
+            log::warn!("PSK not found for identity: {}", hint_str);
+            Err(Error::ErrIdentityNoPsk)
+        }
+    }));
+    
+    // Update the config with our enhanced DTLS config
+    let mut final_config = config;
+    final_config.dtls_cfg = dtls_cfg;
+    
+    // Return client manager and server future (don't spawn)
+    let server_future = serve_basic(addr, final_config, router);
+    
+    Ok((client_manager, server_future))
+}
 
-//     #[tokio::test]
-//     async fn test_serve() {
-//         // Set up test data
-//         let addr = "127.0.0.1:5683".to_string();
-//         let config = Config::default();
+/// Process a client command
+async fn process_client_command(cmd: ClientCommand, store: &ClientStore) {
+    match cmd {
+        ClientCommand::AddClient { identity, key, metadata } => {
+            let mut store = store.write().await;
+            let entry = ClientEntry {
+                key,
+                metadata: metadata.unwrap_or_else(|| ClientMetadata {
+                    enabled: true,
+                    ..Default::default()
+                }),
+            };
+            store.insert(identity.clone(), entry);
+            log::info!("Added client: {}", identity);
+        }
+        ClientCommand::RemoveClient { identity } => {
+            let mut store = store.write().await;
+            if store.remove(&identity).is_some() {
+                log::info!("Removed client: {}", identity);
+            } else {
+                log::warn!("Client not found for removal: {}", identity);
+            }
+        }
+        ClientCommand::UpdateKey { identity, key } => {
+            let mut store = store.write().await;
+            if let Some(entry) = store.get_mut(&identity) {
+                entry.key = key;
+                log::info!("Updated key for client: {}", identity);
+            } else {
+                log::warn!("Client not found for key update: {}", identity);
+            }
+        }
+        ClientCommand::UpdateMetadata { identity, metadata } => {
+            let mut store = store.write().await;
+            if let Some(entry) = store.get_mut(&identity) {
+                entry.metadata = metadata;
+                log::info!("Updated metadata for client: {}", identity);
+            } else {
+                log::warn!("Client not found for metadata update: {}", identity);
+            }
+        }
+        ClientCommand::SetClientEnabled { identity, enabled } => {
+            let mut store = store.write().await;
+            if let Some(entry) = store.get_mut(&identity) {
+                entry.metadata.enabled = enabled;
+                log::info!("Set client {} enabled: {}", identity, enabled);
+            } else {
+                log::warn!("Client not found for enable/disable: {}", identity);
+            }
+        }
+        ClientCommand::ListClients { response } => {
+            let store = store.read().await;
+            let clients: Vec<String> = store.keys().cloned().collect();
+            let _ = response.send(clients);
+        }
+    }
+}
 
-//         let mut router = CoapRouter::new((), ());
-//         router.add(
-//             "test",
-//             get(|_, _| async { Ok(CoapResponse::new(&Packet::new()).unwrap()) }),
-//         );
-
-//         let mut request = CoapRequest::new();
-//         request.set_method(RequestType::Get);
-//         request.set_path("/test");
-
-//         let identity = vec![0x01, 0x02, 0x03];
-
-//         let mut request: CoapumRequest<SocketAddr> = request.into();
-//         request.identity = identity.clone();
-
-//         // Call the serve function
-//         let result = serve(addr, config, router.clone()).await;
-
-//         // Check that the serve function returns Ok
-//         assert!(result.is_ok());
-
-//         // Call the router with a GET request
-//         let response = router.call(request).await.unwrap();
-
-//         // Check that the response has a Valid status
-//         assert_eq!(*response.get_status(), ResponseType::Content);
-
-//         // Check that the response message is empty
-//         assert!(response.message.payload.is_empty());
-
-//         // Call the router with a DELETE request
-//         let mut request = CoapRequest::new();
-//         request.set_method(RequestType::Delete);
-//         request.set_path("/test");
-
-//         let mut request: CoapumRequest<SocketAddr> = request.into();
-//         request.identity = identity.clone();
-
-//         let response = router.call(request).await.unwrap();
-
-//         // Check that the response has a Valid status
-//         assert_eq!(*response.get_status(), ResponseType::BadRequest);
-//     }
-// }
+/// Create a client manager connected to an existing client store
+/// 
+/// This is useful when you want to manage clients from multiple places
+/// or integrate with existing authentication systems.
+pub fn create_client_manager(
+    client_store: ClientStore,
+    buffer_size: usize,
+) -> ClientManager {
+    let (cmd_sender, mut cmd_receiver) = mpsc::channel(buffer_size);
+    
+    // Spawn command processor
+    tokio::spawn(async move {
+        while let Some(cmd) = cmd_receiver.recv().await {
+            process_client_command(cmd, &client_store).await;
+        }
+    });
+    
+    ClientManager::new(cmd_sender)
+}

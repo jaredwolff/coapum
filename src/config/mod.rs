@@ -9,6 +9,12 @@ pub struct Config {
     /// Buffer size for incoming messages (default: 8192 bytes)
     /// Security: Limited to prevent memory exhaustion attacks
     pub buffer_size: usize,
+
+    /// Optional initial client store (identity -> PSK) for dynamic client management
+    pub initial_clients: Option<std::collections::HashMap<String, Vec<u8>>>,
+    
+    /// Buffer size for client management commands (only used if initial_clients is Some)
+    pub client_command_buffer: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -66,6 +72,22 @@ impl Config {
         self.timeout = timeout;
         Ok(())
     }
+    
+    /// Enable client management with initial clients
+    pub fn with_client_management(mut self, initial_clients: std::collections::HashMap<String, Vec<u8>>) -> Self {
+        self.initial_clients = Some(initial_clients);
+        self
+    }
+    
+    /// Set client command buffer size
+    pub fn set_client_command_buffer(&mut self, size: usize) {
+        self.client_command_buffer = size;
+    }
+    
+    /// Check if client management is enabled
+    pub fn has_client_management(&self) -> bool {
+        self.initial_clients.is_some()
+    }
 }
 
 impl Default for Config {
@@ -74,6 +96,8 @@ impl Default for Config {
             dtls_cfg: Default::default(),
             timeout: 60,
             buffer_size: Self::DEFAULT_BUFFER_SIZE,
+            initial_clients: None,
+            client_command_buffer: 1000,
         }
     }
 }

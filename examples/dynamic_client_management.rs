@@ -8,7 +8,8 @@
 use coapum::{
     RouterBuilder,
     observer::memory::MemObserver,
-    serve_with_client_manager::{serve_with_client_manager, EnhancedConfig},
+    serve::serve_with_client_management,
+    config::Config,
     ClientManager,
 };
 use std::collections::HashMap;
@@ -180,11 +181,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     initial_clients.insert("rotate_device_002".to_string(), b"rotate_key_002".to_vec());
     
     // Configure server with client management
-    let config = EnhancedConfig {
-        initial_clients,
-        client_command_buffer: 1000,
-        ..Default::default()
-    };
+    let mut config = Config::default().with_client_management(initial_clients);
+    config.set_client_command_buffer(1000);
     
     println!("Starting CoAP server with dynamic client management on 0.0.0.0:5683");
     println!("Features demonstrated:");
@@ -196,12 +194,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("- Periodic key rotation");
     println!();
     
-    // Start server with client management
-    let (client_manager, server_handle) = serve_with_client_manager(
+    // Setup client management and get server future
+    let (client_manager, server_future) = serve_with_client_management(
         "0.0.0.0:5683".to_string(),
         config,
         router
     ).await?;
+    
+    // Spawn the server
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = server_future.await {
+            log::error!("Server error: {}", e);
+        }
+    });
     
     // Spawn client management tasks
     let lifecycle_manager = client_manager.clone();
@@ -219,8 +224,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         monitor_clients(monitor_manager).await;
     });
     
-    // Wait for server
-    server_handle.await??;
+    // Wait for server or handle shutdown
+    server_handle.await.unwrap_or_else(|e| {
+        log::error!("Server task failed: {}", e);
+    });
     
     Ok(())
 }

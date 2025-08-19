@@ -5,7 +5,6 @@ pub mod helper;
 pub mod observer;
 pub mod router;
 pub mod serve;
-pub mod serve_with_client_manager;
 
 #[cfg(test)]
 mod tests;

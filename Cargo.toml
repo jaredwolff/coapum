@@ -32,6 +32,9 @@ sled = { version = "0.34.7", optional = true }
 webrtc-dtls = { version = "0.12" }
 webrtc-util = { version = "0.11" }
 
+# SenML
+coapum-senml = { path = "./coapum-senml" }
+
 
 [dev-dependencies]
 lazy_static = { version = "1.4.0" }

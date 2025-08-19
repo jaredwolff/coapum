@@ -400,6 +400,7 @@ dependencies = [
  "async-trait",
  "ciborium",
  "coap-lite",
+ "coapum-senml",
  "criterion",
  "env_logger",
  "futures",
@@ -413,6 +414,17 @@ dependencies = [
  "tower",
  "webrtc-dtls",
  "webrtc-util",
+]
+
+[[package]]
+name = "coapum-senml"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
 ]
 
 [[package]]
@@ -605,6 +617,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c9e6a11ca8224451684bc0d7d5a7adbf8f2fd6887261a1cfc3c0432f9d4068e"
 dependencies = [
  "powerfmt",
+ "serde",
 ]
 
 [[package]]
