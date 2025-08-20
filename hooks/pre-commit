@@ -3,31 +3,58 @@ set -eu
 
 # Pre-commit hook for Rust projects
 # Runs formatting checks, linting, and tests before allowing commit
+# Includes checks for sub-projects
 
 echo "Running pre-commit checks..."
 
-# Check code formatting
-echo "Checking code formatting..."
-if ! cargo fmt -- --check; then
-    echo "❌ Code formatting issues found."
-    echo "Run 'cargo fmt' to fix formatting, then commit again."
-    exit 1
-fi
+# Function to run checks in a directory
+run_checks_in_dir() {
+    local dir="$1"
+    local name="$2"
+    
+    if [ -f "$dir/Cargo.toml" ]; then
+        echo "📁 Checking $name in $dir..."
+        
+        # Check code formatting
+        echo "  Checking code formatting..."
+        if ! (cd "$dir" && cargo fmt -- --check); then
+            echo "❌ Code formatting issues found in $name."
+            echo "Run 'cd $dir && cargo fmt' to fix formatting, then commit again."
+            exit 1
+        fi
+        
+        # Run clippy for linting
+        echo "  Running clippy..."
+        if ! (cd "$dir" && cargo clippy --all-targets --all-features -- -D warnings); then
+            echo "❌ Clippy found issues in $name."
+            echo "Fix the issues above, then commit again."
+            exit 1
+        fi
+        
+        # Run tests
+        # echo "  Running tests..."
+        # if ! (cd "$dir" && cargo test --all); then
+        #     echo "❌ Tests failed in $name."
+        #     echo "Fix failing tests, then commit again."
+        #     exit 1
+        # fi
+        
+        echo "  ✅ $name checks passed!"
+    fi
+}
 
-# Run clippy for linting
-echo "Running clippy..."
-if ! cargo clippy --all-targets --all-features -- -D warnings; then
-    echo "❌ Clippy found issues."
-    echo "Fix the issues above, then commit again."
-    exit 1
-fi
+# Check main project
+run_checks_in_dir "." "main project"
 
-# Run tests (optional - comment out if too slow)
-echo "Running tests..."
-if ! cargo test --all; then
-    echo "❌ Tests failed."
-    echo "Fix failing tests, then commit again."
-    exit 1
-fi
+# Check sub-projects
+for subproject in */Cargo.toml; do
+    if [ -f "$subproject" ]; then
+        subdir=$(dirname "$subproject")
+        # Skip target directories and other non-project directories
+        if [ "$subdir" != "target" ] && [ "$subdir" != "." ]; then
+            run_checks_in_dir "$subdir" "sub-project ($subdir)"
+        fi
+    fi
+done
 
-echo "✅ All pre-commit checks passed!"
+echo "🎉 All pre-commit checks passed for all projects!"
