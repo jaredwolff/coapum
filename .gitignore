@@ -1,3 +1,6 @@
 target
 *.db
 *.profraw
+*.redb
+bench-output.txt
+coverage.lcov

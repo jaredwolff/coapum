@@ -456,7 +456,10 @@ mod tests {
     async fn test_redb_observer_write_and_read() {
         let _ = env_logger::try_init();
 
-        let mut observer = RedbObserver::new("test_write_read.redb").unwrap();
+        // Use a temporary file path for the redb database
+        let tempdir = tempfile::tempdir().unwrap();
+        let db_path = tempdir.path().join("test_write_read.redb");
+        let mut observer = RedbObserver::new(db_path.to_str().unwrap()).unwrap();
 
         // Clear
         observer.clear("123").await.unwrap();
@@ -499,8 +502,10 @@ mod tests {
     async fn test_redb_observer_observe_and_write() {
         let _ = env_logger::try_init();
 
-        // Create test DB
-        let mut observer = RedbObserver::new("test_observe_write.redb").unwrap();
+        // Create test DB using a temporary file path
+        let tempdir = tempfile::tempdir().unwrap();
+        let db_path = tempdir.path().join("test_observe_write.redb");
+        let mut observer = RedbObserver::new(db_path.to_str().unwrap()).unwrap();
 
         // Clear before work
         observer.clear("123").await.unwrap();

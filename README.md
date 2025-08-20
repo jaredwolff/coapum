@@ -4,7 +4,7 @@ A modern, ergonomic CoAP (Constrained Application Protocol) library for Rust wit
 
 [![Crates.io](https://img.shields.io/crates/v/coapum.svg)](https://crates.io/crates/coapum)
 [![Documentation](https://docs.rs/coapum/badge.svg)](https://docs.rs/coapum)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
 ## Features
 
@@ -325,7 +325,7 @@ coapum-senml = { version = "0.1.0", features = ["json", "cbor", "xml"] }
 ```
 
 ### Coapum Features
-- `sled-observer` - Enable Sled database backend for observers (default)
+- `sled-observer` - Enable Sled database backend for observers (optional)
 
 ### SenML Features  
 - `json` - JSON serialization support (default)

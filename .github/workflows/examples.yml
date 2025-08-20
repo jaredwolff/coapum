@@ -2,14 +2,14 @@ name: Examples
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master]
     paths:
       - "examples/**"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
   pull_request:
-    branches: [main]
+    branches: [master]
     paths:
       - "examples/**"
       - "src/**"

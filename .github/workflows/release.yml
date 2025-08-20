@@ -155,11 +155,11 @@ jobs:
           echo "### 🚀 Quick Start" >> changelog.md
           echo "" >> changelog.md
           echo '```rust' >> changelog.md
-          echo 'use coapum::{router::RouterBuilder, observer::memory::MemoryObserver, serve};' >> changelog.md
+          echo 'use coapum::{router::RouterBuilder, observer::memory::MemObserver, serve};' >> changelog.md
           echo '' >> changelog.md
           echo '#[tokio::main]' >> changelog.md
           echo 'async fn main() -> Result<(), Box<dyn std::error::Error>> {' >> changelog.md
-          echo '    let router = RouterBuilder::new((), MemoryObserver::new())' >> changelog.md
+          echo '    let router = RouterBuilder::new((), MemObserver::new())' >> changelog.md
           echo '        .get("/hello", || async { "Hello, CoAP!" })' >> changelog.md
           echo '        .build();' >> changelog.md
           echo '' >> changelog.md
@@ -177,17 +177,17 @@ jobs:
           echo "- **Concurrency Example**: Demonstrates concurrent request handling" >> changelog.md
           echo "" >> changelog.md
           echo '```bash' >> changelog.md
-          echo "git clone https://github.com/your-org/coapum.git" >> changelog.md
+          echo "git clone https://github.com/jaredwolff/coapum.git" >> changelog.md
           echo "cd coapum" >> changelog.md
-          echo "cargo run --bin cbor_server" >> changelog.md
+          echo "cargo run --example cbor_server" >> changelog.md
           echo '```' >> changelog.md
           echo "" >> changelog.md
           echo "### 🔗 Links" >> changelog.md
           echo "" >> changelog.md
           echo "- 📖 [Documentation](https://docs.rs/coapum/${VERSION_NUMBER})" >> changelog.md
           echo "- 📦 [Crates.io](https://crates.io/crates/coapum)" >> changelog.md
-          echo "- 🐛 [Issues](https://github.com/your-org/coapum/issues)" >> changelog.md
-          echo "- 💬 [Discussions](https://github.com/your-org/coapum/discussions)" >> changelog.md
+          echo "- 🐛 [Issues](https://github.com/jaredwolff/coapum/issues)" >> changelog.md
+          echo "- 💬 [Discussions](https://github.com/jaredwolff/coapum/discussions)" >> changelog.md
 
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1

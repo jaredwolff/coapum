@@ -388,16 +388,14 @@ mod tests {
 
     use super::*;
 
-    lazy_static! {
-                // Create test DB
-                static ref OBSERVER: SledObserver = SledObserver::new("test.db");
-    }
-
     #[tokio::test]
     async fn test_sled_observer_write_and_read() {
         let _ = env_logger::try_init();
 
-        let mut observer = OBSERVER.clone();
+        // Use a temporary directory for the database to avoid leaving artifacts
+        let tempdir = tempfile::tempdir().unwrap();
+        let db_path = tempdir.path().join("sled_db");
+        let mut observer = SledObserver::new(db_path.to_str().unwrap());
 
         // Clear
         observer.clear("123").await.unwrap();
@@ -440,8 +438,10 @@ mod tests {
     async fn test_sled_observer_observe_and_write() {
         let _ = env_logger::try_init();
 
-        // Create test DB
-        let mut observer = OBSERVER.clone();
+        // Create test DB in a temporary directory
+        let tempdir = tempfile::tempdir().unwrap();
+        let db_path = tempdir.path().join("sled_db");
+        let mut observer = SledObserver::new(db_path.to_str().unwrap());
 
         // Clear before work
         observer.clear("123").await.unwrap();
