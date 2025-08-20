@@ -178,6 +178,7 @@ jobs:
           comment-on-alert: true
           alert-threshold: "200%"
           fail-on-alert: true
+          benchmark-data-dir-path: .
 
   msrv:
     name: Minimum Supported Rust Version

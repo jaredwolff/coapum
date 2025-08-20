@@ -70,6 +70,7 @@ jobs:
           alert-threshold: "150%"
           fail-on-alert: false
           summary-always: true
+          benchmark-data-dir-path: .
 
       - name: Compare PR benchmarks
         uses: benchmark-action/github-action-benchmark@v2
@@ -83,6 +84,7 @@ jobs:
           alert-threshold: "150%"
           fail-on-alert: false
           summary-always: true
+          benchmark-data-dir-path: .
 
   memory-profiling:
     name: Memory Profiling
