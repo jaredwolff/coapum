@@ -97,7 +97,7 @@ impl SenMLPack {
     pub fn has_base_values(&self) -> bool {
         if let Some(first) = self.records.first() {
             // Check if first record has base-like values
-            first.n.as_ref().map_or(false, |n| n.ends_with('/'))
+            first.n.as_ref().is_some_and(|n| n.ends_with('/'))
                 || first.t.is_some()
                 || first.u.is_some()
         } else {

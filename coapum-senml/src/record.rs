@@ -11,6 +11,7 @@ use validator::Validate;
 /// the measurement (name), its value, unit, timestamp, and other metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "validation", derive(Validate))]
+#[derive(Default)]
 pub struct SenMLRecord {
     /// Name - identifies the sensor or parameter  
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -208,22 +209,6 @@ impl SenMLRecord {
         }
 
         Ok(())
-    }
-}
-
-impl Default for SenMLRecord {
-    fn default() -> Self {
-        Self {
-            n: None,
-            u: None,
-            v: None,
-            vs: None,
-            vb: None,
-            vd: None,
-            s: None,
-            t: None,
-            ut: None,
-        }
     }
 }
 

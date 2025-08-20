@@ -208,7 +208,7 @@ mod tests {
         let mut pack = SenMLPack::new();
         for i in 0..10 {
             pack.add_record(
-                SenMLRecord::with_value(&format!("sensor{}", i), i as f64)
+                SenMLRecord::with_value(format!("sensor{}", i), i as f64)
                     .with_unit("V")
                     .with_time(i as f64),
             );

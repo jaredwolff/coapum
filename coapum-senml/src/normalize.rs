@@ -49,7 +49,7 @@ impl NormalizedPack {
 
         // Determine if we have base values by checking the first record
         let first_record = &pack.records[0];
-        let has_base_name = first_record.n.as_ref().map_or(false, |n| n.ends_with('/'));
+        let has_base_name = first_record.n.as_ref().is_some_and(|n| n.ends_with('/'));
         let has_only_base_values = !first_record.has_value() && first_record.s.is_none();
         let is_base_record = has_base_name || has_only_base_values;
 
@@ -82,7 +82,7 @@ impl NormalizedPack {
         // Don't include base records that only contain base values (like base_value=20.0)
         if is_base_record && first_record.has_value() {
             // Check if this is a pure base record (name ends with '/') with only base values
-            let is_pure_base = first_record.n.as_ref().map_or(false, |n| n.ends_with('/'));
+            let is_pure_base = first_record.n.as_ref().is_some_and(|n| n.ends_with('/'));
 
             // Only include if it's not a pure base record OR if it has sum values
             if !is_pure_base || first_record.s.is_some() {
@@ -173,18 +173,16 @@ impl NormalizedPack {
         let records: Vec<SenMLRecord> = self
             .records
             .iter()
-            .map(|nr| {
-                let mut record = SenMLRecord::default();
-                record.n = Some(nr.name.clone());
-                record.u = nr.unit.clone();
-                record.v = nr.value;
-                record.vs = nr.string_value.clone();
-                record.vb = nr.bool_value;
-                record.vd = nr.data_value.as_ref().map(|data| base64_encode(data));
-                record.s = nr.sum;
-                record.t = nr.time;
-                record.ut = nr.update_time;
-                record
+            .map(|nr| SenMLRecord {
+                n: Some(nr.name.clone()),
+                u: nr.unit.clone(),
+                v: nr.value,
+                vs: nr.string_value.clone(),
+                vb: nr.bool_value,
+                vd: nr.data_value.as_ref().map(|data| base64_encode(data)),
+                s: nr.sum,
+                t: nr.time,
+                ut: nr.update_time,
             })
             .collect();
 
@@ -264,10 +262,10 @@ impl NormalizedRecord {
             Some(SenMLValue::String(vs.clone()))
         } else if let Some(vb) = self.bool_value {
             Some(SenMLValue::Boolean(vb))
-        } else if let Some(ref vd) = self.data_value {
-            Some(SenMLValue::Data(vd.clone()))
         } else {
-            None
+            self.data_value
+                .as_ref()
+                .map(|vd| SenMLValue::Data(vd.clone()))
         }
     }
 

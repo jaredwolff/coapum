@@ -28,8 +28,8 @@ impl SenMLPack {
     /// # }
     /// ```
     pub fn to_xml(&self) -> Result<String> {
-        Err(SenMLError::SerializationError(
-            "XML serialization not yet implemented".into(),
+        Err(SenMLError::serialization(
+            "XML serialization not yet implemented",
         ))
     }
 
@@ -43,8 +43,8 @@ impl SenMLPack {
     ///
     /// A `Result` containing the parsed `SenMLPack` or a `SenMLError`
     pub fn from_xml(_xml: &str) -> Result<Self> {
-        Err(SenMLError::DeserializationError(
-            "XML deserialization not yet implemented".into(),
+        Err(SenMLError::deserialization(
+            "XML deserialization not yet implemented",
         ))
     }
 }
