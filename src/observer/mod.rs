@@ -5,6 +5,8 @@ use serde_json::{Value, map::Entry};
 use tokio::sync::mpsc::Sender;
 
 pub mod memory;
+#[cfg(feature = "redb-observer")]
+pub mod redb;
 #[cfg(feature = "sled-observer")]
 pub mod sled;
 pub mod subscriber;

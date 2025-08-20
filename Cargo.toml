@@ -14,8 +14,9 @@ categories = ["network-programming", "embedded", "api-bindings", "asynchronous"]
 readme = "README.md"
 
 [features]
-default = ["sled-observer"]
+default = []
 sled-observer = ["sled"]
+redb-observer = ["redb"]
 
 [dependencies]
 async-trait = "0.1.89"
@@ -36,6 +37,7 @@ tower = { version = "0.5.2", features = [
 
 # Optional
 sled = { version = "0.34.7", optional = true }
+redb = { version = "3.0.0", optional = true }
 
 # DTLS
 webrtc-dtls = { version = "0.12" }
@@ -48,6 +50,7 @@ coapum-senml = { version = "0.1.0", path = "./coapum-senml" }
 [dev-dependencies]
 lazy_static = { version = "1.4.0" }
 criterion = { version = "0.7.0" }
+tempfile = { version = "3.15.0" }
 
 [[bench]]
 name = "router_bench"
