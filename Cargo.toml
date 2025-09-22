@@ -39,7 +39,7 @@ sled = { version = "0.34.7", optional = true }
 
 # DTLS
 webrtc-dtls = { version = "0.12" }
-webrtc-util = { version = "0.11" }
+webrtc-util = { version = "0.12" }
 
 # SenML
 coapum-senml = { version = "0.1.0", path = "./coapum-senml" }
