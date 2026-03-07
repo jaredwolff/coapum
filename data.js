@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772910558982,
+  "lastUpdate": 1772910669903,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -179,6 +179,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1053,
             "range": "± 3",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "ee56252b8a6573c1cedffcc57caa15ea263d1713",
+          "message": "fix: bump MSRV to 1.89, fix time vulnerability, fix new clippy lints\n\n- Bump MSRV from 1.85.0 to 1.89.0 (required by redb 3.0.0)\n- Update time crate to 0.3.47 to fix RUSTSEC-2026-0009\n- Fix collapsible_if and is_multiple_of clippy lints from Rust 1.89+\n- Add contents: write permission for benchmark gh-pages push",
+          "timestamp": "2026-03-07T14:07:25-05:00",
+          "tree_id": "a014aeb69d29ac2e60da2ea76a140add9fefbec9",
+          "url": "https://github.com/jaredwolff/coapum/commit/ee56252b8a6573c1cedffcc57caa15ea263d1713"
+        },
+        "date": 1772910668902,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1063,
+            "range": "± 17",
             "unit": "ns/iter"
           }
         ]
