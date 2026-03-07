@@ -5,6 +5,7 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
   schedule:
     # Run performance tests weekly on Sundays at 2 AM UTC
     - cron: "0 2 * * 0"
@@ -38,24 +39,9 @@ jobs:
 
 
       - name: Run benchmarks
-        run: |
-          echo "🚀 Running performance benchmarks..."
-          cargo bench --all-features
-          echo "✅ Benchmarks completed"
-          
-      - name: Verify benchmark results
-        run: |
-          echo "🔍 Checking for benchmark results..."
-          echo "📁 Current directory: $(pwd)"
-          echo "📁 Listing target directory:"
-          find target -type f -name "*.json" | head -20
-          if [ -f target/criterion/coap_router/base/estimates.json ]; then
-            echo "✅ Benchmark results file found"
-            echo "📄 File contents:"
-            cat target/criterion/coap_router/base/estimates.json
-          else
-            echo "❌ Benchmark results file not found"
-          fi
+        env:
+          CARGO_TERM_COLOR: never
+        run: cargo bench --bench router_bench --all-features -- --output-format bencher | tee benchmark-output.txt
 
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
@@ -63,7 +49,7 @@ jobs:
         with:
           name: Rust Benchmark
           tool: "cargo"
-          output-file-path: target/criterion/coap_router/base/estimates.json
+          output-file-path: benchmark-output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true
@@ -78,7 +64,7 @@ jobs:
         with:
           name: Rust Benchmark
           tool: "cargo"
-          output-file-path: target/criterion/coap_router/base/estimates.json
+          output-file-path: benchmark-output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           comment-on-alert: true
           alert-threshold: "150%"
