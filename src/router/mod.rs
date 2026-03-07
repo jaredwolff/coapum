@@ -598,6 +598,11 @@ where
         }
     }
 
+    /// Returns true if the given path has a registered observe handler.
+    pub fn has_observe_route(&self, path: &str) -> bool {
+        self.lookup_observer_handler(path).is_some()
+    }
+
     /// Looks up a handler for a given request.
     pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Box<dyn ErasedHandler<S>>> {
         match self.inner.recognize(r.get_path()) {
@@ -1124,5 +1129,25 @@ mod tests {
             .build();
 
         // Test the convenience builder method
+    }
+
+    #[tokio::test]
+    async fn test_has_observe_route() {
+        async fn get_handler() -> StatusCode {
+            StatusCode::Valid
+        }
+        async fn notify_handler() -> StatusCode {
+            StatusCode::Valid
+        }
+
+        let state = TestState { counter: 0 };
+        let router = RouterBuilder::new(state, ())
+            .get("/no_observe", get_handler)
+            .observe("/with_observe", get_handler, notify_handler)
+            .build();
+
+        assert!(!router.has_observe_route("/no_observe"));
+        assert!(router.has_observe_route("/with_observe"));
+        assert!(!router.has_observe_route("/nonexistent"));
     }
 }

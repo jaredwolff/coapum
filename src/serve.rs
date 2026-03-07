@@ -312,8 +312,15 @@ where
                                         // Security: Validate path to prevent injection attacks
                                         match validate_observer_path(path) {
                                             Ok(normalized_path) => {
-                                                if let Err(e) = router.register_observer(&identity, &normalized_path, obs_tx.clone()).await {
-                                                    log::error!("Failed to register observer: {:?}", e);
+                                                if router.has_observe_route(&normalized_path) {
+                                                    if let Err(e) = router.register_observer(&identity, &normalized_path, obs_tx.clone()).await {
+                                                        log::error!("Failed to register observer: {:?}", e);
+                                                    }
+                                                } else {
+                                                    log::warn!(
+                                                        "Observer registration rejected for '{}' on '{}': no observe route",
+                                                        identity, normalized_path
+                                                    );
                                                 }
                                             }
                                             Err(e) => {
