@@ -20,11 +20,10 @@ impl Subscriptions {
     }
 
     pub fn delete_subscription(&mut self, subscriber_id: &str, device_id: &str, path: &str) {
-        if let Some(device) = self.channels.get_mut(device_id) {
-            if let Some(path) = device.get_mut(path) {
-                // Unsubscribed automatically
-                path.remove(subscriber_id);
-            }
+        if let Some(device) = self.channels.get_mut(device_id)
+            && let Some(path) = device.get_mut(path)
+        {
+            path.remove(subscriber_id);
         }
     }
 
@@ -51,14 +50,14 @@ impl Subscriptions {
     }
 
     pub fn notify_subscribers(&self, device_id: &str, path: &str, value: Value) {
-        if let Some(device_channels) = self.channels.get(device_id) {
-            if let Some(path_channels) = device_channels.get(path) {
-                log::info!("Notifying to all listening to: {}", path);
+        if let Some(device_channels) = self.channels.get(device_id)
+            && let Some(path_channels) = device_channels.get(path)
+        {
+            log::info!("Notifying to all listening to: {}", path);
 
-                for (sub, tx) in path_channels {
-                    log::info!("Sending to: {}", sub);
-                    let _ = tx.send(value.clone());
-                }
+            for (sub, tx) in path_channels {
+                log::info!("Sending to: {}", sub);
+                let _ = tx.send(value.clone());
             }
         }
     }

@@ -85,17 +85,17 @@ impl NormalizedPack {
             let is_pure_base = first_record.n.as_ref().is_some_and(|n| n.ends_with('/'));
 
             // Only include if it's not a pure base record OR if it has sum values
-            if !is_pure_base || first_record.s.is_some() {
-                if let Ok(normalized) = Self::normalize_record(
+            if (!is_pure_base || first_record.s.is_some())
+                && let Ok(normalized) = Self::normalize_record(
                     first_record,
                     "",    // No base name for base record itself
                     0.0,   // No base time
                     &None, // No base unit
                     0.0,   // No base value
                     0.0,   // No base sum
-                ) {
-                    records.insert(0, normalized);
-                }
+                )
+            {
+                records.insert(0, normalized);
             }
         }
 
@@ -306,31 +306,31 @@ impl NormalizedRecord {
         }
 
         // Validate numeric values
-        if let Some(v) = self.value {
-            if !v.is_finite() {
-                return Err(SenMLError::invalid_field_value("value", &v.to_string()));
-            }
+        if let Some(v) = self.value
+            && !v.is_finite()
+        {
+            return Err(SenMLError::invalid_field_value("value", &v.to_string()));
         }
 
-        if let Some(s) = self.sum {
-            if !s.is_finite() {
-                return Err(SenMLError::invalid_field_value("sum", &s.to_string()));
-            }
+        if let Some(s) = self.sum
+            && !s.is_finite()
+        {
+            return Err(SenMLError::invalid_field_value("sum", &s.to_string()));
         }
 
-        if let Some(t) = self.time {
-            if !t.is_finite() {
-                return Err(SenMLError::invalid_field_value("time", &t.to_string()));
-            }
+        if let Some(t) = self.time
+            && !t.is_finite()
+        {
+            return Err(SenMLError::invalid_field_value("time", &t.to_string()));
         }
 
-        if let Some(ut) = self.update_time {
-            if !ut.is_finite() || ut < 0.0 {
-                return Err(SenMLError::invalid_field_value(
-                    "update_time",
-                    &ut.to_string(),
-                ));
-            }
+        if let Some(ut) = self.update_time
+            && (!ut.is_finite() || ut < 0.0)
+        {
+            return Err(SenMLError::invalid_field_value(
+                "update_time",
+                &ut.to_string(),
+            ));
         }
 
         Ok(())

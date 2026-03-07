@@ -170,42 +170,42 @@ impl SenMLRecord {
         }
 
         // Validate time values
-        if let Some(t) = self.t {
-            if !t.is_finite() {
-                return Err(crate::SenMLError::invalid_field_value("t", &t.to_string()));
-            }
+        if let Some(t) = self.t
+            && !t.is_finite()
+        {
+            return Err(crate::SenMLError::invalid_field_value("t", &t.to_string()));
         }
 
-        if let Some(ut) = self.ut {
-            if !ut.is_finite() || ut < 0.0 {
-                return Err(crate::SenMLError::invalid_field_value(
-                    "ut",
-                    &ut.to_string(),
-                ));
-            }
+        if let Some(ut) = self.ut
+            && (!ut.is_finite() || ut < 0.0)
+        {
+            return Err(crate::SenMLError::invalid_field_value(
+                "ut",
+                &ut.to_string(),
+            ));
         }
 
         // Validate numeric values
-        if let Some(v) = self.v {
-            if !v.is_finite() {
-                return Err(crate::SenMLError::invalid_field_value("v", &v.to_string()));
-            }
+        if let Some(v) = self.v
+            && !v.is_finite()
+        {
+            return Err(crate::SenMLError::invalid_field_value("v", &v.to_string()));
         }
 
-        if let Some(s) = self.s {
-            if !s.is_finite() {
-                return Err(crate::SenMLError::invalid_field_value("s", &s.to_string()));
-            }
+        if let Some(s) = self.s
+            && !s.is_finite()
+        {
+            return Err(crate::SenMLError::invalid_field_value("s", &s.to_string()));
         }
 
         // Validate data field is valid base64
-        if let Some(ref vd) = self.vd {
-            if base64_decode(vd).is_err() {
-                return Err(crate::SenMLError::invalid_field_value(
-                    "vd",
-                    "invalid base64",
-                ));
-            }
+        if let Some(ref vd) = self.vd
+            && base64_decode(vd).is_err()
+        {
+            return Err(crate::SenMLError::invalid_field_value(
+                "vd",
+                "invalid base64",
+            ));
         }
 
         Ok(())

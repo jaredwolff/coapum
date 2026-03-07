@@ -190,7 +190,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0 # Required for Rust edition 2024 support
+          toolchain: 1.89.0
 
       - name: Cache cargo registry
         uses: actions/cache@v5

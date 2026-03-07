@@ -142,7 +142,7 @@ async fn update_system_stats(state_handle: StateUpdateHandle<AppState>) {
                 state.uptime_seconds += 1;
 
                 // Print stats every 10 seconds
-                if state.uptime_seconds % 10 == 0 {
+                if state.uptime_seconds.is_multiple_of(10) {
                     println!(
                         "System uptime: {}s, requests handled: {}",
                         state.uptime_seconds, state.request_count
@@ -278,7 +278,7 @@ mod rand {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            (now % 2) == 0
+            now.is_multiple_of(2)
         }
     }
 

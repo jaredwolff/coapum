@@ -140,22 +140,22 @@ impl SenMLPack {
 
         // Validate base values if present
         let base = self.base_values();
-        if let Some(bt) = base.bt {
-            if !bt.is_finite() {
-                return Err(SenMLError::invalid_field_value("bt", &bt.to_string()));
-            }
+        if let Some(bt) = base.bt
+            && !bt.is_finite()
+        {
+            return Err(SenMLError::invalid_field_value("bt", &bt.to_string()));
         }
 
-        if let Some(bv) = base.bv {
-            if !bv.is_finite() {
-                return Err(SenMLError::invalid_field_value("bv", &bv.to_string()));
-            }
+        if let Some(bv) = base.bv
+            && !bv.is_finite()
+        {
+            return Err(SenMLError::invalid_field_value("bv", &bv.to_string()));
         }
 
-        if let Some(bs) = base.bs {
-            if !bs.is_finite() {
-                return Err(SenMLError::invalid_field_value("bs", &bs.to_string()));
-            }
+        if let Some(bs) = base.bs
+            && !bs.is_finite()
+        {
+            return Err(SenMLError::invalid_field_value("bs", &bs.to_string()));
         }
 
         Ok(())

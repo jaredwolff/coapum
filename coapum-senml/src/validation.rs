@@ -135,29 +135,29 @@ impl PackValidator {
         record.validate()?;
 
         // Strict name validation
-        if self.strict_names {
-            if let Some(ref name) = record.n {
-                self.validate_name(name)?;
-            }
+        if self.strict_names
+            && let Some(ref name) = record.n
+        {
+            self.validate_name(name)?;
         }
 
         // Unit requirements
-        if let Some(ref name) = record.n {
-            if let Some(required_unit) = self.required_units.get(name) {
-                match &record.u {
-                    Some(unit) if unit == required_unit => {} // OK
-                    Some(unit) => {
-                        return Err(SenMLError::validation(format!(
-                            "Measurement '{}' requires unit '{}', got '{}'",
-                            name, required_unit, unit
-                        )));
-                    }
-                    None => {
-                        return Err(SenMLError::validation(format!(
-                            "Measurement '{}' requires unit '{}'",
-                            name, required_unit
-                        )));
-                    }
+        if let Some(ref name) = record.n
+            && let Some(required_unit) = self.required_units.get(name)
+        {
+            match &record.u {
+                Some(unit) if unit == required_unit => {} // OK
+                Some(unit) => {
+                    return Err(SenMLError::validation(format!(
+                        "Measurement '{}' requires unit '{}', got '{}'",
+                        name, required_unit, unit
+                    )));
+                }
+                None => {
+                    return Err(SenMLError::validation(format!(
+                        "Measurement '{}' requires unit '{}'",
+                        name, required_unit
+                    )));
                 }
             }
         }
@@ -318,36 +318,38 @@ impl PackValidator {
     /// Validate IEEE double-precision compliance
     fn validate_ieee_compliance(&self, record: &SenMLRecord) -> Result<()> {
         // Check all numeric fields are valid IEEE 754 double-precision
-        if let Some(v) = record.v {
-            if !v.is_finite() && !v.is_nan() {
-                return Err(SenMLError::validation(
-                    "Numeric values must be finite or NaN (IEEE 754)",
-                ));
-            }
+        if let Some(v) = record.v
+            && !v.is_finite()
+            && !v.is_nan()
+        {
+            return Err(SenMLError::validation(
+                "Numeric values must be finite or NaN (IEEE 754)",
+            ));
         }
 
-        if let Some(s) = record.s {
-            if !s.is_finite() && !s.is_nan() {
-                return Err(SenMLError::validation(
-                    "Sum values must be finite or NaN (IEEE 754)",
-                ));
-            }
+        if let Some(s) = record.s
+            && !s.is_finite()
+            && !s.is_nan()
+        {
+            return Err(SenMLError::validation(
+                "Sum values must be finite or NaN (IEEE 754)",
+            ));
         }
 
-        if let Some(t) = record.t {
-            if !t.is_finite() {
-                return Err(SenMLError::validation(
-                    "Time values must be finite (IEEE 754)",
-                ));
-            }
+        if let Some(t) = record.t
+            && !t.is_finite()
+        {
+            return Err(SenMLError::validation(
+                "Time values must be finite (IEEE 754)",
+            ));
         }
 
-        if let Some(ut) = record.ut {
-            if !ut.is_finite() || ut < 0.0 {
-                return Err(SenMLError::validation(
-                    "Update time must be finite and non-negative",
-                ));
-            }
+        if let Some(ut) = record.ut
+            && (!ut.is_finite() || ut < 0.0)
+        {
+            return Err(SenMLError::validation(
+                "Update time must be finite and non-negative",
+            ));
         }
 
         Ok(())
