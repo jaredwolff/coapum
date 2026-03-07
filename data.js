@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772910145468,
+  "lastUpdate": 1772910351665,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -119,6 +119,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1056,
             "range": "± 13",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "a769d35ffa8d4c6590177fec8810efd3717211e8",
+          "message": "fix(ci): only capture stdout for benchmark output\n\nStderr contains compilation logs that pollute the benchmark output\nfile and prevent benchmark-action from parsing results.",
+          "timestamp": "2026-03-07T14:00:47-05:00",
+          "tree_id": "758e2a8b6c8edd566b6b0ab089b2bd19db22d6af",
+          "url": "https://github.com/jaredwolff/coapum/commit/a769d35ffa8d4c6590177fec8810efd3717211e8"
+        },
+        "date": 1772910351343,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1051,
+            "range": "± 34",
             "unit": "ns/iter"
           }
         ]
