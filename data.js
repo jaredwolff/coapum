@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772910669903,
+  "lastUpdate": 1772915862194,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -241,6 +241,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1145,
             "range": "± 5",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "f78fa365697e3a895f3ee7cddcebb699f7017b99",
+          "message": "fix(ci): remove broken performance workflow placeholder jobs\n\nRemove memory-profiling, load-test, resource-usage, and\nperformance-summary jobs that all tried to run DTLS examples\nwithout PSK configuration, causing timeouts in CI. Keep only\nthe working benchmark job.",
+          "timestamp": "2026-03-07T15:36:42-05:00",
+          "tree_id": "799ae5d416168421230da62d5135ae276a8f13d1",
+          "url": "https://github.com/jaredwolff/coapum/commit/f78fa365697e3a895f3ee7cddcebb699f7017b99"
+        },
+        "date": 1772915861563,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1097,
+            "range": "± 10",
             "unit": "ns/iter"
           }
         ]
