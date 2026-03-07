@@ -1,11 +1,11 @@
 [package]
 name = "coapum"
 version = "0.2.0"
-edition = "2024"
-rust-version = "1.85.0"
+edition.workspace = true
+rust-version.workspace = true
 authors = ["Jared Wolff <jared@jaredwolff.com>"]
 description = "A modern, ergonomic CoAP (Constrained Application Protocol) library for Rust with support for DTLS, observers, and asynchronous handlers"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 repository = "https://github.com/jaredwolff/coapum"
 documentation = "https://docs.rs/coapum"
 homepage = "https://github.com/jaredwolff/coapum"
@@ -20,15 +20,15 @@ redb-observer = ["redb"]
 
 [dependencies]
 async-trait = "0.1.89"
-ciborium = "0.2.2"
+ciborium = { workspace = true }
 coap-lite = "0.13.3"
 env_logger = "0.11.8"
-futures = "0.3.31"
-log = "0.4.27"
+futures = { workspace = true }
+log = { workspace = true }
 route-recognizer = "0.3.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.142"
-tokio = { version = "1.47.1", features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 tower = { version = "0.5.2", features = [
     "tokio",
     "tokio-stream",
@@ -44,14 +44,39 @@ webrtc-dtls = { version = "0.12" }
 webrtc-util = { version = "0.11" }
 
 # SenML
-coapum-senml = { version = "0.1.0", path = "./coapum-senml" }
+coapum-senml = { path = "./coapum-senml" }
 
 
 [dev-dependencies]
-lazy_static = { version = "1.4.0" }
-criterion = { version = "0.7.0" }
-tempfile = { version = "3.15.0" }
+lazy_static = { workspace = true }
+criterion = { workspace = true }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "router_bench"
 harness = false
+
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "coapum-senml",
+]
+
+# Centralize common dependency versions across workspace members.
+[workspace.dependencies]
+serde = { version = "1.0" }
+serde_json = { version = "1.0" }
+ciborium = { version = "0.2" }
+tokio = { version = "1.47.1" }
+futures = { version = "0.3.31" }
+log = { version = "0.4.27" }
+criterion = { version = "0.7.0" }
+lazy_static = { version = "1.4.0" }
+tempfile = { version = "3.15.0" }
+tokio-test = { version = "0.4" }
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"

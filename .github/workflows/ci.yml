@@ -42,11 +42,11 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.rust }}-
             ${{ runner.os }}-cargo-
 
-      - name: Run tests
-        run: cargo test --verbose ${{ matrix.features }}
+      - name: Run tests (workspace)
+        run: cargo test --workspace --verbose ${{ matrix.features }}
 
-      - name: Run doctests
-        run: cargo test --doc ${{ matrix.features }}
+      - name: Run doctests (workspace)
+        run: cargo test --workspace --doc ${{ matrix.features }}
 
   fmt:
     name: Rustfmt
@@ -84,8 +84,8 @@ jobs:
             target
           key: ${{ runner.os }}-clippy-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run cargo clippy (workspace)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   security:
     name: Security Audit
@@ -128,11 +128,11 @@ jobs:
       - name: Install grcov
         run: cargo install grcov
 
-      - name: Generate coverage data
+      - name: Generate coverage data (workspace)
         run: |
           CARGO_INCREMENTAL=0 RUSTFLAGS='-Cinstrument-coverage' \
           LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw' \
-          cargo test --all-features
+          cargo test --workspace --all-features
 
       - name: Generate coverage report
         run: |
@@ -201,8 +201,8 @@ jobs:
             target
           key: ${{ runner.os }}-msrv-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Check with MSRV
-        run: cargo check --all-features
+      - name: Check with MSRV (workspace)
+        run: cargo check --workspace --all-features
 
   docs:
     name: Documentation
@@ -223,8 +223,8 @@ jobs:
             target
           key: ${{ runner.os }}-docs-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build documentation
-        run: cargo doc --all-features --no-deps
+      - name: Build documentation (workspace)
+        run: cargo doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
 

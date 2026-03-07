@@ -2,9 +2,9 @@ name: Performance
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
   schedule:
     # Run performance tests weekly on Sundays at 2 AM UTC
     - cron: "0 2 * * 0"
@@ -58,8 +58,8 @@ jobs:
           fi
 
       - name: Store benchmark results
-        uses: benchmark-action/github-action-benchmark@v2
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: benchmark-action/github-action-benchmark@v1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         with:
           name: Rust Benchmark
           tool: "cargo"
@@ -73,7 +73,7 @@ jobs:
           benchmark-data-dir-path: .
 
       - name: Compare PR benchmarks
-        uses: benchmark-action/github-action-benchmark@v2
+        uses: benchmark-action/github-action-benchmark@v1
         if: github.event_name == 'pull_request'
         with:
           name: Rust Benchmark
@@ -149,7 +149,7 @@ jobs:
   load-test:
     name: Load Testing
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     steps:
       - name: Checkout sources
         uses: actions/checkout@v5

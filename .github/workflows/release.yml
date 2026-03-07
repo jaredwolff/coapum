@@ -48,27 +48,27 @@ jobs:
             exit 1
           fi
 
-      - name: Check Cargo.toml version matches
+      - name: Check Cargo.toml version matches (root package)
         run: |
           VERSION_NUMBER="${{ steps.get_version.outputs.version_number }}"
-          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="coapum") | .version')
           if [[ "$VERSION_NUMBER" != "$CARGO_VERSION" ]]; then
             echo "Version mismatch: tag=$VERSION_NUMBER, Cargo.toml=$CARGO_VERSION"
             echo "Please update Cargo.toml version to match the tag"
             exit 1
           fi
 
-      - name: Run full test suite
-        run: cargo test --all-features --verbose
+      - name: Run full test suite (workspace)
+        run: cargo test --workspace --all-features --verbose
 
       - name: Check examples compile
         run: |
           cargo check --examples --all-features
           echo "✅ All examples compile successfully"
 
-      - name: Check documentation builds
+      - name: Check documentation builds (workspace)
         run: |
-          cargo doc --all-features --no-deps
+          cargo doc --workspace --all-features --no-deps
           echo "✅ Documentation builds successfully"
 
       - name: Validate package can be published

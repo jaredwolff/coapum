@@ -25,7 +25,7 @@ use self::wrapper::{RequestTypeWrapper, RouteHandler};
 
 pub mod wrapper;
 
-pub type RouterError = Box<(dyn std::error::Error + Send + Sync + 'static)>;
+pub type RouterError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 /// Type alias for complex state update function type
 type StateUpdateFn<S> = Box<dyn FnOnce(&mut S) + Send + 'static>;
