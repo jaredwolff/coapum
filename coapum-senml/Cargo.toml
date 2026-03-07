@@ -20,17 +20,17 @@ validation = ["validator"]
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-thiserror = "1.0"
+thiserror = "2.0"
 time = { version = "0.3", features = ["serde", "parsing", "formatting"] }
 
 # Optional serialization formats
 serde_json = { workspace = true, optional = true }
 ciborium = { workspace = true, optional = true }
-quick-xml = { version = "0.31", optional = true }
-serde-xml-rs = { version = "0.6", optional = true }
+quick-xml = { version = "0.39", optional = true }
+serde-xml-rs = { version = "0.8", optional = true }
 
 # Optional validation
-validator = { version = "0.16", optional = true, features = ["derive"] }
+validator = { version = "0.20", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

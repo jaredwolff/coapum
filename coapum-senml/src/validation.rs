@@ -100,13 +100,16 @@ impl PackValidator {
 
     /// Validate a SenML pack with these settings
     pub fn validate_pack(&self, pack: &SenMLPack) -> Result<()> {
-        // Basic validation first
-        pack.validate()?;
-
-        // Check empty pack rule
-        if !self.allow_empty && pack.is_empty() {
-            return Err(SenMLError::validation("Empty pack not allowed"));
+        // Check empty pack rule before basic validation (which rejects empty packs)
+        if pack.is_empty() {
+            if !self.allow_empty {
+                return Err(SenMLError::validation("Empty pack not allowed"));
+            }
+            return Ok(());
         }
+
+        // Basic validation
+        pack.validate()?;
 
         // RFC 8428 strict compliance checks
         if self.rfc_strict {
@@ -571,7 +574,7 @@ mod tests {
 
         assert!(utils::is_reasonable_timestamp(now));
         assert!(utils::is_reasonable_timestamp(now - 3600.0)); // 1 hour ago
-        assert!(!utils::is_reasonable_timestamp(0.0)); // Too old
+        assert!(!utils::is_reasonable_timestamp(-5_000_000_000.0)); // ~1811, well outside 100-year window
         assert!(!utils::is_reasonable_timestamp(
             now + 365.25 * 24.0 * 3600.0 * 50.0
         )); // 50 years future

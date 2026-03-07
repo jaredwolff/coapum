@@ -23,14 +23,14 @@ test-utils = []
 async-trait = "0.1.89"
 ciborium = { workspace = true }
 coap-lite = "0.13.3"
-env_logger = "0.11.8"
+env_logger = "0.11.9"
 futures = { workspace = true }
 log = { workspace = true }
 route-recognizer = "0.3.1"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-tower = { version = "0.5.2", features = [
+tower = { version = "0.5.3", features = [
     "tokio",
     "tokio-stream",
     "tokio-util",
@@ -70,12 +70,12 @@ members = [
 serde = { version = "1.0" }
 serde_json = { version = "1.0" }
 ciborium = { version = "0.2" }
-tokio = { version = "1.47.1" }
-futures = { version = "0.3.31" }
-log = { version = "0.4.27" }
+tokio = { version = "1.50.0" }
+futures = { version = "0.3.32" }
+log = { version = "0.4.29" }
 criterion = { version = "0.7.0" }
-lazy_static = { version = "1.4.0" }
-tempfile = { version = "3.15.0" }
+lazy_static = { version = "1.5.0" }
+tempfile = { version = "3.26.0" }
 tokio-test = { version = "0.4" }
 
 [workspace.package]
