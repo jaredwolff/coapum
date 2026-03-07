@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772909617979,
+  "lastUpdate": 1772909851306,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -59,6 +59,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1123,
             "range": "± 2",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "ee46ea86a0d88b7766413ef3755fbd98fa96e80e",
+          "message": "fix(ci): use cargo bench stdout for benchmark-action\n\nThe benchmark-action tool: \"cargo\" expects captured stdout from\ncargo bench, not Criterion's estimates.json file.",
+          "timestamp": "2026-03-07T13:55:28-05:00",
+          "tree_id": "8de232382cfea9b0dff3a0db1092d116502f903a",
+          "url": "https://github.com/jaredwolff/coapum/commit/ee46ea86a0d88b7766413ef3755fbd98fa96e80e"
+        },
+        "date": 1772909850981,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1056,
+            "range": "± 4",
             "unit": "ns/iter"
           }
         ]
