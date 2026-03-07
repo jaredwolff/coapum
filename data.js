@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772910351665,
+  "lastUpdate": 1772910459549,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -149,6 +149,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1051,
             "range": "± 34",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "36fba78b356fc48141a7a1965e900bf4e96a2222",
+          "message": "fix(ci): fix benchmark workflow for benchmark-action compatibility\n\n- Use --output-format bencher for Criterion output (required by\n  benchmark-action tool: \"cargo\")\n- Only capture stdout to avoid compilation logs in output file\n- Add workflow_dispatch trigger for manual runs",
+          "timestamp": "2026-03-07T14:01:19-05:00",
+          "tree_id": "758e2a8b6c8edd566b6b0ab089b2bd19db22d6af",
+          "url": "https://github.com/jaredwolff/coapum/commit/36fba78b356fc48141a7a1965e900bf4e96a2222"
+        },
+        "date": 1772910458647,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1053,
+            "range": "± 3",
             "unit": "ns/iter"
           }
         ]
