@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772909851306,
+  "lastUpdate": 1772910145468,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -89,6 +89,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1056,
             "range": "± 4",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "4b79bd7a2fcc8a82eb51a8adfb4122421fa74902",
+          "message": "fix(ci): use bencher output format for benchmark-action compatibility\n\nCriterion's default output isn't parsed by benchmark-action tool:\n\"cargo\". Use --output-format bencher to produce the expected format.\nDisable CARGO_TERM_COLOR to avoid ANSI codes in output file.",
+          "timestamp": "2026-03-07T14:00:19-05:00",
+          "tree_id": "b5410b3e22b491661d2892638edcfd8bdb17d0d1",
+          "url": "https://github.com/jaredwolff/coapum/commit/4b79bd7a2fcc8a82eb51a8adfb4122421fa74902"
+        },
+        "date": 1772910144863,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1056,
+            "range": "± 13",
             "unit": "ns/iter"
           }
         ]
