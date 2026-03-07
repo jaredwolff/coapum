@@ -37,6 +37,7 @@ pub enum SledObserverError {
     SledError(sled::Error),
     JsonError(serde_json::Error),
     IdNotSet,
+    TaskJoinError(String),
 }
 
 impl fmt::Display for SledObserverError {
@@ -45,6 +46,7 @@ impl fmt::Display for SledObserverError {
             SledObserverError::SledError(err) => write!(f, "Sled error: {}", err),
             SledObserverError::JsonError(err) => write!(f, "JSON error: {}", err),
             SledObserverError::IdNotSet => write!(f, "Device ID must be set before use!"),
+            SledObserverError::TaskJoinError(msg) => write!(f, "Task join error: {}", msg),
         }
     }
 }
@@ -55,7 +57,14 @@ impl std::error::Error for SledObserverError {
             SledObserverError::SledError(err) => Some(err),
             SledObserverError::JsonError(err) => Some(err),
             SledObserverError::IdNotSet => None,
+            SledObserverError::TaskJoinError(_) => None,
         }
+    }
+}
+
+impl From<tokio::task::JoinError> for SledObserverError {
+    fn from(err: tokio::task::JoinError) -> SledObserverError {
+        SledObserverError::TaskJoinError(err.to_string())
     }
 }
 
@@ -233,35 +242,41 @@ impl Observer for SledObserver {
 
         log::debug!("New value: {:?} for path: {}", new_value, path);
 
-        let mut current_value = Value::Null;
+        // Phase 1: Read existing value and merge (blocking DB read)
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        let nv = new_value.clone();
+        let (value, current_value) = tokio::task::spawn_blocking(move || {
+            let mut current_value = Value::Null;
+            let value = if let Ok(Some(stored_value)) = db.get(did.as_bytes()) {
+                let stored_value: Result<Value, _> = serde_json::from_slice(&stored_value);
 
-        // Check if we have a value and update the pointer
-        let value = if let Ok(Some(stored_value)) = self.db.get(device_id) {
-            let stored_value: Result<Value, _> = serde_json::from_slice(&stored_value);
+                match stored_value {
+                    Ok(stored_value) => {
+                        current_value = stored_value.clone();
 
-            match stored_value {
-                Ok(stored_value) => {
-                    current_value = stored_value.clone();
+                        // Create merged path
+                        let mut merged_value = stored_value;
 
-                    // Create merged path
-                    let mut merged_value = stored_value;
+                        // Perform merge
+                        super::merge_json(&mut merged_value, &nv);
 
-                    // Perform merge
-                    super::merge_json(&mut merged_value, &new_value);
+                        log::debug!("Merged value: {:?}", merged_value);
 
-                    log::debug!("Merged value: {:?}", merged_value);
-
-                    // Return merged result
-                    merged_value
+                        // Return merged result
+                        merged_value
+                    }
+                    Err(e) => {
+                        log::warn!("Unable to serialize. Err: {}", e);
+                        nv
+                    }
                 }
-                Err(e) => {
-                    log::warn!("Unable to serialize. Err: {}", e);
-                    new_value
-                }
-            }
-        } else {
-            new_value
-        };
+            } else {
+                nv
+            };
+            (value, current_value)
+        })
+        .await?;
 
         // Only check observers for this specific device
         let channels = self.channels.read().await;
@@ -334,9 +349,12 @@ impl Observer for SledObserver {
 
         log::debug!("Value to write: {:?}", value);
 
-        // Then write it back
-        match serde_json::to_vec(&value) {
-            Ok(v) => match self.db.insert(device_id, v) {
+        // Phase 3: Write merged value back (blocking DB write)
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        let val = value.clone();
+        tokio::task::spawn_blocking(move || match serde_json::to_vec(&val) {
+            Ok(v) => match db.insert(did.as_bytes(), v) {
                 Ok(v) => {
                     log::debug!("Value set: {:?}", v);
                 }
@@ -345,35 +363,48 @@ impl Observer for SledObserver {
                 }
             },
             Err(e) => log::warn!("Unable to convert payload to bytes. Err: {}", e),
-        };
+        })
+        .await?;
 
         Ok(())
     }
 
     async fn read(&mut self, device_id: &str, path: &str) -> Result<Option<Value>, Self::Error> {
-        match self.db.get(device_id) {
-            Ok(Some(value)) => {
-                let value: Value = serde_json::from_slice(&value)?;
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        let p = path.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<Value>, SledObserverError> {
+            match db.get(did.as_bytes()) {
+                Ok(Some(value)) => {
+                    let value: Value = serde_json::from_slice(&value)?;
 
-                log::debug!("Got value: {:?}", value);
+                    log::debug!("Got value: {:?}", value);
 
-                // Get the value ad the indicated path
-                let pointer_value = value.pointer(path).cloned();
+                    // Get the value at the indicated path
+                    let pointer_value = value.pointer(&p).cloned();
 
-                log::debug!("Pointer value: {:?}", pointer_value);
+                    log::debug!("Pointer value: {:?}", pointer_value);
 
-                Ok(pointer_value)
+                    Ok(pointer_value)
+                }
+                Ok(None) => Ok(None),
+                Err(e) => {
+                    log::error!("Error reading from sled: {}", e);
+                    Err(e.into())
+                }
             }
-            Ok(None) => Ok(None),
-            Err(e) => {
-                log::error!("Error reading from sled: {}", e);
-                Err(e.into())
-            }
-        }
+        })
+        .await?
     }
 
     async fn clear(&mut self, device_id: &str) -> Result<(), Self::Error> {
-        let _ = self.db.remove(device_id);
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let _ = db.remove(did.as_bytes());
+        })
+        .await
+        .map_err(SledObserverError::from)?;
 
         Ok(())
     }

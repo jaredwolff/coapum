@@ -99,6 +99,7 @@ pub enum RedbObserverError {
     JsonError(serde_json::Error),
     SecurityError(String),
     IdNotSet,
+    TaskJoinError(String),
 }
 
 impl fmt::Display for RedbObserverError {
@@ -112,6 +113,7 @@ impl fmt::Display for RedbObserverError {
             RedbObserverError::JsonError(err) => write!(f, "JSON error: {}", err),
             RedbObserverError::SecurityError(msg) => write!(f, "Security error: {}", msg),
             RedbObserverError::IdNotSet => write!(f, "Device ID must be set before use"),
+            RedbObserverError::TaskJoinError(msg) => write!(f, "Task join error: {}", msg),
         }
     }
 }
@@ -127,7 +129,14 @@ impl std::error::Error for RedbObserverError {
             RedbObserverError::JsonError(err) => Some(err),
             RedbObserverError::SecurityError(_) => None,
             RedbObserverError::IdNotSet => None,
+            RedbObserverError::TaskJoinError(_) => None,
         }
+    }
+}
+
+impl From<tokio::task::JoinError> for RedbObserverError {
+    fn from(err: tokio::task::JoinError) -> RedbObserverError {
+        RedbObserverError::TaskJoinError(err.to_string())
     }
 }
 
@@ -284,41 +293,48 @@ impl Observer for RedbObserver {
 
         log::debug!("New value: {:?} for path: {}", new_value, path);
 
-        let mut current_value = Value::Null;
+        // Phase 1: Read existing value and merge (blocking DB read)
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        let nv = new_value.clone();
+        let (value, current_value) =
+            tokio::task::spawn_blocking(move || -> Result<(Value, Value), RedbObserverError> {
+                let mut current_value = Value::Null;
+                let value = {
+                    let read_txn = db.begin_read()?;
+                    let table = read_txn.open_table(DATA_TABLE)?;
 
-        // Check if we have a value and update the pointer
-        let value = {
-            let read_txn = self.db.begin_read()?;
-            let table = read_txn.open_table(DATA_TABLE)?;
+                    if let Some(stored_value) = table.get(did.as_str())? {
+                        let stored_str = stored_value.value();
+                        let stored_value: Result<Value, _> = serde_json::from_str(stored_str);
 
-            if let Some(stored_value) = table.get(device_id)? {
-                let stored_str = stored_value.value();
-                let stored_value: Result<Value, _> = serde_json::from_str(stored_str);
+                        match stored_value {
+                            Ok(stored_value) => {
+                                current_value = stored_value.clone();
 
-                match stored_value {
-                    Ok(stored_value) => {
-                        current_value = stored_value.clone();
+                                // Create merged path
+                                let mut merged_value = stored_value;
 
-                        // Create merged path
-                        let mut merged_value = stored_value;
+                                // Perform merge
+                                super::merge_json(&mut merged_value, &nv);
 
-                        // Perform merge
-                        super::merge_json(&mut merged_value, &new_value);
+                                log::debug!("Merged value: {:?}", merged_value);
 
-                        log::debug!("Merged value: {:?}", merged_value);
-
-                        // Return merged result
-                        merged_value
+                                // Return merged result
+                                merged_value
+                            }
+                            Err(e) => {
+                                log::warn!("Unable to deserialize. Err: {}", e);
+                                nv
+                            }
+                        }
+                    } else {
+                        nv
                     }
-                    Err(e) => {
-                        log::warn!("Unable to deserialize. Err: {}", e);
-                        new_value
-                    }
-                }
-            } else {
-                new_value
-            }
-        };
+                };
+                Ok((value, current_value))
+            })
+            .await??;
 
         // Only check observers for this specific device
         let channels = self.channels.read().await;
@@ -392,52 +408,68 @@ impl Observer for RedbObserver {
 
         log::debug!("Value to write: {:?}", value);
 
-        // Then write it back
+        // Phase 3: Write merged value back (blocking DB write)
+        let db = self.db.clone();
+        let did = device_id.to_string();
         let value_str = serde_json::to_string(&value)?;
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(DATA_TABLE)?;
-            table.insert(device_id, value_str.as_str())?;
-        }
-        write_txn.commit()?;
-
-        log::debug!("Value successfully written to redb");
+        tokio::task::spawn_blocking(move || -> Result<(), RedbObserverError> {
+            let write_txn = db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(DATA_TABLE)?;
+                table.insert(did.as_str(), value_str.as_str())?;
+            }
+            write_txn.commit()?;
+            log::debug!("Value successfully written to redb");
+            Ok(())
+        })
+        .await??;
 
         Ok(())
     }
 
     async fn read(&mut self, device_id: &str, path: &str) -> Result<Option<Value>, Self::Error> {
-        // Validate path for security
+        // Validate path for security (not blocking, do before spawning)
         let validated_path = validate_json_pointer_path(path)?;
 
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(DATA_TABLE)?;
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<Value>, RedbObserverError> {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(DATA_TABLE)?;
 
-        match table.get(device_id)? {
-            Some(value) => {
-                let value_str = value.value();
-                let value: Value = serde_json::from_str(value_str)?;
+            match table.get(did.as_str())? {
+                Some(value) => {
+                    let value_str = value.value();
+                    let value: Value = serde_json::from_str(value_str)?;
 
-                log::debug!("Got value for validated path");
+                    log::debug!("Got value for validated path");
 
-                // Get the value at the indicated path
-                let pointer_value = value.pointer(&validated_path).cloned();
+                    // Get the value at the indicated path
+                    let pointer_value = value.pointer(&validated_path).cloned();
 
-                log::debug!("Pointer value: {:?}", pointer_value);
+                    log::debug!("Pointer value: {:?}", pointer_value);
 
-                Ok(pointer_value)
+                    Ok(pointer_value)
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
-        }
+        })
+        .await?
     }
 
     async fn clear(&mut self, device_id: &str) -> Result<(), Self::Error> {
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(DATA_TABLE)?;
-            table.remove(device_id)?;
-        }
-        write_txn.commit()?;
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<(), RedbObserverError> {
+            let write_txn = db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(DATA_TABLE)?;
+                table.remove(did.as_str())?;
+            }
+            write_txn.commit()?;
+            Ok(())
+        })
+        .await??;
 
         Ok(())
     }
