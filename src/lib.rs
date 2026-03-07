@@ -9,6 +9,7 @@ pub mod serve;
 #[cfg(test)]
 mod tests;
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
 // Re-export commonly used types from the ergonomic API

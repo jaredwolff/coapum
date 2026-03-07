@@ -422,6 +422,7 @@ dependencies = [
  "async-trait",
  "ciborium",
  "coap-lite",
+ "coapum",
  "coapum-senml",
  "criterion",
  "env_logger",

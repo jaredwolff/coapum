@@ -105,7 +105,7 @@ impl From<StatusCode> for ResponseType {
             StatusCode::MethodNotAllowed => ResponseType::MethodNotAllowed,
             StatusCode::NotAcceptable => ResponseType::NotAcceptable,
             StatusCode::RequestEntityIncomplete => ResponseType::RequestEntityIncomplete,
-            StatusCode::ConflictingResource => ResponseType::PreconditionFailed,
+            StatusCode::ConflictingResource => ResponseType::Conflict,
             StatusCode::PreconditionFailed => ResponseType::PreconditionFailed,
             StatusCode::RequestEntityTooLarge => ResponseType::RequestEntityTooLarge,
             StatusCode::UnsupportedContentFormat => ResponseType::UnsupportedContentFormat,

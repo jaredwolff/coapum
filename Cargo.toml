@@ -17,6 +17,7 @@ readme = "README.md"
 default = []
 sled-observer = ["sled"]
 redb-observer = ["redb"]
+test-utils = []
 
 [dependencies]
 async-trait = "0.1.89"
@@ -51,6 +52,7 @@ coapum-senml = { path = "./coapum-senml" }
 lazy_static = { workspace = true }
 criterion = { workspace = true }
 tempfile = { workspace = true }
+coapum = { path = ".", features = ["test-utils"] }
 
 [[bench]]
 name = "router_bench"
