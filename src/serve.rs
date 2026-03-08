@@ -14,7 +14,7 @@ use tower::Service;
 use webrtc_dtls::{Error, conn::DTLSConn, listener};
 use webrtc_util::conn::Listener;
 
-use coap_lite::{CoapRequest, ObserveOption, Packet, RequestType, ResponseType};
+use coap_lite::{CoapRequest, MessageType, ObserveOption, Packet, RequestType, ResponseType};
 
 use crate::{
     config::Config,
@@ -181,6 +181,11 @@ where
                 let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
                 let obs_tx = Arc::new(obs_tx);
 
+                // RFC 7641: Per-connection observe state
+                let mut observe_sequence: u32 = 0;
+                let mut notification_msg_ids: HashMap<u16, String> = HashMap::new();
+                let mut next_msg_id: u16 = 1;
+
                 // Security: Validate connection and implement rate limiting
                 {
                     let mut connections_guard = cons.lock().await;
@@ -243,12 +248,14 @@ where
 
                                 log::info!("Got notification: {:?}", value);
 
+                                let notification_path = value.path.clone();
+
                                 // Convert to request
                                 let req = value.to_request(socket_addr);
 
                                 // Formulate request from Value (i.e. create JSON payload)
                                 match router.call(req).await{
-                                    Ok(resp)=> {
+                                    Ok(mut resp)=> {
 
                                         // Check to make sure we don't send error messages since this is server internal
                                         if *resp.get_status() == ResponseType::BadRequest {
@@ -256,8 +263,31 @@ where
                                             continue;
                                         }
 
+                                        // RFC 7641 §3.3: Set observe sequence number
+                                        observe_sequence = observe_sequence.wrapping_add(1);
+                                        resp.message.set_observe_value(observe_sequence);
+
+                                        // Set message type to Non-Confirmable for notifications
+                                        resp.message.header.set_type(MessageType::NonConfirmable);
+
+                                        // Assign unique message ID for RST tracking
+                                        let msg_id = next_msg_id;
+                                        next_msg_id = next_msg_id.wrapping_add(1);
+                                        resp.message.header.message_id = msg_id;
+
+                                        // Track message_id -> path for RST deregistration
+                                        notification_msg_ids.insert(msg_id, notification_path);
+
+                                        // Bound tracking map to prevent unbounded growth
+                                        if notification_msg_ids.len() > 256 {
+                                            let cutoff = msg_id.wrapping_sub(128);
+                                            notification_msg_ids.retain(|&id, _| {
+                                                id.wrapping_sub(cutoff) < 256
+                                            });
+                                        }
+
                                         // Then send..
-                                        log::info!("Sending data to: {}", socket_addr);
+                                        log::info!("Sending notification (seq={}) to: {}", observe_sequence, socket_addr);
                                         match resp.message.to_bytes() {
                                             Ok(bytes) => match conn.send(&bytes).await {
                                             Ok(n) => log::debug!("Wrote {} notification bytes", n),
@@ -294,6 +324,18 @@ where
                                         continue;
                                     }
                                 };
+                                // RFC 7641 §3.2: RST deregisters observer
+                                if packet.header.get_type() == MessageType::Reset {
+                                    if let Some(path) = notification_msg_ids.remove(&packet.header.message_id) {
+                                        log::info!(
+                                            "RST deregistration for '{}' path '{}'",
+                                            identity, path
+                                        );
+                                        let _ = router.unregister_observer(&identity, &path).await;
+                                    }
+                                    continue;
+                                }
+
                                 let request = CoapRequest::from_packet(packet, socket_addr);
 
                                 // Convert to wrapper
@@ -350,7 +392,16 @@ where
                                 // Call the service
                                 match router.call(request).await
                                 {
-                                    Ok(resp) => {
+                                    Ok(mut resp) => {
+                                      // RFC 7641 §3.1: Include observe option in registration response
+                                      if observe_flag == Some(ObserveOption::Register)
+                                          && method == RequestType::Get
+                                          && !resp.get_status().is_error()
+                                      {
+                                          observe_sequence = observe_sequence.wrapping_add(1);
+                                          resp.message.set_observe_value(observe_sequence);
+                                      }
+
                                       // Get the response
                                       let bytes = match resp.message.to_bytes() {
                                           Ok(b) => b,
