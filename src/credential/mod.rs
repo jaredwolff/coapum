@@ -7,8 +7,8 @@
 //! # Sync PSK Lookup
 //!
 //! The DTLS handshake requires synchronous PSK lookup via [`CredentialStore::lookup_psk`].
-//! Implementations using async backends should maintain an internal sync cache
-//! or use `tokio::runtime::Handle::current().block_on()`.
+//! Implementations using async backends should maintain an internal sync cache.
+//! See the `lookup_psk` documentation for safe patterns.
 
 pub mod memory;
 
@@ -77,8 +77,18 @@ pub trait CredentialStore: Clone + Debug + Send + Sync + 'static {
 
     /// Synchronous PSK lookup — called from the DTLS handshake callback.
     ///
-    /// Implementations using async backends (e.g., PostgreSQL) should maintain
-    /// an internal sync cache or use `tokio::runtime::Handle::current().block_on()`.
+    /// This method is invoked from a synchronous context during the DTLS
+    /// handshake. Implementations **must not** use `.await` or
+    /// `tokio::runtime::Handle::current().block_on()`, as either can deadlock
+    /// when called from within the tokio runtime.
+    ///
+    /// Recommended patterns:
+    /// - **`DashMap`** — lock-free concurrent reads; best for database-backed
+    ///   stores that maintain an in-memory cache.
+    /// - **`parking_lot::RwLock`** — synchronous lock that does not interact
+    ///   with tokio's cooperative scheduling.
+    /// - **`tokio::sync::RwLock::blocking_read()`** — works on multi-threaded
+    ///   runtimes only. **Will deadlock on `current_thread` runtimes.**
     fn lookup_psk(&self, identity: &str) -> Result<Option<PskEntry>, Self::Error>;
 
     /// Add a client with a PSK key and optional metadata.

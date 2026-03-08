@@ -39,10 +39,6 @@ struct ConnectionInfo {
     reconnect_count: u32,
 }
 
-/// Security constants for connection management
-const MIN_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
-const MAX_RECONNECT_ATTEMPTS: u32 = 10;
-
 /// Per-connection RFC 7641 observe state.
 struct ObserveState {
     sequence: u32,
@@ -80,7 +76,9 @@ fn extract_identity(identity_hint: Vec<u8>) -> Option<String> {
         Ok(s) => {
             let sanitized: String = s
                 .chars()
-                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+                .filter(|c| {
+                    c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.' || *c == ':'
+                })
                 .take(MAX_IDENTITY_LENGTH)
                 .collect();
 
@@ -106,26 +104,28 @@ async fn manage_connection(
     socket_addr: SocketAddr,
     tx: Sender<()>,
     connections: &Mutex<HashMap<String, ConnectionInfo>>,
+    min_reconnect_interval: Duration,
+    max_reconnect_attempts: usize,
 ) -> bool {
     let mut guard = connections.lock().await;
 
     if let Some(old_conn) = guard.get(identity) {
-        if old_conn.established_at.elapsed() < MIN_RECONNECT_INTERVAL {
+        if old_conn.established_at.elapsed() < min_reconnect_interval {
             tracing::warn!(
-                "Rate limited: Rapid reconnection attempt from {} for identity '{}' (interval: {:?})",
-                socket_addr,
-                identity,
-                old_conn.established_at.elapsed()
+                identity = %identity,
+                addr = %socket_addr,
+                interval_ms = old_conn.established_at.elapsed().as_millis() as u64,
+                "connection.rejected.rate_limit"
             );
             return false;
         }
 
-        if old_conn.reconnect_count > MAX_RECONNECT_ATTEMPTS {
+        if old_conn.reconnect_count as usize > max_reconnect_attempts {
             tracing::error!(
-                "Security: Too many reconnection attempts from {} for identity '{}' (count: {})",
-                socket_addr,
-                identity,
-                old_conn.reconnect_count
+                identity = %identity,
+                addr = %socket_addr,
+                count = old_conn.reconnect_count,
+                "connection.rejected.max_attempts"
             );
             return false;
         }
@@ -145,9 +145,9 @@ async fn manage_connection(
 
     guard.insert(identity.to_string(), conn_info);
     tracing::info!(
-        "Connection established for identity '{}' from {}",
-        identity,
-        socket_addr
+        identity = %identity,
+        addr = %socket_addr,
+        "connection.established"
     );
     true
 }
@@ -348,8 +348,9 @@ async fn handle_request<O, S>(
                     .register_observer(identity, normalized_path, obs_tx.clone())
                     .await
                 {
-                    tracing::error!("Failed to register observer: {:?}", e);
+                    tracing::error!(identity = %identity, path = %normalized_path, error = ?e, "observer.register.failed");
                 } else {
+                    tracing::info!(identity = %identity, path = %normalized_path, "observer.registered");
                     obs.sequence = obs.sequence.wrapping_add(1);
                     resp.message.set_observe_value(obs.sequence);
                 }
@@ -376,6 +377,7 @@ pub async fn serve_basic<O, S>(
     addr: String,
     config: Config,
     router: CoapRouter<O, S>,
+    mut disconnect_rx: Option<mpsc::Receiver<String>>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: Debug + Clone + Send + Sync + 'static,
@@ -394,6 +396,17 @@ where
     let mut shutdown_rx = config.shutdown.clone();
 
     loop {
+        // Drain any pending disconnect commands
+        if let Some(ref mut rx) = disconnect_rx {
+            while let Ok(identity) = rx.try_recv() {
+                let cons = connections.lock().await;
+                if let Some(info) = cons.get(&identity) {
+                    let _ = info.sender.send(()).await;
+                    tracing::info!(identity = %identity, "client.disconnected");
+                }
+            }
+        }
+
         // Check for shutdown signal alongside accepting connections
         let accept_result = tokio::select! {
             _ = async {
@@ -409,13 +422,13 @@ where
         };
 
         if let Ok((conn, socket_addr)) = accept_result {
-            tracing::info!("Got a connection from: {}", socket_addr);
+            tracing::debug!(addr = %socket_addr, "connection.incoming");
 
             if active_connections.load(Ordering::Relaxed) >= max_connections {
                 tracing::warn!(
-                    "Connection rejected from {}: limit of {} reached",
-                    socket_addr,
-                    max_connections
+                    addr = %socket_addr,
+                    limit = max_connections,
+                    "connection.rejected.limit"
                 );
                 continue;
             }
@@ -436,7 +449,7 @@ where
                 None => continue,
             };
 
-            tracing::info!("PSK Identity: {}", identity);
+            tracing::info!(identity = %identity, addr = %socket_addr, "connection.accepted");
 
             let cons = connections.clone();
             let conn_count = active_connections.clone();
@@ -445,7 +458,16 @@ where
             tokio::spawn(async move {
                 let (tx, mut rx) = channel::<()>(1);
 
-                if !manage_connection(&identity, socket_addr, tx, &cons).await {
+                if !manage_connection(
+                    &identity,
+                    socket_addr,
+                    tx,
+                    &cons,
+                    config_clone.min_reconnect_interval,
+                    config_clone.max_reconnect_attempts,
+                )
+                .await
+                {
                     conn_count.fetch_sub(1, Ordering::Relaxed);
                     return;
                 }
@@ -495,7 +517,7 @@ where
                             }
                         }
                         _ = rx.recv() => {
-                            tracing::info!("Terminating connection with: {}", socket_addr);
+                            tracing::info!(identity = %identity, addr = %socket_addr, "connection.terminating");
                             break;
                         }
                     }
@@ -503,11 +525,11 @@ where
 
                 conn_count.fetch_sub(1, Ordering::Relaxed);
                 cons.lock().await.remove(&identity);
-                let _ = router.unregister_all(&identity).await;
+                let _ = router.unregister_device(&identity).await;
                 tracing::info!(
-                    "Terminated connection for identity: {} ({})",
-                    &identity,
-                    &socket_addr
+                    identity = %identity,
+                    addr = %socket_addr,
+                    "connection.terminated"
                 );
             });
         }
@@ -546,7 +568,7 @@ where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
-    serve_basic(addr, config, router).await
+    serve_basic(addr, config, router, None).await
 }
 
 /// Start a CoAP server with dynamic client management capability
@@ -630,16 +652,20 @@ where
     let (cmd_sender, mut cmd_receiver) = mpsc::channel(config.client_command_buffer);
     let client_manager = ClientManager::new(cmd_sender);
 
+    // Create disconnect channel for force-disconnecting clients
+    let (disconnect_tx, disconnect_rx) = mpsc::channel::<String>(32);
+
     // Spawn client command processor
     let store_for_processor = credential_store.clone();
     tokio::spawn(async move {
         while let Some(cmd) = cmd_receiver.recv().await {
-            process_client_command(cmd, &store_for_processor).await;
+            process_client_command(cmd, &store_for_processor, &disconnect_tx).await;
         }
     });
 
-    // Return client manager and server future
-    let server_future = serve_with_credential_store(addr, config, router, credential_store);
+    // Wire credential store into DTLS config and start server with disconnect channel
+    let final_config = wire_credential_store(config, credential_store);
+    let server_future = serve_basic(addr, final_config, router, Some(disconnect_rx));
 
     Ok((client_manager, server_future))
 }
@@ -680,7 +706,12 @@ where
     O: Observer + Send + Sync + 'static,
     C: CredentialStore,
 {
-    // Create DTLS config with PSK callback wired to the credential store
+    let final_config = wire_credential_store(config, credential_store);
+    serve_basic(addr, final_config, router, None).await
+}
+
+/// Wire a credential store's PSK lookup into the DTLS config.
+fn wire_credential_store<C: CredentialStore>(mut config: Config, credential_store: C) -> Config {
     let mut dtls_cfg = config.dtls_cfg.clone();
 
     dtls_cfg.psk = Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
@@ -690,32 +721,34 @@ where
 
         match credential_store.lookup_psk(&hint_str) {
             Ok(Some(entry)) if entry.enabled => {
-                tracing::info!("PSK found for identity: {}", hint_str);
+                tracing::info!(identity = %hint_str, "auth.psk_found");
                 Ok(entry.key)
             }
             Ok(Some(_)) => {
-                tracing::warn!("Client {} is disabled", hint_str);
+                tracing::warn!(identity = %hint_str, "auth.failed.disabled");
                 Err(Error::ErrIdentityNoPsk)
             }
             Ok(None) => {
-                tracing::warn!("PSK not found for identity: {}", hint_str);
+                tracing::warn!(identity = %hint_str, "auth.failed.not_found");
                 Err(Error::ErrIdentityNoPsk)
             }
             Err(e) => {
-                tracing::error!("Credential store error for {}: {:?}", hint_str, e);
+                tracing::error!(identity = %hint_str, error = ?e, "auth.failed.store_error");
                 Err(Error::ErrIdentityNoPsk)
             }
         }
     }));
 
-    let mut final_config = config;
-    final_config.dtls_cfg = dtls_cfg;
-
-    serve_basic(addr, final_config, router).await
+    config.dtls_cfg = dtls_cfg;
+    config
 }
 
 /// Process a client command by delegating to a credential store.
-async fn process_client_command<C: CredentialStore>(cmd: ClientCommand, store: &C) {
+async fn process_client_command<C: CredentialStore>(
+    cmd: ClientCommand,
+    store: &C,
+    disconnect_tx: &mpsc::Sender<String>,
+) {
     match cmd {
         ClientCommand::AddClient {
             identity,
@@ -755,6 +788,11 @@ async fn process_client_command<C: CredentialStore>(cmd: ClientCommand, store: &
                 let _ = response.send(vec![]);
             }
         },
+        ClientCommand::DisconnectClient { identity } => {
+            if let Err(e) = disconnect_tx.send(identity.clone()).await {
+                tracing::error!("Failed to send disconnect for {}: {}", identity, e);
+            }
+        }
     }
 }
 
@@ -768,10 +806,13 @@ pub fn create_client_manager<C: CredentialStore>(
 ) -> ClientManager {
     let (cmd_sender, mut cmd_receiver) = mpsc::channel(buffer_size);
 
+    // Create a no-op disconnect channel (standalone managers aren't wired to a server)
+    let (disconnect_tx, _disconnect_rx) = mpsc::channel::<String>(1);
+
     // Spawn command processor
     tokio::spawn(async move {
         while let Some(cmd) = cmd_receiver.recv().await {
-            process_client_command(cmd, &credential_store).await;
+            process_client_command(cmd, &credential_store, &disconnect_tx).await;
         }
     });
 

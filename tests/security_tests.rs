@@ -280,9 +280,11 @@ mod connection_security_tests {
 
             if should_be_valid {
                 assert!(
-                    identity
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'),
+                    identity.chars().all(|c| c.is_ascii_alphanumeric()
+                        || c == '_'
+                        || c == '-'
+                        || c == '.'
+                        || c == ':'),
                     "Identity should contain only safe characters: {}",
                     identity
                 );

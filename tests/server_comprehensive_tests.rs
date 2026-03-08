@@ -261,7 +261,9 @@ mod identity_sanitization_tests {
         // Sanitize identity to prevent injection attacks
         let sanitized: String = identity
             .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+            .filter(|c| {
+                c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.' || *c == ':'
+            })
             .take(MAX_IDENTITY_LENGTH)
             .collect();
 
@@ -279,8 +281,9 @@ mod identity_sanitization_tests {
             "device-sensor_1",
             "gateway.domain.com",
             "sensor_node-42",
-            "a",           // Single character
-            "A1_b2-c3.d4", // Mixed valid characters
+            "a",                     // Single character
+            "A1_b2-c3.d4",           // Mixed valid characters
+            "bootstrap:project-123", // Colon-separated (e.g., bootstrap PSK)
         ];
 
         for identity in valid_identities {
@@ -328,10 +331,10 @@ mod identity_sanitization_tests {
     #[test]
     fn test_empty_after_sanitization() {
         let invalid_identities = vec![
-            "!@#$%^&*()",          // All invalid characters
-            "\x00\x01\x02",        // All non-printable
-            "   ",                 // Only spaces (filtered out)
-            "+=[]{}|\\:;\"'<>,?/", // All symbols
+            "!@#$%^&*()",         // All invalid characters
+            "\x00\x01\x02",       // All non-printable
+            "   ",                // Only spaces (filtered out)
+            "+=[]{}|\\;\"'<>,?/", // All symbols (except : which is allowed)
         ];
 
         for identity in invalid_identities {

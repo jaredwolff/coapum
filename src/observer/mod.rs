@@ -57,6 +57,8 @@ pub trait Observer: Clone + Debug + Send + Sync + 'static {
     async fn unregister(&mut self, device_id: &str, path: &str) -> Result<(), Self::Error>;
     /// Unregisters all paths from the observer.
     async fn unregister_all(&mut self) -> Result<(), Self::Error>;
+    /// Unregisters all paths for a specific device.
+    async fn unregister_device(&mut self, device_id: &str) -> Result<(), Self::Error>;
     /// Writes a value to a path.
     async fn write(
         &mut self,
@@ -93,6 +95,9 @@ impl Observer for () {
         Ok(())
     }
     async fn unregister_all(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    async fn unregister_device(&mut self, _device_id: &str) -> Result<(), Self::Error> {
         Ok(())
     }
     async fn write(
@@ -337,6 +342,14 @@ impl ObserverChannels {
     /// Unregister all observers across all devices.
     pub async fn unregister_all(&self) {
         self.channels.write().await.clear();
+    }
+
+    /// Unregister all observers for a specific device.
+    /// Returns `true` if all observers for all devices are now empty.
+    pub async fn unregister_device(&self, device_id: &str) -> bool {
+        let mut channels = self.channels.write().await;
+        channels.remove(device_id);
+        channels.is_empty()
     }
 
     /// Check if there are any registered observers.

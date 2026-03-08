@@ -185,6 +185,19 @@ impl Observer for RedbObserver {
         Ok(())
     }
 
+    async fn unregister_device(&mut self, device_id: &str) -> Result<(), Self::Error> {
+        let all_empty = self.channels.unregister_device(device_id).await;
+
+        if all_empty {
+            if let Some(channel) = &self.channel {
+                let _ = channel.send(()).await;
+            }
+            self.channel = None;
+        }
+
+        Ok(())
+    }
+
     async fn write(
         &mut self,
         device_id: &str,

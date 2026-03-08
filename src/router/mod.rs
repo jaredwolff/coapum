@@ -193,6 +193,8 @@ pub enum ClientCommand {
     ListClients {
         response: tokio::sync::oneshot::Sender<Vec<String>>,
     },
+    /// Force-disconnect a client by identity
+    DisconnectClient { identity: String },
 }
 
 /// Metadata associated with a client
@@ -327,6 +329,19 @@ impl ClientManager {
 
         rx.await.map_err(|_| ClientManagerError::ResponseFailed)
     }
+
+    /// Force-disconnect a connected client by identity.
+    ///
+    /// This terminates the DTLS connection and clears observer registrations
+    /// for the given identity. Useful when a credential is revoked or disabled.
+    pub async fn disconnect_client(&self, identity: &str) -> Result<(), ClientManagerError> {
+        self.sender
+            .send(ClientCommand::DisconnectClient {
+                identity: identity.to_string(),
+            })
+            .await
+            .map_err(|_| ClientManagerError::ChannelClosed)
+    }
 }
 
 /// Error type for client manager operations
@@ -437,9 +452,14 @@ where
         self.db.unregister(device_id, path).await
     }
 
-    /// Unregisters all observers for a given device.
-    pub async fn unregister_all(&mut self, _device_id: &str) -> Result<(), O::Error> {
+    /// Unregisters all observers across all devices.
+    pub async fn unregister_all(&mut self) -> Result<(), O::Error> {
         self.db.unregister_all().await
+    }
+
+    /// Unregisters all observers for a specific device.
+    pub async fn unregister_device(&mut self, device_id: &str) -> Result<(), O::Error> {
+        self.db.unregister_device(device_id).await
     }
 
     /// Returns the number of observer registrations for a device.

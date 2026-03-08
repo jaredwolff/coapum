@@ -44,6 +44,15 @@ pub struct Config {
     /// Default: 1000ms.
     pub notification_timeout_ms: u64,
 
+    /// Minimum interval between reconnection attempts from the same identity.
+    /// Rapid reconnections within this window are rate-limited.
+    /// Default: 5 seconds.
+    pub min_reconnect_interval: Duration,
+
+    /// Maximum reconnection attempts before blocking an identity.
+    /// Default: 10.
+    pub max_reconnect_attempts: usize,
+
     /// Optional shutdown signal. When the sender is dropped or a value is sent,
     /// the server stops accepting new connections and exits gracefully.
     /// Default: `None` (server runs until the process is killed).
@@ -154,6 +163,16 @@ impl Config {
         self.notification_timeout_ms = timeout_ms;
     }
 
+    /// Set the minimum interval between reconnection attempts.
+    pub fn set_min_reconnect_interval(&mut self, interval: Duration) {
+        self.min_reconnect_interval = interval;
+    }
+
+    /// Set the maximum number of reconnection attempts before blocking.
+    pub fn set_max_reconnect_attempts(&mut self, max: usize) {
+        self.max_reconnect_attempts = max;
+    }
+
     /// Set a shutdown signal receiver for graceful shutdown.
     ///
     /// When the corresponding [`watch::Sender`] sends a value or is dropped,
@@ -176,6 +195,8 @@ impl Default for Config {
             max_observers_per_device: 100,
             max_connections: 1000,
             notification_timeout_ms: 1000,
+            min_reconnect_interval: Duration::from_secs(5),
+            max_reconnect_attempts: 10,
             shutdown: None,
         }
     }

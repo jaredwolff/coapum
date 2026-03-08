@@ -14,6 +14,10 @@ use super::{ClientInfo, CredentialStore, PskEntry};
 /// Suitable for development, testing, and single-instance deployments.
 /// For persistent or shared credential storage, implement [`CredentialStore`]
 /// with your preferred backend.
+///
+/// **Note:** Uses `tokio::sync::RwLock::blocking_read()` for `lookup_psk()`,
+/// which requires a multi-threaded tokio runtime. For `current_thread` runtimes,
+/// use `DashMap` or `parking_lot::RwLock` instead.
 #[derive(Clone, Debug)]
 pub struct MemoryCredentialStore {
     store: Arc<RwLock<HashMap<String, ClientEntry>>>,
