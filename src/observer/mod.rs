@@ -37,10 +37,14 @@ impl ObserverValue {
     }
 }
 
-/// A trait representing an observer.
+/// A trait for pluggable device state storage backends.
+///
+/// Implement this trait to provide a custom storage backend (e.g., PostgreSQL,
+/// Redis) for device state and observer notifications. See [`memory::MemObserver`]
+/// for a reference implementation.
 #[async_trait]
-pub trait Observer: Clone + Debug {
-    type Error: Debug;
+pub trait Observer: Clone + Debug + Send + Sync + 'static {
+    type Error: Debug + Send + Sync;
 
     /// Registers a path with the observer.
     async fn register(

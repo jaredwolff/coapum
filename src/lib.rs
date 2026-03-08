@@ -1,4 +1,5 @@
 pub mod config;
+pub mod credential;
 pub mod extract;
 pub mod handler;
 pub mod helper;
@@ -13,12 +14,15 @@ mod tests;
 pub mod test_utils;
 
 // Re-export commonly used types from the ergonomic API
+pub use credential::memory::MemoryCredentialStore;
+pub use credential::{CredentialStore, PskEntry};
 pub use extract::state::FullRequest;
 pub use extract::{
     Bytes, Cbor, FromRequest, Identity, IntoResponse, Json, ObserveFlag, Path, Raw, Source, State,
     StatusCode,
 };
 pub use handler::{Handler, HandlerFn, into_handler};
+pub use observer::{Observer, ObserverRequest, ObserverValue, merge_json, path_to_json};
 pub use router::{
     ClientManager, ClientManagerError, ClientMetadata, NotificationTrigger, RouterBuilder,
     StateUpdateError, StateUpdateHandle,

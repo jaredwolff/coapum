@@ -123,7 +123,7 @@ async fn create_client_connection_with_identity(
 /// Start a test server and return the bound address
 async fn start_test_server(
     app_state: TestAppState,
-    observer: impl coapum::observer::Observer + Send + Sync + 'static,
+    observer: impl coapum::observer::Observer,
 ) -> Result<SocketAddr, Box<dyn std::error::Error>> {
     let listener = std::net::UdpSocket::bind(SERVER_ADDR)?;
     let addr = listener.local_addr()?;

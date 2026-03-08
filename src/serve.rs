@@ -7,7 +7,7 @@ use std::{
 };
 
 use tokio::sync::{
-    Mutex, RwLock,
+    Mutex,
     mpsc::{self, Sender, channel},
 };
 use tower::Service;
@@ -21,11 +21,9 @@ use coap_lite::{
 
 use crate::{
     config::Config,
+    credential::{CredentialStore, memory::MemoryCredentialStore},
     observer::{Observer, ObserverValue},
-    router::{
-        ClientCommand, ClientEntry, ClientManager, ClientMetadata, ClientStore, CoapRouter,
-        CoapumRequest,
-    },
+    router::{ClientCommand, ClientManager, CoapRouter, CoapumRequest},
 };
 
 /// Connection information for security tracking and rate limiting
@@ -637,146 +635,155 @@ where
         .as_ref()
         .ok_or("Client management not enabled. Use Config::with_client_management() to enable.")?;
 
-    // Initialize client store with initial clients
-    let mut store_map = HashMap::new();
-    for (identity, key) in initial_clients.iter() {
-        store_map.insert(
-            identity.clone(),
-            ClientEntry {
-                key: key.clone(),
-                metadata: ClientMetadata {
-                    enabled: true,
-                    ..Default::default()
-                },
-            },
-        );
-    }
-    let client_store: ClientStore = Arc::new(RwLock::new(store_map));
+    // Build MemoryCredentialStore from initial clients
+    let credential_store = MemoryCredentialStore::from_clients(initial_clients);
 
     // Create client management channel
     let (cmd_sender, mut cmd_receiver) = mpsc::channel(config.client_command_buffer);
     let client_manager = ClientManager::new(cmd_sender);
 
-    // Clone for the command processor
-    let store_for_processor = Arc::clone(&client_store);
-
     // Spawn client command processor
+    let store_for_processor = credential_store.clone();
     tokio::spawn(async move {
         while let Some(cmd) = cmd_receiver.recv().await {
             process_client_command(cmd, &store_for_processor).await;
         }
     });
 
-    // Create DTLS config with dynamic PSK callback
-    let store_for_psk = Arc::clone(&client_store);
+    // Return client manager and server future
+    let server_future = serve_with_credential_store(addr, config, router, credential_store);
+
+    Ok((client_manager, server_future))
+}
+
+/// Start a CoAP server with a custom credential store for PSK authentication.
+///
+/// This is the primary API for plugging in custom credential backends (e.g.,
+/// PostgreSQL, Redis). The credential store handles PSK lookup during DTLS
+/// handshakes and can be managed directly by the caller.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use coapum::{RouterBuilder, observer::memory::MemObserver, config::Config};
+/// # use coapum::credential::memory::MemoryCredentialStore;
+/// # use coapum::serve::serve_with_credential_store;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[derive(Clone, Debug)]
+/// # struct AppState {}
+/// # let state = AppState {};
+/// # let observer = MemObserver::new();
+/// # let router = RouterBuilder::new(state, observer).build();
+/// let config = Config::default();
+/// let credentials = MemoryCredentialStore::new();
+///
+/// serve_with_credential_store("0.0.0.0:5683".to_string(), config, router, credentials).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn serve_with_credential_store<O, S, C>(
+    addr: String,
+    config: Config,
+    router: CoapRouter<O, S>,
+    credential_store: C,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
+{
+    // Create DTLS config with PSK callback wired to the credential store
     let mut dtls_cfg = config.dtls_cfg.clone();
 
-    // Set up PSK callback that uses our dynamic client store
     dtls_cfg.psk = Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
         let hint_str = String::from_utf8(hint.to_vec()).map_err(|_| Error::ErrIdentityNoPsk)?;
 
         tracing::debug!("PSK callback for identity: {}", hint_str);
 
-        // Use blocking read since we're in a sync context
-        let store = store_for_psk.blocking_read();
-
-        if let Some(entry) = store.get(&hint_str) {
-            if entry.metadata.enabled {
+        match credential_store.lookup_psk(&hint_str) {
+            Ok(Some(entry)) if entry.enabled => {
                 tracing::info!("PSK found for identity: {}", hint_str);
-                Ok(entry.key.clone())
-            } else {
+                Ok(entry.key)
+            }
+            Ok(Some(_)) => {
                 tracing::warn!("Client {} is disabled", hint_str);
                 Err(Error::ErrIdentityNoPsk)
             }
-        } else {
-            tracing::warn!("PSK not found for identity: {}", hint_str);
-            Err(Error::ErrIdentityNoPsk)
+            Ok(None) => {
+                tracing::warn!("PSK not found for identity: {}", hint_str);
+                Err(Error::ErrIdentityNoPsk)
+            }
+            Err(e) => {
+                tracing::error!("Credential store error for {}: {:?}", hint_str, e);
+                Err(Error::ErrIdentityNoPsk)
+            }
         }
     }));
 
-    // Update the config with our enhanced DTLS config
     let mut final_config = config;
     final_config.dtls_cfg = dtls_cfg;
 
-    // Return client manager and server future (don't spawn)
-    let server_future = serve_basic(addr, final_config, router);
-
-    Ok((client_manager, server_future))
+    serve_basic(addr, final_config, router).await
 }
 
-/// Process a client command
-async fn process_client_command(cmd: ClientCommand, store: &ClientStore) {
+/// Process a client command by delegating to a credential store.
+async fn process_client_command<C: CredentialStore>(cmd: ClientCommand, store: &C) {
     match cmd {
         ClientCommand::AddClient {
             identity,
             key,
             metadata,
         } => {
-            let mut store = store.write().await;
-            let entry = ClientEntry {
-                key,
-                metadata: metadata.unwrap_or_else(|| ClientMetadata {
-                    enabled: true,
-                    ..Default::default()
-                }),
-            };
-            store.insert(identity.clone(), entry);
-            tracing::info!("Added client: {}", identity);
+            if let Err(e) = store.add_client(&identity, key, metadata).await {
+                tracing::error!("Failed to add client {}: {:?}", identity, e);
+            }
         }
         ClientCommand::RemoveClient { identity } => {
-            let mut store = store.write().await;
-            if store.remove(&identity).is_some() {
-                tracing::info!("Removed client: {}", identity);
-            } else {
-                tracing::warn!("Client not found for removal: {}", identity);
+            if let Err(e) = store.remove_client(&identity).await {
+                tracing::error!("Failed to remove client {}: {:?}", identity, e);
             }
         }
         ClientCommand::UpdateKey { identity, key } => {
-            let mut store = store.write().await;
-            if let Some(entry) = store.get_mut(&identity) {
-                entry.key = key;
-                tracing::info!("Updated key for client: {}", identity);
-            } else {
-                tracing::warn!("Client not found for key update: {}", identity);
+            if let Err(e) = store.update_key(&identity, key).await {
+                tracing::error!("Failed to update key for {}: {:?}", identity, e);
             }
         }
         ClientCommand::UpdateMetadata { identity, metadata } => {
-            let mut store = store.write().await;
-            if let Some(entry) = store.get_mut(&identity) {
-                entry.metadata = metadata;
-                tracing::info!("Updated metadata for client: {}", identity);
-            } else {
-                tracing::warn!("Client not found for metadata update: {}", identity);
+            if let Err(e) = store.update_metadata(&identity, metadata).await {
+                tracing::error!("Failed to update metadata for {}: {:?}", identity, e);
             }
         }
         ClientCommand::SetClientEnabled { identity, enabled } => {
-            let mut store = store.write().await;
-            if let Some(entry) = store.get_mut(&identity) {
-                entry.metadata.enabled = enabled;
-                tracing::info!("Set client {} enabled: {}", identity, enabled);
-            } else {
-                tracing::warn!("Client not found for enable/disable: {}", identity);
+            if let Err(e) = store.set_enabled(&identity, enabled).await {
+                tracing::error!("Failed to set enabled for {}: {:?}", identity, e);
             }
         }
-        ClientCommand::ListClients { response } => {
-            let store = store.read().await;
-            let clients: Vec<String> = store.keys().cloned().collect();
-            let _ = response.send(clients);
-        }
+        ClientCommand::ListClients { response } => match store.list_clients().await {
+            Ok(clients) => {
+                let _ = response.send(clients);
+            }
+            Err(e) => {
+                tracing::error!("Failed to list clients: {:?}", e);
+                let _ = response.send(vec![]);
+            }
+        },
     }
 }
 
-/// Create a client manager connected to an existing client store
+/// Create a client manager connected to a credential store.
 ///
 /// This is useful when you want to manage clients from multiple places
 /// or integrate with existing authentication systems.
-pub fn create_client_manager(client_store: ClientStore, buffer_size: usize) -> ClientManager {
+pub fn create_client_manager<C: CredentialStore>(
+    credential_store: C,
+    buffer_size: usize,
+) -> ClientManager {
     let (cmd_sender, mut cmd_receiver) = mpsc::channel(buffer_size);
 
     // Spawn command processor
     tokio::spawn(async move {
         while let Some(cmd) = cmd_receiver.recv().await {
-            process_client_command(cmd, &client_store).await;
+            process_client_command(cmd, &credential_store).await;
         }
     });
 
