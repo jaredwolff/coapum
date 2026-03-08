@@ -442,6 +442,11 @@ where
         self.db.unregister_all().await
     }
 
+    /// Returns the number of observer registrations for a device.
+    pub async fn observer_count(&self, device_id: &str) -> usize {
+        self.db.observer_count(device_id).await
+    }
+
     /// Writes a payload to a path in the backend.
     pub async fn backend_write(
         &mut self,

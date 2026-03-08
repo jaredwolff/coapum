@@ -26,6 +26,21 @@ pub struct Config {
     /// Cache expiry duration for block-wise transfer state.
     /// Default: 120 seconds.
     pub block_cache_expiry: Duration,
+
+    /// Maximum number of observer registrations per device.
+    /// Prevents memory exhaustion from a single device registering unlimited observers.
+    /// Default: 100.
+    pub max_observers_per_device: usize,
+
+    /// Maximum number of concurrent connections.
+    /// Prevents DoS attacks using many unique device identities.
+    /// Default: 1000.
+    pub max_connections: usize,
+
+    /// Timeout in milliseconds for sending observer notifications.
+    /// Prevents slow clients from blocking notifications to other observers.
+    /// Default: 1000ms.
+    pub notification_timeout_ms: u64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -116,6 +131,21 @@ impl Config {
     pub fn set_block_cache_expiry(&mut self, duration: Duration) {
         self.block_cache_expiry = duration;
     }
+
+    /// Set the maximum number of observer registrations per device.
+    pub fn set_max_observers_per_device(&mut self, max: usize) {
+        self.max_observers_per_device = max;
+    }
+
+    /// Set the maximum number of concurrent connections.
+    pub fn set_max_connections(&mut self, max: usize) {
+        self.max_connections = max;
+    }
+
+    /// Set the notification send timeout in milliseconds.
+    pub fn set_notification_timeout_ms(&mut self, timeout_ms: u64) {
+        self.notification_timeout_ms = timeout_ms;
+    }
 }
 
 impl Default for Config {
@@ -128,6 +158,9 @@ impl Default for Config {
             client_command_buffer: 1000,
             max_message_size: 1152,
             block_cache_expiry: Duration::from_secs(120),
+            max_observers_per_device: 100,
+            max_connections: 1000,
+            notification_timeout_ms: 1000,
         }
     }
 }

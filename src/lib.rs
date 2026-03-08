@@ -22,7 +22,10 @@ pub use extract::{
     StatusCode,
 };
 pub use handler::{Handler, HandlerFn, into_handler};
-pub use observer::{Observer, ObserverRequest, ObserverValue, merge_json, path_to_json};
+pub use observer::{
+    Observer, ObserverChannels, ObserverRequest, ObserverValue, PathValidationError, merge_json,
+    path_to_json, validate_observer_path,
+};
 pub use router::{
     ClientManager, ClientManagerError, ClientMetadata, NotificationTrigger, RouterBuilder,
     StateUpdateError, StateUpdateHandle,

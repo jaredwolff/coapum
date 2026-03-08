@@ -2,7 +2,10 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -22,7 +25,7 @@ use coap_lite::{
 use crate::{
     config::Config,
     credential::{CredentialStore, memory::MemoryCredentialStore},
-    observer::{Observer, ObserverValue},
+    observer::{Observer, ObserverValue, validate_observer_path},
     router::{ClientCommand, ClientManager, CoapRouter, CoapumRequest},
 };
 
@@ -39,66 +42,6 @@ struct ConnectionInfo {
 /// Security constants for connection management
 const MIN_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
-
-/// Path validation errors
-#[derive(Debug)]
-enum PathValidationError {
-    TraversalAttempt,
-    PathTooDeep,
-    InvalidCharacters,
-    EmptyPath,
-}
-
-impl std::fmt::Display for PathValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PathValidationError::TraversalAttempt => write!(f, "Path traversal attempt detected"),
-            PathValidationError::PathTooDeep => write!(f, "Path too deep (max 10 components)"),
-            PathValidationError::InvalidCharacters => write!(f, "Path contains invalid characters"),
-            PathValidationError::EmptyPath => write!(f, "Path is empty"),
-        }
-    }
-}
-
-impl std::error::Error for PathValidationError {}
-
-/// Security: Validate and normalize observer path to prevent injection attacks
-fn validate_observer_path(path: &str) -> Result<String, PathValidationError> {
-    if path.is_empty() {
-        return Err(PathValidationError::EmptyPath);
-    }
-
-    // Security: Reject paths containing dangerous patterns
-    if path.contains("..") || path.contains("./") || path.contains("\\") {
-        return Err(PathValidationError::TraversalAttempt);
-    }
-
-    // Normalize and validate path components
-    let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-
-    // Security: Limit path depth to prevent resource exhaustion
-    const MAX_PATH_DEPTH: usize = 10;
-    if components.len() > MAX_PATH_DEPTH {
-        return Err(PathValidationError::PathTooDeep);
-    }
-
-    // Security: Validate each path component for safe characters only
-    for component in &components {
-        if !component
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
-            return Err(PathValidationError::InvalidCharacters);
-        }
-    }
-
-    // Return normalized path
-    if components.is_empty() {
-        Ok("/".to_string())
-    } else {
-        Ok(format!("/{}", components.join("/")))
-    }
-}
 
 /// Per-connection RFC 7641 observe state.
 struct ObserveState {
@@ -292,6 +235,7 @@ async fn handle_request<O, S>(
     obs_tx: &Arc<Sender<ObserverValue>>,
     obs: &mut ObserveState,
     block_handler: &mut BlockHandler<SocketAddr>,
+    max_observers_per_device: usize,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
@@ -340,19 +284,24 @@ async fn handle_request<O, S>(
     match (observe_flag, method) {
         (Some(ObserveOption::Register), RequestType::Get) => match validate_observer_path(path) {
             Ok(normalized_path) => {
-                if router.has_observe_route(&normalized_path) {
-                    if let Err(e) = router
-                        .register_observer(identity, &normalized_path, obs_tx.clone())
-                        .await
-                    {
-                        tracing::error!("Failed to register observer: {:?}", e);
-                    }
-                } else {
+                if !router.has_observe_route(&normalized_path) {
                     tracing::warn!(
                         "Observer registration rejected for '{}' on '{}': no observe route",
                         identity,
                         normalized_path
                     );
+                } else if router.observer_count(identity).await >= max_observers_per_device {
+                    tracing::warn!(
+                        "Observer registration rejected for '{}' on '{}': limit of {} exceeded",
+                        identity,
+                        normalized_path,
+                        max_observers_per_device
+                    );
+                } else if let Err(e) = router
+                    .register_observer(identity, &normalized_path, obs_tx.clone())
+                    .await
+                {
+                    tracing::error!("Failed to register observer: {:?}", e);
                 }
             }
             Err(e) => {
@@ -432,10 +381,21 @@ where
     );
     let connections: Arc<Mutex<HashMap<String, ConnectionInfo>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    let active_connections = Arc::new(AtomicUsize::new(0));
+    let max_connections = config.max_connections;
 
     loop {
         if let Ok((conn, socket_addr)) = listener.accept().await {
             tracing::info!("Got a connection from: {}", socket_addr);
+
+            if active_connections.load(Ordering::Relaxed) >= max_connections {
+                tracing::warn!(
+                    "Connection rejected from {}: limit of {} reached",
+                    socket_addr,
+                    max_connections
+                );
+                continue;
+            }
 
             let mut router = router.clone();
             let config_clone = config.clone();
@@ -456,11 +416,14 @@ where
             tracing::info!("PSK Identity: {}", identity);
 
             let cons = connections.clone();
+            let conn_count = active_connections.clone();
+            conn_count.fetch_add(1, Ordering::Relaxed);
 
             tokio::spawn(async move {
                 let (tx, mut rx) = channel::<()>(1);
 
                 if !manage_connection(&identity, socket_addr, tx, &cons).await {
+                    conn_count.fetch_sub(1, Ordering::Relaxed);
                     return;
                 }
 
@@ -504,6 +467,7 @@ where
                                     packet, socket_addr, &identity, &mut router,
                                     conn.as_ref(), &obs_tx, &mut obs,
                                     &mut block_handler,
+                                    config_clone.max_observers_per_device,
                                 ).await;
                             }
                         }
@@ -514,6 +478,7 @@ where
                     }
                 }
 
+                conn_count.fetch_sub(1, Ordering::Relaxed);
                 cons.lock().await.remove(&identity);
                 let _ = router.unregister_all(&identity).await;
                 tracing::info!(

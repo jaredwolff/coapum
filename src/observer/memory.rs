@@ -2,21 +2,16 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::sync::{RwLock, mpsc::Sender};
+use tokio::sync::mpsc::Sender;
 
-use super::{Observer, ObserverValue};
-
-// Type aliases to reduce complexity warnings
-type ObserverSender = Arc<Sender<ObserverValue>>;
-type PathChannels = HashMap<String, ObserverSender>;
-type DeviceChannels = HashMap<String, PathChannels>;
+use super::{Observer, ObserverChannels, ObserverValue};
 
 /// A memory-based observer that stores data in a HashMap.
 #[derive(Clone, Debug)]
 pub struct MemObserver {
-    db: HashMap<String, Value>, // The HashMap that stores the data.
-    // Changed to store channels by device_id and then by path
-    channels: Arc<RwLock<DeviceChannels>>, // device_id -> path -> channel
+    db: HashMap<String, Value>,
+    /// Shared channel management for observer notifications.
+    pub channels: ObserverChannels,
 }
 
 impl MemObserver {
@@ -24,7 +19,7 @@ impl MemObserver {
     pub fn new() -> Self {
         Self {
             db: HashMap::new(),
-            channels: Arc::new(RwLock::new(HashMap::new())),
+            channels: ObserverChannels::new(),
         }
     }
 }
@@ -72,184 +67,77 @@ impl From<std::io::Error> for MemObserverError {
 impl Observer for MemObserver {
     type Error = MemObserverError;
 
-    /// Registers the observer to a channel.
     async fn register(
         &mut self,
         device_id: &str,
         path: &str,
         sender: Arc<Sender<ObserverValue>>,
     ) -> Result<(), Self::Error> {
-        // Add to channels
-        let mut channels = self.channels.write().await;
-        channels
-            .entry(device_id.to_string())
-            .or_insert_with(HashMap::new)
-            .insert(path.to_string(), sender);
-
-        tracing::debug!(
-            "Registered observer for device '{}' at path '{}'",
-            device_id,
-            path
-        );
+        self.channels.register(device_id, path, sender).await;
         Ok(())
     }
 
-    /// Unregisters the observer from a channel.
     async fn unregister(&mut self, device_id: &str, path: &str) -> Result<(), Self::Error> {
-        // Remove single entry
-        let mut channels = self.channels.write().await;
-        if let Some(device_channels) = channels.get_mut(device_id) {
-            device_channels.remove(path);
-            if device_channels.is_empty() {
-                channels.remove(device_id);
-            }
-        }
-
+        self.channels.unregister(device_id, path).await;
         Ok(())
     }
 
-    /// Unregisters the observer from all channels.
     async fn unregister_all(&mut self) -> Result<(), Self::Error> {
-        // Remove all entries
-        self.channels.write().await.clear();
-
+        self.channels.unregister_all().await;
         Ok(())
     }
 
-    /// Writes data to the observer.
-    ///
-    /// Assumes if there is a path then payload is the value at that path
-    /// If no path it's the whole object.
     async fn write(
         &mut self,
         device_id: &str,
         path: &str,
         payload: &Value,
     ) -> Result<(), Self::Error> {
-        // Set value at correct provided path
         let new_value = super::path_to_json(path, payload);
 
         tracing::debug!("New value: {:?} for path: {}", new_value, path);
 
-        let mut current_value = Value::Null;
+        let current_value = self.db.get(device_id).cloned().unwrap_or(Value::Null);
 
-        // Check if we have a value and update the pointer
-        let value = if let Some(value) = self.db.get(device_id) {
-            current_value = value.clone();
-
-            // Create merged path
-            let mut merged_value = value.clone();
-
-            // Perform merge
+        let value = if current_value != Value::Null {
+            let mut merged_value = current_value.clone();
             super::merge_json(&mut merged_value, &new_value);
-
             tracing::debug!("Merged value: {:?}", merged_value);
-
-            // Return merged result
             merged_value
         } else {
             new_value
         };
 
-        // Only check observers for this specific device
-        // Security: Clone the channels to minimize lock hold time and prevent race conditions
-        let device_channels = {
-            let channels = self.channels.read().await;
-            tracing::debug!(
-                "Looking for observers for device '{}' with write to path '{}'",
-                device_id,
-                path
-            );
-            tracing::debug!(
-                "Currently registered devices: {:?}",
-                channels.keys().collect::<Vec<_>>()
-            );
-            channels.get(device_id).cloned()
-        };
+        // Notify observers of changes
+        self.channels
+            .notify(device_id, &current_value, &value)
+            .await;
 
-        if let Some(device_channels) = device_channels {
-            tracing::debug!(
-                "Found device '{}' with {} observers",
-                device_id,
-                device_channels.len()
-            );
-            // Callback if there were differences
-            for (obs_path, sender) in device_channels.iter() {
-                // Check if the observer path is affected by this write
-                // Convert path to JSON pointer format (add leading slash if not present)
-                let json_pointer = if obs_path.starts_with('/') {
-                    obs_path.clone()
-                } else {
-                    format!("/{}", obs_path)
-                };
-                let current_value = current_value.pointer(&json_pointer);
-                let incoming_value = value.pointer(&json_pointer);
-
-                tracing::debug!("Comparing paths: {} for device: {}", obs_path, device_id);
-                tracing::debug!("Current value at path: {:?}", current_value);
-                tracing::debug!("Incoming value at path: {:?}", incoming_value);
-
-                // Get the pointed value
-                if current_value != incoming_value {
-                    tracing::debug!(
-                        "Value changed at path: {} for device: {}",
-                        obs_path,
-                        device_id
-                    );
-
-                    let value = match incoming_value {
-                        Some(value) => value.clone(),
-                        None => Value::Null,
-                    };
-
-                    // If not equal then send the value from the path
-                    if let Err(e) = sender
-                        .send(ObserverValue {
-                            path: obs_path.clone(),
-                            value,
-                        })
-                        .await
-                    {
-                        tracing::warn!(
-                            "Failed to send observer notification for device {} path {}: {}",
-                            device_id,
-                            obs_path,
-                            e
-                        );
-                    }
-                }
-            }
-        } else {
-            tracing::warn!("No observers found for device '{}'", device_id);
-        }
-
-        // Then write it back
+        // Write merged value
         self.db.insert(device_id.to_string(), value);
 
         Ok(())
     }
 
-    /// Reads data from the observer.
     async fn read(&mut self, device_id: &str, path: &str) -> Result<Option<Value>, Self::Error> {
         match self.db.get(device_id) {
             Some(value) => {
                 tracing::debug!("Got value: {:?}", value);
-
-                // Get the value ad the indicated path
                 let pointer_value = value.pointer(path).cloned();
-
                 tracing::debug!("Pointer value: {:?}", pointer_value);
-
                 Ok(pointer_value)
             }
             None => Ok(None),
         }
     }
 
-    /// Clears the observer.
     async fn clear(&mut self, device_id: &str) -> Result<(), Self::Error> {
         let _ = self.db.remove(device_id);
         Ok(())
+    }
+
+    async fn observer_count(&self, device_id: &str) -> usize {
+        self.channels.device_observer_count(device_id).await
     }
 }
 
@@ -363,15 +251,7 @@ mod tests {
             .unregister("123", "/observe_and_write")
             .await
             .unwrap();
-        assert!(
-            !observer
-                .channels
-                .read()
-                .await
-                .get("123")
-                .map(|device_channels| device_channels.contains_key("/observe_and_write"))
-                .unwrap_or(false)
-        );
+        assert_eq!(observer.channels.device_observer_count("123").await, 0);
 
         observer
             .register("123", "/observe_and_write", Arc::new(tx.clone()))
@@ -380,6 +260,6 @@ mod tests {
 
         // Unregister all
         observer.unregister_all().await.unwrap();
-        assert!(observer.channels.read().await.is_empty());
+        assert!(observer.channels.is_empty().await);
     }
 }

@@ -263,36 +263,25 @@ mod redb_integration_tests {
 
     #[tokio::test]
     async fn test_redb_observer_security_validation() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
+        // Path validation is now centralized in observer::validate_observer_path()
+        // and called by the server before paths reach any backend. Backends no longer
+        // need their own validation. Test the centralized function instead.
+        use coapum::validate_observer_path;
 
-        let temp_file = NamedTempFile::new().unwrap();
-        let db_path = temp_file.path().to_str().unwrap();
-        let mut observer = RedbObserver::new(db_path).unwrap();
+        // Path traversal
+        assert!(validate_observer_path("../../../etc/passwd").is_err());
 
-        // Test path traversal protection
-        let result = observer.read("device_1", "../../../etc/passwd").await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Security error"));
+        // Excessive depth
+        let deep = (0..11)
+            .map(|i| format!("p{}", i))
+            .collect::<Vec<_>>()
+            .join("/");
+        assert!(validate_observer_path(&deep).is_err());
 
-        // Test null byte injection protection
-        let result = observer.read("device_1", "/path\x00hidden").await;
-        assert!(result.is_err());
+        // Invalid chars
+        assert!(validate_observer_path("path\x00hidden").is_err());
 
-        // Test excessive depth protection
-        let deep_path = "/a".repeat(15); // Deeper than allowed 10 levels
-        let result = observer.read("device_1", &deep_path).await;
-        assert!(result.is_err());
-
-        // Test that valid paths still work
-        observer
-            .write("device_1", "/valid/path", &json!({"test": "value"}))
-            .await
-            .unwrap();
-        let result = observer.read("device_1", "/valid/path").await.unwrap();
-        assert_eq!(result, Some(json!({"test": "value"})));
-
-        // temp_file is automatically cleaned up when dropped
+        // Valid paths still work
+        assert_eq!(validate_observer_path("valid/path").unwrap(), "/valid/path");
     }
 }
