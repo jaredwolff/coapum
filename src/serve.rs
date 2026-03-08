@@ -14,7 +14,10 @@ use tower::Service;
 use webrtc_dtls::{Error, conn::DTLSConn, listener};
 use webrtc_util::conn::{Conn, Listener};
 
-use coap_lite::{CoapRequest, MessageType, ObserveOption, Packet, RequestType, ResponseType};
+use coap_lite::{
+    BlockHandler, BlockHandlerConfig, CoapRequest, MessageType, ObserveOption, Packet, RequestType,
+    ResponseType,
+};
 
 use crate::{
     config::Config,
@@ -269,7 +272,19 @@ async fn handle_notification<O, S>(
     }
 }
 
-/// Handle an incoming CoAP request: observe management, routing, and response.
+/// Send a CoAP response over a connection.
+async fn send_response(conn: &(dyn Conn + Send + Sync), resp: &crate::CoapResponse) {
+    match resp.message.to_bytes() {
+        Ok(bytes) => match conn.send(&bytes).await {
+            Ok(n) => log::debug!("Wrote {} bytes", n),
+            Err(e) => log::error!("Error sending response: {}", e),
+        },
+        Err(e) => log::error!("Failed to serialize response: {}", e),
+    }
+}
+
+/// Handle an incoming CoAP request: block-wise transfer, observe management, routing, and response.
+#[allow(clippy::too_many_arguments)]
 async fn handle_request<O, S>(
     packet: Packet,
     socket_addr: SocketAddr,
@@ -278,6 +293,7 @@ async fn handle_request<O, S>(
     conn: &(dyn Conn + Send + Sync),
     obs_tx: &Arc<Sender<ObserverValue>>,
     obs: &mut ObserveState,
+    block_handler: &mut BlockHandler<SocketAddr>,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
@@ -291,8 +307,31 @@ async fn handle_request<O, S>(
         return;
     }
 
-    let request = CoapRequest::from_packet(packet, socket_addr);
-    let mut request: CoapumRequest<SocketAddr> = request.into();
+    let mut coap_request = CoapRequest::from_packet(packet, socket_addr);
+
+    // RFC 7959: Block1 reassembly / Block2 cache serving
+    match block_handler.intercept_request(&mut coap_request) {
+        Ok(true) => {
+            // Block handler handled it (intermediate Block1 or Block2 cache hit)
+            if let Some(ref resp) = coap_request.response {
+                send_response(conn, resp).await;
+            }
+            return;
+        }
+        Err(e) => {
+            log::error!("Block transfer error: {}", e.message);
+            if let Some(ref resp) = coap_request.response {
+                send_response(conn, resp).await;
+            }
+            return;
+        }
+        Ok(false) => {} // Not a block request, or Block1 fully reassembled — proceed
+    }
+
+    // Save packet for Block2 intercept_response later
+    let packet_for_block2 = coap_request.message.clone();
+
+    let mut request: CoapumRequest<SocketAddr> = coap_request.into();
     request.identity = identity.to_string();
 
     let path = request.get_path();
@@ -361,18 +400,16 @@ async fn handle_request<O, S>(
                 resp.message.set_observe_value(obs.sequence);
             }
 
-            let bytes = match resp.message.to_bytes() {
-                Ok(b) => b,
-                Err(e) => {
-                    log::error!("Failed to serialize response: {}", e);
-                    return;
-                }
-            };
-            log::debug!("Got response: {:?}", resp.message);
+            // RFC 7959: Fragment large responses using Block2
+            let mut block_req = CoapRequest::from_packet(packet_for_block2, socket_addr);
+            block_req.response = Some(resp);
+            if let Err(e) = block_handler.intercept_response(&mut block_req) {
+                log::error!("Block transfer response error: {}", e.message);
+            }
 
-            match conn.send(&bytes).await {
-                Ok(n) => log::debug!("Wrote {} bytes", n),
-                Err(e) => log::error!("Error: {}", e),
+            if let Some(ref resp) = block_req.response {
+                log::debug!("Got response: {:?}", resp.message);
+                send_response(conn, resp).await;
             }
         }
         Err(e) => log::error!("Error: {}", e),
@@ -433,6 +470,10 @@ where
                 let obs_tx = Arc::new(obs_tx);
 
                 let mut obs = ObserveState::new();
+                let mut block_handler = BlockHandler::new(BlockHandlerConfig {
+                    max_total_message_size: config_clone.max_message_size,
+                    cache_expiry_duration: config_clone.block_cache_expiry,
+                });
                 let mut b = vec![0u8; config_clone.buffer_size()];
 
                 loop {
@@ -464,6 +505,7 @@ where
                                 handle_request(
                                     packet, socket_addr, &identity, &mut router,
                                     conn.as_ref(), &obs_tx, &mut obs,
+                                    &mut block_handler,
                                 ).await;
                             }
                         }

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 #[derive(Clone)]
 pub struct Config {
     /// DTLS configuration
@@ -15,6 +17,15 @@ pub struct Config {
 
     /// Buffer size for client management commands (only used if initial_clients is Some)
     pub client_command_buffer: usize,
+
+    /// Maximum total CoAP message size for block-wise transfer (RFC 7959).
+    /// Messages larger than this are automatically fragmented.
+    /// Default: 1152 bytes (RFC 7252).
+    pub max_message_size: usize,
+
+    /// Cache expiry duration for block-wise transfer state.
+    /// Default: 120 seconds.
+    pub block_cache_expiry: Duration,
 }
 
 #[derive(Debug, PartialEq)]
@@ -95,6 +106,16 @@ impl Config {
     pub fn has_client_management(&self) -> bool {
         self.initial_clients.is_some()
     }
+
+    /// Set the maximum total CoAP message size for block-wise transfer.
+    pub fn set_max_message_size(&mut self, size: usize) {
+        self.max_message_size = size;
+    }
+
+    /// Set the cache expiry duration for block-wise transfer state.
+    pub fn set_block_cache_expiry(&mut self, duration: Duration) {
+        self.block_cache_expiry = duration;
+    }
 }
 
 impl Default for Config {
@@ -105,6 +126,8 @@ impl Default for Config {
             buffer_size: Self::DEFAULT_BUFFER_SIZE,
             initial_clients: None,
             client_command_buffer: 1000,
+            max_message_size: 1152,
+            block_cache_expiry: Duration::from_secs(120),
         }
     }
 }
