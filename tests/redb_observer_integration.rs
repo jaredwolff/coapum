@@ -219,27 +219,25 @@ mod redb_integration_tests {
         let temp_file = NamedTempFile::new().unwrap();
         let db_path = temp_file.path().to_str().unwrap();
 
-        // Create multiple tasks that will access the database concurrently
+        // Create ONE observer and clone it into tasks (redb enforces exclusive file access)
+        let observer = RedbObserver::new(db_path).unwrap();
         let mut handles = vec![];
 
         for i in 0..5 {
-            let db_path = db_path.to_string();
+            let mut obs = observer.clone();
             let handle = tokio::spawn(async move {
-                let mut observer = RedbObserver::new(&db_path).unwrap();
-
                 // Each task writes to its own device
                 let device_id = format!("device_{}", i);
-                observer
-                    .write(
-                        &device_id,
-                        "/value",
-                        &json!({"task_id": i, "timestamp": i * 100}),
-                    )
-                    .await
-                    .unwrap();
+                obs.write(
+                    &device_id,
+                    "/value",
+                    &json!({"task_id": i, "timestamp": i * 100}),
+                )
+                .await
+                .unwrap();
 
                 // Read back to verify
-                let value = observer.read(&device_id, "/value").await.unwrap();
+                let value = obs.read(&device_id, "/value").await.unwrap();
                 assert_eq!(value, Some(json!({"task_id": i, "timestamp": i * 100})));
             });
             handles.push(handle);
@@ -250,8 +248,8 @@ mod redb_integration_tests {
             handle.await.unwrap();
         }
 
-        // Verify all data is present
-        let mut observer = RedbObserver::new(db_path).unwrap();
+        // Verify all data is present via fresh clone
+        let mut observer = observer.clone();
         for i in 0..5 {
             let device_id = format!("device_{}", i);
             let value = observer.read(&device_id, "/value").await.unwrap();
