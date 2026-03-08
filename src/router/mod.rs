@@ -13,8 +13,8 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tokio::sync::mpsc::{self, Sender};
-use tokio::sync::{Mutex, RwLock};
 use tower::Service;
 
 use crate::handler::{ErasedHandler, Handler, HandlerFn, into_erased_handler, into_handler};
@@ -385,7 +385,7 @@ where
     O: Observer,
 {
     inner: Router<HashMap<RequestTypeWrapper, RouteHandler<S>>>,
-    state: Arc<Mutex<S>>, // Shared state
+    state: Arc<RwLock<S>>, // Shared state
     db: O,
     // Channel for external state updates
     state_update_sender: Option<StateUpdateSender<S>>,
@@ -407,7 +407,7 @@ where
     pub fn new(state: S, db: O) -> Self {
         Self {
             inner: Router::new(),
-            state: Arc::new(Mutex::new(state)),
+            state: Arc::new(RwLock::new(state)),
             db,
             state_update_sender: None,
         }
@@ -527,9 +527,9 @@ where
     ///
     /// This runs in a background task and applies state updates sequentially
     /// to maintain consistency.
-    async fn process_state_updates(state: Arc<Mutex<S>>, mut receiver: StateUpdateReceiver<S>) {
+    async fn process_state_updates(state: Arc<RwLock<S>>, mut receiver: StateUpdateReceiver<S>) {
         while let Some(update) = receiver.recv().await {
-            let mut state_guard = state.lock().await;
+            let mut state_guard = state.write().await;
             update(&mut *state_guard);
         }
     }

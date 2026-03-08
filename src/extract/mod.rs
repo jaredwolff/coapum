@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use coap_lite::ResponseType;
 use std::{convert::Infallible, fmt, net::SocketAddr, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::router::CoapumRequest;
 
@@ -163,7 +163,7 @@ pub trait Handler<S, Args>: Clone + Send + Sized + 'static {
         + 'static;
 
     /// Call this handler with the given request and state
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<Mutex<S>>) -> Self::Future;
+    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future;
 }
 
 #[cfg(test)]

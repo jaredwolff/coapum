@@ -9,7 +9,7 @@ use crate::extract::{FromRequest, IntoResponse};
 use crate::router::CoapumRequest;
 use async_trait::async_trait;
 use std::{convert::Infallible, future::Future, marker::PhantomData, net::SocketAddr, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 /// Trait for handler functions that can be converted to CoAP handlers
 ///
@@ -22,7 +22,7 @@ pub trait Handler<T, S>: Clone + Send + Sized + 'static {
     type Future: Future<Output = Result<CoapResponse, Infallible>> + Send + 'static;
 
     /// Call this handler with the given request and state
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<Mutex<S>>) -> Self::Future;
+    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future;
 }
 
 /// Wrapper for converting handler functions to the Handler trait
@@ -64,7 +64,7 @@ where
 {
     type Future = std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>;
 
-    fn call(self, _req: CoapumRequest<SocketAddr>, _state: Arc<Mutex<S>>) -> Self::Future {
+    fn call(self, _req: CoapumRequest<SocketAddr>, _state: Arc<RwLock<S>>) -> Self::Future {
         Box::pin(async move {
             let result = (self.f)().await;
             Ok(result.into_response().unwrap_or_else(|e| {
@@ -90,9 +90,9 @@ where
 {
     type Future = std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>;
 
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<Mutex<S>>) -> Self::Future {
+    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future {
         Box::pin(async move {
-            let state_guard = state.lock().await;
+            let state_guard = state.read().await;
             let t1 = match T1::from_request(&req, &*state_guard).await {
                 Ok(val) => val,
                 Err(rejection) => {
@@ -132,9 +132,9 @@ where
 {
     type Future = std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>;
 
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<Mutex<S>>) -> Self::Future {
+    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future {
         Box::pin(async move {
-            let state_guard = state.lock().await;
+            let state_guard = state.read().await;
 
             let t1 = match T1::from_request(&req, &*state_guard).await {
                 Ok(val) => val,
@@ -190,9 +190,9 @@ where
 {
     type Future = std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>;
 
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<Mutex<S>>) -> Self::Future {
+    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future {
         Box::pin(async move {
-            let state_guard = state.lock().await;
+            let state_guard = state.read().await;
 
             let t1 = match T1::from_request(&req, &*state_guard).await {
                 Ok(val) => val,
@@ -262,9 +262,9 @@ where
 {
     type Future = std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>;
 
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<Mutex<S>>) -> Self::Future {
+    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future {
         Box::pin(async move {
-            let state_guard = state.lock().await;
+            let state_guard = state.read().await;
 
             let t1 = match T1::from_request(&req, &*state_guard).await {
                 Ok(val) => val,
@@ -346,7 +346,7 @@ pub trait ErasedHandler<S>: Send + Sync + 'static {
     async fn call_erased(
         &self,
         req: CoapumRequest<SocketAddr>,
-        state: Arc<Mutex<S>>,
+        state: Arc<RwLock<S>>,
     ) -> Result<CoapResponse, Infallible>;
 
     /// Clone this handler
@@ -373,7 +373,7 @@ where
     async fn call_erased(
         &self,
         _req: CoapumRequest<SocketAddr>,
-        _state: Arc<Mutex<S>>,
+        _state: Arc<RwLock<S>>,
     ) -> Result<CoapResponse, Infallible> {
         // This is a fallback implementation that returns a default response
         // The actual handler calling will be done by the specific implementations
@@ -407,7 +407,7 @@ where
     async fn call_erased(
         &self,
         req: CoapumRequest<SocketAddr>,
-        state: Arc<Mutex<S>>,
+        state: Arc<RwLock<S>>,
     ) -> Result<CoapResponse, Infallible> {
         self.handler_fn.clone().call(req, state).await
     }
@@ -470,7 +470,7 @@ mod tests {
 
         let handler = into_handler(simple_handler);
         let req = create_test_request();
-        let state = Arc::new(Mutex::new(()));
+        let state = Arc::new(RwLock::new(()));
 
         let response = handler.call(req, state).await.unwrap();
         assert_eq!(*response.get_status(), coap_lite::ResponseType::Valid);
@@ -485,7 +485,7 @@ mod tests {
 
         let handler = into_handler(identity_handler);
         let req = create_test_request();
-        let state = Arc::new(Mutex::new(()));
+        let state = Arc::new(RwLock::new(()));
 
         let response = handler.call(req, state).await.unwrap();
         assert_eq!(*response.get_status(), coap_lite::ResponseType::Valid);
@@ -507,7 +507,7 @@ mod tests {
 
         let handler = into_handler(multi_handler);
         let req = create_test_request();
-        let state = Arc::new(Mutex::new(()));
+        let state = Arc::new(RwLock::new(()));
 
         let response = handler.call(req, state).await.unwrap();
         assert_eq!(*response.get_status(), coap_lite::ResponseType::Valid);
@@ -522,7 +522,7 @@ mod tests {
         let handler = into_handler(simple_handler);
         let erased = into_erased_handler(handler);
         let req = create_test_request();
-        let state = Arc::new(Mutex::new(()));
+        let state = Arc::new(RwLock::new(()));
 
         let response = erased.call_erased(req, state).await.unwrap();
         assert_eq!(*response.get_status(), coap_lite::ResponseType::Valid);
