@@ -12,7 +12,7 @@ use tokio::sync::{
 };
 use tower::Service;
 use webrtc_dtls::{Error, conn::DTLSConn, listener};
-use webrtc_util::conn::Listener;
+use webrtc_util::conn::{Conn, Listener};
 
 use coap_lite::{CoapRequest, MessageType, ObserveOption, Packet, RequestType, ResponseType};
 
@@ -99,6 +99,286 @@ fn validate_observer_path(path: &str) -> Result<String, PathValidationError> {
     }
 }
 
+/// Per-connection RFC 7641 observe state.
+struct ObserveState {
+    sequence: u32,
+    next_msg_id: u16,
+    /// Maps message IDs to observer paths for RST-based deregistration.
+    notification_msg_ids: HashMap<u16, String>,
+}
+
+impl ObserveState {
+    fn new() -> Self {
+        Self {
+            sequence: 0,
+            next_msg_id: 1,
+            notification_msg_ids: HashMap::new(),
+        }
+    }
+}
+
+/// Extract and validate PSK identity from a DTLS identity hint.
+///
+/// Validates length, UTF-8 encoding, and sanitizes to safe characters only.
+fn extract_identity(identity_hint: Vec<u8>) -> Option<String> {
+    const MAX_IDENTITY_LENGTH: usize = 256;
+
+    if identity_hint.len() > MAX_IDENTITY_LENGTH {
+        log::error!(
+            "Identity hint too long: {} bytes (max: {})",
+            identity_hint.len(),
+            MAX_IDENTITY_LENGTH
+        );
+        return None;
+    }
+
+    match String::from_utf8(identity_hint) {
+        Ok(s) => {
+            let sanitized: String = s
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+                .take(MAX_IDENTITY_LENGTH)
+                .collect();
+
+            if sanitized.is_empty() {
+                log::error!("Identity hint contains no valid characters");
+                None
+            } else {
+                Some(sanitized)
+            }
+        }
+        Err(e) => {
+            log::error!("Invalid UTF-8 in identity hint: {}", e);
+            None
+        }
+    }
+}
+
+/// Validate connection and implement rate limiting for reconnections.
+///
+/// Returns `true` if the connection is allowed, `false` if rate-limited or blocked.
+async fn manage_connection(
+    identity: &str,
+    socket_addr: SocketAddr,
+    tx: Sender<()>,
+    connections: &Mutex<HashMap<String, ConnectionInfo>>,
+) -> bool {
+    let mut guard = connections.lock().await;
+
+    if let Some(old_conn) = guard.get(identity) {
+        if old_conn.established_at.elapsed() < MIN_RECONNECT_INTERVAL {
+            log::warn!(
+                "Rate limited: Rapid reconnection attempt from {} for identity '{}' (interval: {:?})",
+                socket_addr,
+                identity,
+                old_conn.established_at.elapsed()
+            );
+            return false;
+        }
+
+        if old_conn.reconnect_count > MAX_RECONNECT_ATTEMPTS {
+            log::error!(
+                "Security: Too many reconnection attempts from {} for identity '{}' (count: {})",
+                socket_addr,
+                identity,
+                old_conn.reconnect_count
+            );
+            return false;
+        }
+
+        let _ = old_conn.sender.send(()).await;
+    }
+
+    let conn_info = ConnectionInfo {
+        sender: tx,
+        established_at: Instant::now(),
+        source_addr: socket_addr,
+        reconnect_count: guard
+            .get(identity)
+            .map(|c| c.reconnect_count + 1)
+            .unwrap_or(0),
+    };
+
+    guard.insert(identity.to_string(), conn_info);
+    log::info!(
+        "Connection established for identity '{}' from {}",
+        identity,
+        socket_addr
+    );
+    true
+}
+
+/// Handle an observer notification: route, set RFC 7641 headers, and send.
+async fn handle_notification<O, S>(
+    value: ObserverValue,
+    router: &mut CoapRouter<O, S>,
+    conn: &(dyn Conn + Send + Sync),
+    socket_addr: SocketAddr,
+    obs: &mut ObserveState,
+) where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+{
+    log::info!("Got notification: {:?}", value);
+
+    let notification_path = value.path.clone();
+    let req = value.to_request(socket_addr);
+
+    match router.call(req).await {
+        Ok(mut resp) => {
+            if *resp.get_status() == ResponseType::BadRequest {
+                log::error!("Error: {:?}", resp.message);
+                return;
+            }
+
+            // RFC 7641 §3.3: Set observe sequence number
+            obs.sequence = obs.sequence.wrapping_add(1);
+            resp.message.set_observe_value(obs.sequence);
+
+            // Set message type to Non-Confirmable for notifications
+            resp.message.header.set_type(MessageType::NonConfirmable);
+
+            // Assign unique message ID for RST tracking
+            let msg_id = obs.next_msg_id;
+            obs.next_msg_id = obs.next_msg_id.wrapping_add(1);
+            resp.message.header.message_id = msg_id;
+
+            obs.notification_msg_ids.insert(msg_id, notification_path);
+
+            // Bound tracking map to prevent unbounded growth
+            if obs.notification_msg_ids.len() > 256 {
+                let cutoff = msg_id.wrapping_sub(128);
+                obs.notification_msg_ids
+                    .retain(|&id, _| id.wrapping_sub(cutoff) < 256);
+            }
+
+            log::info!(
+                "Sending notification (seq={}) to: {}",
+                obs.sequence,
+                socket_addr
+            );
+            match resp.message.to_bytes() {
+                Ok(bytes) => match conn.send(&bytes).await {
+                    Ok(n) => log::debug!("Wrote {} notification bytes", n),
+                    Err(e) => log::error!("Error: {}", e),
+                },
+                Err(e) => log::error!("Failed to serialize response: {}", e),
+            }
+        }
+        Err(e) => log::error!("Error: {}", e),
+    }
+}
+
+/// Handle an incoming CoAP request: observe management, routing, and response.
+async fn handle_request<O, S>(
+    packet: Packet,
+    socket_addr: SocketAddr,
+    identity: &str,
+    router: &mut CoapRouter<O, S>,
+    conn: &(dyn Conn + Send + Sync),
+    obs_tx: &Arc<Sender<ObserverValue>>,
+    obs: &mut ObserveState,
+) where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+{
+    // RFC 7641 §3.2: RST deregisters observer
+    if packet.header.get_type() == MessageType::Reset {
+        if let Some(path) = obs.notification_msg_ids.remove(&packet.header.message_id) {
+            log::info!("RST deregistration for '{}' path '{}'", identity, path);
+            let _ = router.unregister_observer(identity, &path).await;
+        }
+        return;
+    }
+
+    let request = CoapRequest::from_packet(packet, socket_addr);
+    let mut request: CoapumRequest<SocketAddr> = request.into();
+    request.identity = identity.to_string();
+
+    let path = request.get_path();
+    let observe_flag = *request.get_observe_flag();
+    let method = *request.get_method();
+
+    // Handle observations
+    match (observe_flag, method) {
+        (Some(ObserveOption::Register), RequestType::Get) => match validate_observer_path(path) {
+            Ok(normalized_path) => {
+                if router.has_observe_route(&normalized_path) {
+                    if let Err(e) = router
+                        .register_observer(identity, &normalized_path, obs_tx.clone())
+                        .await
+                    {
+                        log::error!("Failed to register observer: {:?}", e);
+                    }
+                } else {
+                    log::warn!(
+                        "Observer registration rejected for '{}' on '{}': no observe route",
+                        identity,
+                        normalized_path
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!(
+                    "Invalid observer path '{}' from {}: {}",
+                    path,
+                    socket_addr,
+                    e
+                );
+                return;
+            }
+        },
+        (Some(ObserveOption::Deregister), RequestType::Delete) => {
+            match validate_observer_path(path) {
+                Ok(normalized_path) => {
+                    if let Err(e) = router.unregister_observer(identity, &normalized_path).await {
+                        log::error!("Failed to unregister observer: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    log::error!(
+                        "Invalid observer path '{}' from {}: {}",
+                        path,
+                        socket_addr,
+                        e
+                    );
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+
+    // Route the request
+    match router.call(request).await {
+        Ok(mut resp) => {
+            // RFC 7641 §3.1: Include observe option in registration response
+            if observe_flag == Some(ObserveOption::Register)
+                && method == RequestType::Get
+                && !resp.get_status().is_error()
+            {
+                obs.sequence = obs.sequence.wrapping_add(1);
+                resp.message.set_observe_value(obs.sequence);
+            }
+
+            let bytes = match resp.message.to_bytes() {
+                Ok(b) => b,
+                Err(e) => {
+                    log::error!("Failed to serialize response: {}", e);
+                    return;
+                }
+            };
+            log::debug!("Got response: {:?}", resp.message);
+
+            match conn.send(&bytes).await {
+                Ok(n) => log::debug!("Wrote {} bytes", n),
+                Err(e) => log::error!("Error: {}", e),
+            }
+        }
+        Err(e) => log::error!("Error: {}", e),
+    }
+}
+
 /// Start basic CoAP server without client management
 pub async fn serve_basic<O, S>(
     addr: String,
@@ -133,41 +413,9 @@ where
                 continue;
             };
 
-            // Get PSK Identity and use it as the Client's ID
-            // Security: Validate identity hint size and content to prevent buffer overflow
-            const MAX_IDENTITY_LENGTH: usize = 256;
-
-            let identity: String = if state.identity_hint.len() > MAX_IDENTITY_LENGTH {
-                log::error!(
-                    "Identity hint too long: {} bytes (max: {})",
-                    state.identity_hint.len(),
-                    MAX_IDENTITY_LENGTH
-                );
-                continue;
-            } else {
-                match String::from_utf8(state.identity_hint) {
-                    Ok(s) => {
-                        // Sanitize identity to prevent injection attacks
-                        let sanitized: String = s
-                            .chars()
-                            .filter(|c| {
-                                c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.'
-                            })
-                            .take(MAX_IDENTITY_LENGTH)
-                            .collect();
-
-                        if sanitized.is_empty() {
-                            log::error!("Identity hint contains no valid characters");
-                            continue;
-                        }
-
-                        sanitized
-                    }
-                    Err(e) => {
-                        log::error!("Invalid UTF-8 in identity hint: {}", e);
-                        continue;
-                    }
-                }
+            let identity = match extract_identity(state.identity_hint) {
+                Some(id) => id,
+                None => continue,
             };
 
             log::info!("PSK Identity: {}", identity);
@@ -177,140 +425,29 @@ where
             tokio::spawn(async move {
                 let (tx, mut rx) = channel::<()>(1);
 
-                // Observers
+                if !manage_connection(&identity, socket_addr, tx, &cons).await {
+                    return;
+                }
+
                 let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
                 let obs_tx = Arc::new(obs_tx);
 
-                // RFC 7641: Per-connection observe state
-                let mut observe_sequence: u32 = 0;
-                let mut notification_msg_ids: HashMap<u16, String> = HashMap::new();
-                let mut next_msg_id: u16 = 1;
-
-                // Security: Validate connection and implement rate limiting
-                {
-                    let mut connections_guard = cons.lock().await;
-
-                    // Check for existing connection and implement security measures
-                    if let Some(old_conn) = connections_guard.get(&identity) {
-                        // Security: Rate limit reconnections to prevent abuse
-                        if old_conn.established_at.elapsed() < MIN_RECONNECT_INTERVAL {
-                            log::warn!(
-                                "Rate limited: Rapid reconnection attempt from {} for identity '{}' (interval: {:?})",
-                                socket_addr,
-                                identity,
-                                old_conn.established_at.elapsed()
-                            );
-                            return; // Skip this connection attempt
-                        }
-
-                        // Security: Detect suspicious reconnection patterns
-                        if old_conn.reconnect_count > MAX_RECONNECT_ATTEMPTS {
-                            log::error!(
-                                "Security: Too many reconnection attempts from {} for identity '{}' (count: {})",
-                                socket_addr,
-                                identity,
-                                old_conn.reconnect_count
-                            );
-                            return; // Block this identity
-                        }
-
-                        // Signal the old connection to terminate
-                        let _ = old_conn.sender.send(()).await;
-                    }
-
-                    // Insert the new connection with tracking info
-                    let conn_info = ConnectionInfo {
-                        sender: tx,
-                        established_at: Instant::now(),
-                        source_addr: socket_addr,
-                        reconnect_count: connections_guard
-                            .get(&identity)
-                            .map(|c| c.reconnect_count + 1)
-                            .unwrap_or(0),
-                    };
-
-                    connections_guard.insert(identity.clone(), conn_info);
-                    log::info!(
-                        "Connection established for identity '{}' from {}",
-                        identity,
-                        socket_addr
-                    );
-                }
-
-                // Buffer
+                let mut obs = ObserveState::new();
                 let mut b = vec![0u8; config_clone.buffer_size()];
 
                 loop {
                     tokio::select! {
-                        // Handling observer..
-                        notify = obs_rx.recv() => {
-                            if let Some(value) = notify {
-
-                                log::info!("Got notification: {:?}", value);
-
-                                let notification_path = value.path.clone();
-
-                                // Convert to request
-                                let req = value.to_request(socket_addr);
-
-                                // Formulate request from Value (i.e. create JSON payload)
-                                match router.call(req).await{
-                                    Ok(mut resp)=> {
-
-                                        // Check to make sure we don't send error messages since this is server internal
-                                        if *resp.get_status() == ResponseType::BadRequest {
-                                            log::error!("Error: {:?}", resp.message);
-                                            continue;
-                                        }
-
-                                        // RFC 7641 §3.3: Set observe sequence number
-                                        observe_sequence = observe_sequence.wrapping_add(1);
-                                        resp.message.set_observe_value(observe_sequence);
-
-                                        // Set message type to Non-Confirmable for notifications
-                                        resp.message.header.set_type(MessageType::NonConfirmable);
-
-                                        // Assign unique message ID for RST tracking
-                                        let msg_id = next_msg_id;
-                                        next_msg_id = next_msg_id.wrapping_add(1);
-                                        resp.message.header.message_id = msg_id;
-
-                                        // Track message_id -> path for RST deregistration
-                                        notification_msg_ids.insert(msg_id, notification_path);
-
-                                        // Bound tracking map to prevent unbounded growth
-                                        if notification_msg_ids.len() > 256 {
-                                            let cutoff = msg_id.wrapping_sub(128);
-                                            notification_msg_ids.retain(|&id, _| {
-                                                id.wrapping_sub(cutoff) < 256
-                                            });
-                                        }
-
-                                        // Then send..
-                                        log::info!("Sending notification (seq={}) to: {}", observe_sequence, socket_addr);
-                                        match resp.message.to_bytes() {
-                                            Ok(bytes) => match conn.send(&bytes).await {
-                                            Ok(n) => log::debug!("Wrote {} notification bytes", n),
-                                            Err(e) => {
-                                                log::error!("Error: {}", e);
-                                            }
-                                        },
-                                            Err(e) => log::error!("Failed to serialize response: {}", e),
-                                        }
-                                    }
-                                    Err(e) => log::error!("Error: {}", e)
-                                };
-                            }
+                        Some(value) = obs_rx.recv() => {
+                            handle_notification(
+                                value, &mut router, conn.as_ref(), socket_addr,
+                                &mut obs,
+                            ).await;
                         }
                         recv = tokio::time::timeout(Duration::from_secs(timeout), conn.recv(&mut b)) => {
-
-                            // Check for timeout
                             let recv = match recv {
                                 Ok(r) => r,
                                 Err(e) => {
                                     log::error!("Timeout! Err: {}", e);
-
-                                    // Since we timed out remove:
                                     let _ = cons.lock().await.remove(&identity);
                                     break;
                                 }
@@ -324,106 +461,10 @@ where
                                         continue;
                                     }
                                 };
-                                // RFC 7641 §3.2: RST deregisters observer
-                                if packet.header.get_type() == MessageType::Reset {
-                                    if let Some(path) = notification_msg_ids.remove(&packet.header.message_id) {
-                                        log::info!(
-                                            "RST deregistration for '{}' path '{}'",
-                                            identity, path
-                                        );
-                                        let _ = router.unregister_observer(&identity, &path).await;
-                                    }
-                                    continue;
-                                }
-
-                                let request = CoapRequest::from_packet(packet, socket_addr);
-
-                                // Convert to wrapper
-                                let mut request: CoapumRequest<SocketAddr> = request.into();
-                                request.identity = identity.clone();
-
-                                // Get path
-                                let path = request.get_path();
-                                let observe_flag = *request.get_observe_flag();
-                                let method = *request.get_method();
-
-                                // Handle observations
-                                match (observe_flag, method) {
-                                    (Some(ObserveOption::Register), RequestType::Get) => {
-                                        // register - ensure path starts with / for consistency with routing
-                                        // Security: Validate path to prevent injection attacks
-                                        match validate_observer_path(path) {
-                                            Ok(normalized_path) => {
-                                                if router.has_observe_route(&normalized_path) {
-                                                    if let Err(e) = router.register_observer(&identity, &normalized_path, obs_tx.clone()).await {
-                                                        log::error!("Failed to register observer: {:?}", e);
-                                                    }
-                                                } else {
-                                                    log::warn!(
-                                                        "Observer registration rejected for '{}' on '{}': no observe route",
-                                                        identity, normalized_path
-                                                    );
-                                                }
-                                            }
-                                            Err(e) => {
-                                                log::error!("Invalid observer path '{}' from {}: {}", path, socket_addr, e);
-                                                // Send error response for invalid path
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                    (Some(ObserveOption::Deregister), RequestType::Delete) => {
-                                        // Security: Validate path to prevent injection attacks
-                                        match validate_observer_path(path) {
-                                            Ok(normalized_path) => {
-                                                if let Err(e) = router.unregister_observer(&identity, &normalized_path).await {
-                                                    log::error!("Failed to unregister observer: {:?}", e);
-                                                }
-                                            }
-                                            Err(e) => {
-                                                log::error!("Invalid observer path '{}' from {}: {}", path, socket_addr, e);
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                };
-
-                                // Call the service
-                                match router.call(request).await
-                                {
-                                    Ok(mut resp) => {
-                                      // RFC 7641 §3.1: Include observe option in registration response
-                                      if observe_flag == Some(ObserveOption::Register)
-                                          && method == RequestType::Get
-                                          && !resp.get_status().is_error()
-                                      {
-                                          observe_sequence = observe_sequence.wrapping_add(1);
-                                          resp.message.set_observe_value(observe_sequence);
-                                      }
-
-                                      // Get the response
-                                      let bytes = match resp.message.to_bytes() {
-                                          Ok(b) => b,
-                                          Err(e) => {
-                                              log::error!("Failed to serialize response: {}", e);
-                                              continue;
-                                          }
-                                      };
-                                      log::debug!("Got response: {:?}", resp.message);
-
-                                      // Write it back
-                                      match conn.send(&bytes).await {
-                                          Ok(n) => log::debug!("Wrote {} bytes", n),
-                                          Err(e) => {
-                                              log::error!("Error: {}", e);
-                                          }
-                                      };
-                                    }
-                                    Err(e)=> {
-                                        log::error!("Error: {}", e);
-                                    }
-                                }
+                                handle_request(
+                                    packet, socket_addr, &identity, &mut router,
+                                    conn.as_ref(), &obs_tx, &mut obs,
+                                ).await;
                             }
                         }
                         _ = rx.recv() => {
@@ -433,14 +474,8 @@ where
                     }
                 }
 
-                // Clean up connection from the map
-                {
-                    cons.lock().await.remove(&identity);
-                }
-
-                // Clean up all observer subscriptions for this device
+                cons.lock().await.remove(&identity);
                 let _ = router.unregister_all(&identity).await;
-
                 log::info!(
                     "Terminated connection for identity: {} ({})",
                     &identity,
