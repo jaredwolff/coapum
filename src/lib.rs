@@ -15,7 +15,7 @@ pub mod test_utils;
 
 // Re-export commonly used types from the ergonomic API
 pub use credential::memory::MemoryCredentialStore;
-pub use credential::{CredentialStore, PskEntry};
+pub use credential::{ClientInfo, CredentialStore, PskEntry};
 pub use extract::state::FullRequest;
 pub use extract::{
     Bytes, Cbor, FromRequest, Identity, IntoResponse, Json, ObserveFlag, Path, Raw, Source, State,

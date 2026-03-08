@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use tokio::sync::watch;
+
 #[derive(Clone)]
 pub struct Config {
     /// DTLS configuration
@@ -41,6 +43,11 @@ pub struct Config {
     /// Prevents slow clients from blocking notifications to other observers.
     /// Default: 1000ms.
     pub notification_timeout_ms: u64,
+
+    /// Optional shutdown signal. When the sender is dropped or a value is sent,
+    /// the server stops accepting new connections and exits gracefully.
+    /// Default: `None` (server runs until the process is killed).
+    pub shutdown: Option<watch::Receiver<()>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -146,6 +153,14 @@ impl Config {
     pub fn set_notification_timeout_ms(&mut self, timeout_ms: u64) {
         self.notification_timeout_ms = timeout_ms;
     }
+
+    /// Set a shutdown signal receiver for graceful shutdown.
+    ///
+    /// When the corresponding [`watch::Sender`] sends a value or is dropped,
+    /// the server will stop accepting new connections and exit.
+    pub fn set_shutdown(&mut self, rx: watch::Receiver<()>) {
+        self.shutdown = Some(rx);
+    }
 }
 
 impl Default for Config {
@@ -161,6 +176,7 @@ impl Default for Config {
             max_observers_per_device: 100,
             max_connections: 1000,
             notification_timeout_ms: 1000,
+            shutdown: None,
         }
     }
 }

@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::router::{ClientEntry, ClientMetadata};
 
-use super::{CredentialStore, PskEntry};
+use super::{ClientInfo, CredentialStore, PskEntry};
 
 /// In-memory credential store backed by a `HashMap`.
 ///
@@ -141,5 +141,14 @@ impl CredentialStore for MemoryCredentialStore {
     async fn list_clients(&self) -> Result<Vec<String>, Self::Error> {
         let store = self.store.read().await;
         Ok(store.keys().cloned().collect())
+    }
+
+    async fn get_client(&self, identity: &str) -> Result<Option<ClientInfo>, Self::Error> {
+        let store = self.store.read().await;
+        Ok(store.get(identity).map(|entry| ClientInfo {
+            identity: identity.to_string(),
+            enabled: entry.metadata.enabled,
+            metadata: entry.metadata.clone(),
+        }))
     }
 }

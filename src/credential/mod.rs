@@ -26,6 +26,17 @@ pub struct PskEntry {
     pub enabled: bool,
 }
 
+/// Full client info returned by [`CredentialStore::get_client`].
+#[derive(Debug, Clone)]
+pub struct ClientInfo {
+    /// The client's identity string.
+    pub identity: String,
+    /// Whether this client is enabled for connections.
+    pub enabled: bool,
+    /// Client metadata (name, tags, custom fields, etc.).
+    pub metadata: ClientMetadata,
+}
+
 /// Trait for pluggable credential/PSK storage backends.
 ///
 /// Implement this trait to provide a custom credential storage backend
@@ -107,4 +118,15 @@ pub trait CredentialStore: Clone + Debug + Send + Sync + 'static {
 
     /// List all registered client identities.
     fn list_clients(&self) -> impl Future<Output = Result<Vec<String>, Self::Error>> + Send;
+
+    /// Get full client info by identity.
+    ///
+    /// Returns `Ok(None)` if the client doesn't exist. The default implementation
+    /// always returns `Ok(None)` — override this to expose stored metadata.
+    fn get_client(
+        &self,
+        _identity: &str,
+    ) -> impl Future<Output = Result<Option<ClientInfo>, Self::Error>> + Send {
+        std::future::ready(Ok(None))
+    }
 }

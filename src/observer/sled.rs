@@ -84,32 +84,19 @@ impl Observer for SledObserver {
     ) -> Result<(), Self::Error> {
         self.channels.register(device_id, path, sender).await;
 
-        // Spawn sled watcher task if not already running
+        // Spawn watcher task if not already running.
+        // All change notifications are handled in write().
+        // This task only exists for cleanup when unregistered.
         if self.channel.is_none() {
             let (tx, mut rx) = channel::<()>(1);
-            let mut sub = self.db.watch_prefix(device_id);
             let id = device_id.to_string();
             self.channel = Some(tx);
-            let channels = self.channels.clone();
 
             tokio::spawn(async move {
                 tokio::select! {
                     _ = async {
                         tracing::debug!("Starting sled watcher for device: {}", id);
-                        while let Some(sled::Event::Insert { key, value }) = (&mut sub).await {
-                            tracing::debug!("Got sled event for {} with value: {}", String::from_utf8(key.to_vec()).unwrap(), String::from_utf8(value.to_vec()).unwrap());
-                            if key == id {
-                                match serde_json::from_slice::<Value>(&value) {
-                                    Ok(new_value) => {
-                                        // For sled watcher events, we don't have the previous value,
-                                        // so use Null to trigger notifications for all paths
-                                        channels.notify(&id, &Value::Null, &new_value).await;
-                                    }
-                                    Err(e) => tracing::warn!("Unable to fetch value from db. Err: {}", e),
-                                };
-                            }
-                        }
-                        tracing::debug!("sled watcher thread done for device: {}", id);
+                        futures::future::pending::<()>().await;
                     } => {}
                     _ = rx.recv() => {
                         tracing::debug!("Terminating sled subscriber for device: {}", id);

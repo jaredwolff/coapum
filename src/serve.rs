@@ -280,8 +280,10 @@ async fn handle_request<O, S>(
     let observe_flag = *request.get_observe_flag();
     let method = *request.get_method();
 
-    // Handle observations
-    match (observe_flag, method) {
+    // Validate observe request and prepare for deferred registration.
+    // Registration is deferred until after handler succeeds (RFC 7641 §3.1:
+    // the observe option in the response confirms registration).
+    let pending_observe = match (observe_flag, method) {
         (Some(ObserveOption::Register), RequestType::Get) => match validate_observer_path(path) {
             Ok(normalized_path) => {
                 if !router.has_observe_route(&normalized_path) {
@@ -290,6 +292,7 @@ async fn handle_request<O, S>(
                         identity,
                         normalized_path
                     );
+                    None
                 } else if router.observer_count(identity).await >= max_observers_per_device {
                     tracing::warn!(
                         "Observer registration rejected for '{}' on '{}': limit of {} exceeded",
@@ -297,11 +300,9 @@ async fn handle_request<O, S>(
                         normalized_path,
                         max_observers_per_device
                     );
-                } else if let Err(e) = router
-                    .register_observer(identity, &normalized_path, obs_tx.clone())
-                    .await
-                {
-                    tracing::error!("Failed to register observer: {:?}", e);
+                    None
+                } else {
+                    Some(normalized_path)
                 }
             }
             Err(e) => {
@@ -331,20 +332,27 @@ async fn handle_request<O, S>(
                     return;
                 }
             }
+            None
         }
-        _ => {}
-    }
+        _ => None,
+    };
 
     // Route the request
     match router.call(request).await {
         Ok(mut resp) => {
-            // RFC 7641 §3.1: Include observe option in registration response
-            if observe_flag == Some(ObserveOption::Register)
-                && method == RequestType::Get
+            // RFC 7641 §3.1: Register observer only after handler succeeds
+            if let Some(ref normalized_path) = pending_observe
                 && !resp.get_status().is_error()
             {
-                obs.sequence = obs.sequence.wrapping_add(1);
-                resp.message.set_observe_value(obs.sequence);
+                if let Err(e) = router
+                    .register_observer(identity, normalized_path, obs_tx.clone())
+                    .await
+                {
+                    tracing::error!("Failed to register observer: {:?}", e);
+                } else {
+                    obs.sequence = obs.sequence.wrapping_add(1);
+                    resp.message.set_observe_value(obs.sequence);
+                }
             }
 
             // RFC 7959: Fragment large responses using Block2
@@ -383,9 +391,24 @@ where
         Arc::new(Mutex::new(HashMap::new()));
     let active_connections = Arc::new(AtomicUsize::new(0));
     let max_connections = config.max_connections;
+    let mut shutdown_rx = config.shutdown.clone();
 
     loop {
-        if let Ok((conn, socket_addr)) = listener.accept().await {
+        // Check for shutdown signal alongside accepting connections
+        let accept_result = tokio::select! {
+            _ = async {
+                match &mut shutdown_rx {
+                    Some(rx) => { let _ = rx.changed().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                tracing::info!("Shutdown signal received, stopping server");
+                return Ok(());
+            }
+            result = listener.accept() => result,
+        };
+
+        if let Ok((conn, socket_addr)) = accept_result {
             tracing::info!("Got a connection from: {}", socket_addr);
 
             if active_connections.load(Ordering::Relaxed) >= max_connections {
