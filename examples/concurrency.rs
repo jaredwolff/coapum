@@ -21,9 +21,11 @@ const REQUESTS: usize = 1000; // The number of requests each client will send
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
-    log::info!("Client!");
+    tracing::info!("Client!");
 
     // Setup socket
     let addr = "127.0.0.1:0";
@@ -40,7 +42,7 @@ async fn main() {
             // Setup SSL context for PSK
             let config = Config {
                 psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
-                    log::info!(
+                    tracing::info!(
                         "Server's hint: {}",
                         String::from_utf8(hint.to_vec()).unwrap()
                     );
@@ -62,7 +64,7 @@ async fn main() {
             let payload_json = "{\"foo\": {\"bar\": 1, \"baz\": [1, 2, 3]}}";
 
             for _ in 0..REQUESTS {
-                log::info!("Writing: {}", payload_json);
+                tracing::info!("Writing: {}", payload_json);
 
                 let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
                 request.set_method(RequestType::Get);
@@ -73,21 +75,21 @@ async fn main() {
                     .set_content_format(ContentFormat::ApplicationJSON);
                 match dtls_conn.send(&request.message.to_bytes().unwrap()).await {
                     Ok(n) => {
-                        log::info!("Wrote {} bytes", n);
+                        tracing::info!("Wrote {} bytes", n);
                     }
                     Err(e) => {
-                        log::error!("Error writing: {}", e);
+                        tracing::error!("Error writing: {}", e);
                         break;
                     }
                 };
 
                 if let Ok(n) = dtls_conn.recv(&mut b).await {
-                    log::debug!("Read {} bytes", n);
+                    tracing::debug!("Read {} bytes", n);
 
                     let packet = Packet::from_bytes(&b[0..n]).unwrap();
 
-                    log::info!("Response: {:?}", String::from_utf8(packet.payload).unwrap());
-                    log::info!("Status: {:?}", packet.header.code);
+                    tracing::info!("Response: {:?}", String::from_utf8(packet.payload).unwrap());
+                    tracing::info!("Status: {:?}", packet.header.code);
                 }
             }
         });

@@ -162,7 +162,9 @@ async fn start_push_server(
 
 #[tokio::test]
 async fn test_observe_registration_and_initial_response() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create state
     let app_state = PushTestState {
@@ -231,7 +233,9 @@ async fn test_observe_registration_and_initial_response() {
 
 #[tokio::test]
 async fn test_observe_push_notification_via_database_write() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create state
     let app_state = PushTestState {
@@ -362,7 +366,9 @@ async fn test_observe_push_notification_via_database_write() {
 
 #[tokio::test]
 async fn test_observe_deregistration() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create state
     let app_state = PushTestState {
@@ -477,7 +483,9 @@ async fn test_observe_deregistration() {
 
 #[tokio::test]
 async fn test_debug_path_format() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create a simple observer to test path format
     let mut observer = MemObserver::new();

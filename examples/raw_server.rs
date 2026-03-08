@@ -22,7 +22,7 @@ const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
 async fn test() -> Raw {
     let json = "{\"resp\":\"OK\"}";
-    log::info!("Writing: {}", json);
+    tracing::info!("Writing: {}", json);
     let json = json.as_bytes().to_vec();
 
     Raw {
@@ -33,9 +33,11 @@ async fn test() -> Raw {
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
-    log::info!("Server!");
+    tracing::info!("Server!");
 
     // Set up store
     let psk_store: PskStore = Arc::new(RwLock::new(HashMap::new()));
@@ -56,13 +58,13 @@ async fn main() {
         psk: Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
             let hint = String::from_utf8(hint.to_vec()).unwrap();
 
-            log::info!("Client's hint: {}", hint);
+            tracing::info!("Client's hint: {}", hint);
 
             // Look up the hint in the database
             if let Some(psk) = psk_store.read().unwrap().get(&hint) {
                 Ok(psk.clone())
             } else {
-                log::info!("Hint {} not found in store", hint);
+                tracing::info!("Hint {} not found in store", hint);
                 Err(Error::ErrIdentityNoPsk)
             }
         })),

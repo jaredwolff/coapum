@@ -99,7 +99,7 @@ impl Observer for SledObserver {
             .or_insert_with(HashMap::new)
             .insert(path.to_string(), sender);
 
-        log::debug!(
+        tracing::debug!(
             "Registered observer for device '{}' at path '{}'",
             device_id,
             path
@@ -127,10 +127,10 @@ impl Observer for SledObserver {
                 tokio::select! {
                     _ = async {
 
-                        log::debug!("Starting sled watcher for device: {}", id);
+                        tracing::debug!("Starting sled watcher for device: {}", id);
                         while let Some(sled::Event::Insert { key, value }) = (&mut sub).await {
 
-                            log::debug!("Got sled event for {} with value: {}", String::from_utf8(key.to_vec()).unwrap(), String::from_utf8(value.to_vec()).unwrap());
+                            tracing::debug!("Got sled event for {} with value: {}", String::from_utf8(key.to_vec()).unwrap(), String::from_utf8(value.to_vec()).unwrap());
 
                             // Check to make sure they're equal
                             if key == id
@@ -144,10 +144,10 @@ impl Observer for SledObserver {
 
                                         let channels = channels.read().await;
 
-                                        log::debug!("Looking for observers for device '{}'", id);
+                                        tracing::debug!("Looking for observers for device '{}'", id);
 
                                         if let Some(device_channels) = channels.get(&id) {
-                                            log::debug!("Found device '{}' with {} observers", id, device_channels.len());
+                                            tracing::debug!("Found device '{}' with {} observers", id, device_channels.len());
                                             // Iterate through all subscribed channels for this device
                                             for (obs_path, sender) in device_channels.iter() {
                                                 // Convert path to JSON pointer format (add leading slash if not present)
@@ -169,18 +169,18 @@ impl Observer for SledObserver {
                                                 }
                                             }
                                         } else {
-                                            log::warn!("No observers found for device '{}'", id);
+                                            tracing::warn!("No observers found for device '{}'", id);
                                         }
                                     }
-                                    Err(e)=>log::warn!("Unable to fetch value from db. Err: {}",e)
+                                    Err(e)=>tracing::warn!("Unable to fetch value from db. Err: {}",e)
                                 };
                             }
                         }
 
-                        log::debug!("sled watcher thread done for device: {}", id);
+                        tracing::debug!("sled watcher thread done for device: {}", id);
                     } => {}
                     _ = rx.recv() => {
-                        log::debug!("Terminating sled subscriber for device: {}", id);
+                        tracing::debug!("Terminating sled subscriber for device: {}", id);
                     }
                 }
             });
@@ -240,7 +240,7 @@ impl Observer for SledObserver {
         // Set value at correct provided path
         let new_value = super::path_to_json(path, payload);
 
-        log::debug!("New value: {:?} for path: {}", new_value, path);
+        tracing::debug!("New value: {:?} for path: {}", new_value, path);
 
         // Phase 1: Read existing value and merge (blocking DB read)
         let db = self.db.clone();
@@ -261,13 +261,13 @@ impl Observer for SledObserver {
                         // Perform merge
                         super::merge_json(&mut merged_value, &nv);
 
-                        log::debug!("Merged value: {:?}", merged_value);
+                        tracing::debug!("Merged value: {:?}", merged_value);
 
                         // Return merged result
                         merged_value
                     }
                     Err(e) => {
-                        log::warn!("Unable to serialize. Err: {}", e);
+                        tracing::warn!("Unable to serialize. Err: {}", e);
                         nv
                     }
                 }
@@ -281,18 +281,18 @@ impl Observer for SledObserver {
         // Only check observers for this specific device
         let channels = self.channels.read().await;
 
-        log::debug!(
+        tracing::debug!(
             "Looking for observers for device '{}' with write to path '{}'",
             device_id,
             path
         );
-        log::debug!(
+        tracing::debug!(
             "Currently registered devices: {:?}",
             channels.keys().collect::<Vec<_>>()
         );
 
         if let Some(device_channels) = channels.get(device_id) {
-            log::debug!(
+            tracing::debug!(
                 "Found device '{}' with {} observers",
                 device_id,
                 device_channels.len()
@@ -309,13 +309,13 @@ impl Observer for SledObserver {
                 let current_value_at_path = current_value.pointer(&json_pointer);
                 let incoming_value_at_path = value.pointer(&json_pointer);
 
-                log::debug!("Comparing paths: {} for device: {}", obs_path, device_id);
-                log::debug!("Current value at path: {:?}", current_value_at_path);
-                log::debug!("Incoming value at path: {:?}", incoming_value_at_path);
+                tracing::debug!("Comparing paths: {} for device: {}", obs_path, device_id);
+                tracing::debug!("Current value at path: {:?}", current_value_at_path);
+                tracing::debug!("Incoming value at path: {:?}", incoming_value_at_path);
 
                 // Get the pointed value
                 if current_value_at_path != incoming_value_at_path {
-                    log::debug!(
+                    tracing::debug!(
                         "Value changed at path: {} for device: {}",
                         obs_path,
                         device_id
@@ -334,7 +334,7 @@ impl Observer for SledObserver {
                         })
                         .await
                     {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to send observer notification for device {} path {}: {}",
                             device_id,
                             obs_path,
@@ -344,10 +344,10 @@ impl Observer for SledObserver {
                 }
             }
         } else {
-            log::warn!("No observers found for device '{}'", device_id);
+            tracing::warn!("No observers found for device '{}'", device_id);
         }
 
-        log::debug!("Value to write: {:?}", value);
+        tracing::debug!("Value to write: {:?}", value);
 
         // Phase 3: Write merged value back (blocking DB write)
         let db = self.db.clone();
@@ -356,13 +356,13 @@ impl Observer for SledObserver {
         tokio::task::spawn_blocking(move || match serde_json::to_vec(&val) {
             Ok(v) => match db.insert(did.as_bytes(), v) {
                 Ok(v) => {
-                    log::debug!("Value set: {:?}", v);
+                    tracing::debug!("Value set: {:?}", v);
                 }
                 Err(e) => {
-                    log::error!("Error writing to sled: {}", e);
+                    tracing::error!("Error writing to sled: {}", e);
                 }
             },
-            Err(e) => log::warn!("Unable to convert payload to bytes. Err: {}", e),
+            Err(e) => tracing::warn!("Unable to convert payload to bytes. Err: {}", e),
         })
         .await?;
 
@@ -378,18 +378,18 @@ impl Observer for SledObserver {
                 Ok(Some(value)) => {
                     let value: Value = serde_json::from_slice(&value)?;
 
-                    log::debug!("Got value: {:?}", value);
+                    tracing::debug!("Got value: {:?}", value);
 
                     // Get the value at the indicated path
                     let pointer_value = value.pointer(&p).cloned();
 
-                    log::debug!("Pointer value: {:?}", pointer_value);
+                    tracing::debug!("Pointer value: {:?}", pointer_value);
 
                     Ok(pointer_value)
                 }
                 Ok(None) => Ok(None),
                 Err(e) => {
-                    log::error!("Error reading from sled: {}", e);
+                    tracing::error!("Error reading from sled: {}", e);
                     Err(e.into())
                 }
             }
@@ -421,7 +421,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sled_observer_write_and_read() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         // Use a temporary directory for the database to avoid leaving artifacts
         let tempdir = tempfile::tempdir().unwrap();
@@ -467,7 +469,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sled_observer_observe_and_write() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         // Create test DB in a temporary directory
         let tempdir = tempfile::tempdir().unwrap();

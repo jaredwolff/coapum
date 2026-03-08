@@ -135,7 +135,9 @@ async fn get_temperature_history() -> SenML {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     let app_state = AppState::default();
     let observer = MemObserver::new();

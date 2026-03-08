@@ -97,7 +97,7 @@ async fn update_device_state(
     Identity(client_id): Identity,
     State(app_state): State<AppState>,
 ) -> Result<Cbor<ApiResponse>, StatusCode> {
-    log::info!(
+    tracing::info!(
         "Updating device {} state from client {}: temp={}°C, humidity={}%, battery={}%",
         device_id,
         client_id,
@@ -123,7 +123,7 @@ async fn get_device_state(
     Identity(client_id): Identity,
     State(app_state): State<AppState>,
 ) -> Result<Cbor<DeviceState>, StatusCode> {
-    log::info!(
+    tracing::info!(
         "Getting device {} state for client {}",
         device_id,
         client_id
@@ -146,7 +146,7 @@ async fn notify_device_state(
     Identity(client_id): Identity,
     State(app_state): State<AppState>,
 ) -> Cbor<DeviceState> {
-    log::info!(
+    tracing::info!(
         "Sending notification for device {} to client {}",
         device_id,
         client_id
@@ -169,7 +169,7 @@ async fn delete_device_state(
     Identity(client_id): Identity,
     State(app_state): State<AppState>,
 ) -> Result<StatusCode, StatusCode> {
-    log::info!(
+    tracing::info!(
         "Deleting device {} state for client {}",
         device_id,
         client_id
@@ -186,7 +186,7 @@ async fn handle_stream_data(
     Path(stream_id): Path<String>,
     Identity(client_id): Identity,
 ) -> StatusCode {
-    log::info!(
+    tracing::info!(
         "Received stream data for {} from client {}",
         stream_id,
         client_id
@@ -197,21 +197,23 @@ async fn handle_stream_data(
 
 // Simple echo handler - PUT echo
 async fn echo_handler(payload: coapum::extract::Bytes) -> coapum::extract::Bytes {
-    log::info!("Echoing {} bytes", payload.len());
+    tracing::info!("Echoing {} bytes", payload.len());
     payload
 }
 
 // Simple ping handler - any method on root
 async fn ping_handler(Identity(client_id): Identity) -> StatusCode {
-    log::info!("Ping from {}", client_id);
+    tracing::info!("Ping from {}", client_id);
     StatusCode::Valid
 }
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
-    log::info!("Starting ergonomic CoAP server!");
+    tracing::info!("Starting ergonomic CoAP server!");
 
     // Set up PSK store
     let psk_store: PskStore = Arc::new(RwLock::new(HashMap::new()));
@@ -248,12 +250,12 @@ async fn main() {
     let dtls_cfg = Config {
         psk: Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
             let hint = String::from_utf8(hint.to_vec()).unwrap();
-            log::info!("Client's hint: {}", hint);
+            tracing::info!("Client's hint: {}", hint);
 
             if let Some(psk) = psk_store.read().unwrap().get(&hint) {
                 Ok(psk.clone())
             } else {
-                log::info!("Hint {} not found in store", hint);
+                tracing::info!("Hint {} not found in store", hint);
                 Err(Error::ErrIdentityNoPsk)
             }
         })),
@@ -269,18 +271,18 @@ async fn main() {
         ..Default::default()
     };
 
-    log::info!("Server listening on {}", addr);
-    log::info!("Routes configured:");
-    log::info!("  POST   .d/:device_id  - Update device state");
-    log::info!("  GET    .d/:device_id  - Get device state");
-    log::info!("  DELETE .d/:device_id  - Delete device state");
-    log::info!("  POST   .s/:stream_id  - Handle stream data");
-    log::info!("  PUT    echo           - Echo payload");
-    log::info!("  GET    hello          - Echo payload");
-    log::info!("  ANY    /              - Ping");
+    tracing::info!("Server listening on {}", addr);
+    tracing::info!("Routes configured:");
+    tracing::info!("  POST   .d/:device_id  - Update device state");
+    tracing::info!("  GET    .d/:device_id  - Get device state");
+    tracing::info!("  DELETE .d/:device_id  - Delete device state");
+    tracing::info!("  POST   .s/:stream_id  - Handle stream data");
+    tracing::info!("  PUT    echo           - Echo payload");
+    tracing::info!("  GET    hello          - Echo payload");
+    tracing::info!("  ANY    /              - Ping");
 
     // Start the server
     if let Err(e) = serve::serve(addr.to_string(), cfg, router).await {
-        log::error!("Server error: {}", e);
+        tracing::error!("Server error: {}", e);
     }
 }

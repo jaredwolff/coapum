@@ -186,7 +186,9 @@ async fn monitor_clients(client_manager: ClientManager) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     // Create application state
     let state = AppState {
@@ -233,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn the server
     let server_handle = tokio::spawn(async move {
         if let Err(e) = server_future.await {
-            log::error!("Server error: {}", e);
+            tracing::error!("Server error: {}", e);
         }
     });
 
@@ -255,7 +257,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wait for server or handle shutdown
     server_handle.await.unwrap_or_else(|e| {
-        log::error!("Server task failed: {}", e);
+        tracing::error!("Server task failed: {}", e);
     });
 
     Ok(())

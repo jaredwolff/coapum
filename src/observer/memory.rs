@@ -86,7 +86,7 @@ impl Observer for MemObserver {
             .or_insert_with(HashMap::new)
             .insert(path.to_string(), sender);
 
-        log::debug!(
+        tracing::debug!(
             "Registered observer for device '{}' at path '{}'",
             device_id,
             path
@@ -129,7 +129,7 @@ impl Observer for MemObserver {
         // Set value at correct provided path
         let new_value = super::path_to_json(path, payload);
 
-        log::debug!("New value: {:?} for path: {}", new_value, path);
+        tracing::debug!("New value: {:?} for path: {}", new_value, path);
 
         let mut current_value = Value::Null;
 
@@ -143,7 +143,7 @@ impl Observer for MemObserver {
             // Perform merge
             super::merge_json(&mut merged_value, &new_value);
 
-            log::debug!("Merged value: {:?}", merged_value);
+            tracing::debug!("Merged value: {:?}", merged_value);
 
             // Return merged result
             merged_value
@@ -155,12 +155,12 @@ impl Observer for MemObserver {
         // Security: Clone the channels to minimize lock hold time and prevent race conditions
         let device_channels = {
             let channels = self.channels.read().await;
-            log::debug!(
+            tracing::debug!(
                 "Looking for observers for device '{}' with write to path '{}'",
                 device_id,
                 path
             );
-            log::debug!(
+            tracing::debug!(
                 "Currently registered devices: {:?}",
                 channels.keys().collect::<Vec<_>>()
             );
@@ -168,7 +168,7 @@ impl Observer for MemObserver {
         };
 
         if let Some(device_channels) = device_channels {
-            log::debug!(
+            tracing::debug!(
                 "Found device '{}' with {} observers",
                 device_id,
                 device_channels.len()
@@ -185,13 +185,13 @@ impl Observer for MemObserver {
                 let current_value = current_value.pointer(&json_pointer);
                 let incoming_value = value.pointer(&json_pointer);
 
-                log::debug!("Comparing paths: {} for device: {}", obs_path, device_id);
-                log::debug!("Current value at path: {:?}", current_value);
-                log::debug!("Incoming value at path: {:?}", incoming_value);
+                tracing::debug!("Comparing paths: {} for device: {}", obs_path, device_id);
+                tracing::debug!("Current value at path: {:?}", current_value);
+                tracing::debug!("Incoming value at path: {:?}", incoming_value);
 
                 // Get the pointed value
                 if current_value != incoming_value {
-                    log::debug!(
+                    tracing::debug!(
                         "Value changed at path: {} for device: {}",
                         obs_path,
                         device_id
@@ -210,7 +210,7 @@ impl Observer for MemObserver {
                         })
                         .await
                     {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to send observer notification for device {} path {}: {}",
                             device_id,
                             obs_path,
@@ -220,7 +220,7 @@ impl Observer for MemObserver {
                 }
             }
         } else {
-            log::warn!("No observers found for device '{}'", device_id);
+            tracing::warn!("No observers found for device '{}'", device_id);
         }
 
         // Then write it back
@@ -233,12 +233,12 @@ impl Observer for MemObserver {
     async fn read(&mut self, device_id: &str, path: &str) -> Result<Option<Value>, Self::Error> {
         match self.db.get(device_id) {
             Some(value) => {
-                log::debug!("Got value: {:?}", value);
+                tracing::debug!("Got value: {:?}", value);
 
                 // Get the value ad the indicated path
                 let pointer_value = value.pointer(path).cloned();
 
-                log::debug!("Pointer value: {:?}", pointer_value);
+                tracing::debug!("Pointer value: {:?}", pointer_value);
 
                 Ok(pointer_value)
             }
@@ -269,7 +269,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sled_observer_write_and_read() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         let mut observer = OBSERVER.clone();
 
@@ -312,7 +314,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sled_observer_observe_and_write() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         // Create test DB
         let mut observer = OBSERVER.clone();

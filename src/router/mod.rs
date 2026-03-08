@@ -562,7 +562,7 @@ where
 
     /// Looks up an observer handler for a given path.
     pub fn lookup_observer_handler(&self, path: &str) -> Option<Box<dyn ErasedHandler<S>>> {
-        log::debug!("Looking up observer handler for path: '{}'", path);
+        tracing::debug!("Looking up observer handler for path: '{}'", path);
         match self.inner.recognize(path) {
             Ok(matched) => {
                 let handler = matched.handler();
@@ -570,10 +570,10 @@ where
                 // If it's an observe, get by default
                 let reqtype: RequestTypeWrapper = RequestType::Get.into();
 
-                log::debug!("Matched route: {:?}", matched);
+                tracing::debug!("Matched route: {:?}", matched);
                 match handler.get(&reqtype) {
                     Some(h) => {
-                        log::debug!(
+                        tracing::debug!(
                             "Matched handler, has observe_handler: {}",
                             h.observe_handler.is_some()
                         );
@@ -582,13 +582,13 @@ where
                             .map(|handler| handler.clone_erased())
                     }
                     None => {
-                        log::debug!("No handler found for GET method");
+                        tracing::debug!("No handler found for GET method");
                         None
                     }
                 }
             }
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "Unable to recognize observer handler path '{}'. Err: {}",
                     path,
                     e
@@ -611,20 +611,20 @@ where
 
                 let reqtype: RequestTypeWrapper = r.get_method().into();
 
-                log::debug!("Matched route: {:?}", matched);
+                tracing::debug!("Matched route: {:?}", matched);
                 match handler.get(&reqtype) {
                     Some(h) => {
-                        log::debug!("Matched handler: {:?}", h);
+                        tracing::debug!("Matched handler: {:?}", h);
                         Some(h.handler.clone_erased())
                     }
                     None => {
-                        log::debug!("No handler found");
+                        tracing::debug!("No handler found");
                         None
                     }
                 }
             }
             Err(e) => {
-                log::warn!("Unable to recognize. Err: {}", e);
+                tracing::warn!("Unable to recognize. Err: {}", e);
                 None
             }
         }
@@ -898,13 +898,13 @@ where
         match self.lookup(&request) {
             Some(handler) => {
                 let path = request.get_path();
-                log::debug!("Handler found for route: {:?}", &path);
+                tracing::debug!("Handler found for route: {:?}", &path);
 
                 // Call the new ErasedHandler directly
                 Box::pin(async move { handler.call_erased(request, state).await })
             }
             None => {
-                log::info!(
+                tracing::info!(
                     "No handler found for method: {:#?} to: {:?}",
                     request.get_method(),
                     request.get_path()
@@ -944,10 +944,10 @@ where
     fn call(&mut self, request: ObserverRequest<SocketAddr>) -> Self::Future {
         let state = self.state.clone(); // Clone the state so it can be moved into the async block
 
-        log::debug!("Processing ObserverRequest for path: {}", request.path);
+        tracing::debug!("Processing ObserverRequest for path: {}", request.path);
         match self.lookup_observer_handler(&request.path) {
             Some(handler) => {
-                log::debug!("Handler found for route: {:?}", &request.path);
+                tracing::debug!("Handler found for route: {:?}", &request.path);
 
                 let packet = Packet::default();
                 let mut raw = CoapRequest::from_packet(packet, request.source);
@@ -961,7 +961,7 @@ where
                 Box::pin(async move { handler.call_erased(coap_request, state).await })
             }
             None => {
-                log::debug!("No observer handler found for: {}", request.path);
+                tracing::debug!("No observer handler found for: {}", request.path);
 
                 // If no observer handler is found, return a bad request error
                 Box::pin(async move { (ResponseType::BadRequest).into_response() })

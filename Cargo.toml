@@ -23,9 +23,8 @@ test-utils = []
 async-trait = "0.1.89"
 ciborium = { workspace = true }
 coap-lite = "0.13.3"
-env_logger = "0.11.9"
 futures = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 route-recognizer = "0.3.1"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -52,6 +51,7 @@ coapum-senml = { path = "./coapum-senml" }
 lazy_static = { workspace = true }
 criterion = { workspace = true }
 tempfile = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 coapum = { path = ".", features = ["test-utils"] }
 
 [[bench]]
@@ -72,7 +72,7 @@ serde_json = { version = "1.0" }
 ciborium = { version = "0.2" }
 tokio = { version = "1.50.0" }
 futures = { version = "0.3.32" }
-log = { version = "0.4.29" }
+tracing = { version = "0.1" }
 criterion = { version = "0.7.0" }
 lazy_static = { version = "1.5.0" }
 tempfile = { version = "3.26.0" }

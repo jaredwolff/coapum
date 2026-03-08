@@ -44,26 +44,26 @@ async fn send_request(
         request.message.set_content_format(format);
     }
 
-    log::info!("Sending {:?} request to {}", method, path);
+    tracing::info!("Sending {:?} request to {}", method, path);
 
     match dtls_conn.send(&request.message.to_bytes().unwrap()).await {
         Ok(n) => {
-            log::info!("Wrote {} bytes", n);
+            tracing::info!("Wrote {} bytes", n);
         }
         Err(e) => {
-            log::error!("Error writing: {}", e);
+            tracing::error!("Error writing: {}", e);
             return Err(e.into());
         }
     };
 
     let mut buffer = vec![0u8; 1024];
     if let Ok(n) = dtls_conn.recv(&mut buffer).await {
-        log::debug!("Read {} bytes", n);
+        tracing::debug!("Read {} bytes", n);
         let packet = Packet::from_bytes(&buffer[0..n]).unwrap();
-        log::info!("Response status: {:?}", packet.header.code);
+        tracing::info!("Response status: {:?}", packet.header.code);
 
         if !packet.payload.is_empty() {
-            log::debug!("Response payload: {} bytes", packet.payload.len());
+            tracing::debug!("Response payload: {} bytes", packet.payload.len());
         }
 
         Ok(packet)
@@ -218,7 +218,9 @@ async fn test_error_conditions(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std::
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     println!("🚀 Ergonomic CoAP Client Starting!");
     println!("Testing the new ergonomic server API...");
@@ -235,7 +237,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup DTLS config
     let config = Config {
         psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
-            log::info!(
+            tracing::info!(
                 "Server's hint: {}",
                 String::from_utf8(hint.to_vec()).unwrap()
             );

@@ -15,7 +15,9 @@ mod redb_integration_tests {
 
     #[tokio::test]
     async fn test_redb_observer_persistence() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         // Create a temporary database file that will be automatically cleaned up
         let temp_file = NamedTempFile::new().unwrap();
@@ -65,7 +67,9 @@ mod redb_integration_tests {
 
     #[tokio::test]
     async fn test_redb_observer_multiple_devices() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         let temp_file = NamedTempFile::new().unwrap();
         let db_path = temp_file.path().to_str().unwrap();
@@ -132,7 +136,9 @@ mod redb_integration_tests {
 
     #[tokio::test]
     async fn test_redb_observer_nested_paths() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         let temp_file = NamedTempFile::new().unwrap();
         let db_path = temp_file.path().to_str().unwrap();
@@ -206,7 +212,9 @@ mod redb_integration_tests {
 
     #[tokio::test]
     async fn test_redb_observer_concurrent_access() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         let temp_file = NamedTempFile::new().unwrap();
         let db_path = temp_file.path().to_str().unwrap();
@@ -255,7 +263,9 @@ mod redb_integration_tests {
 
     #[tokio::test]
     async fn test_redb_observer_security_validation() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         let temp_file = NamedTempFile::new().unwrap();
         let db_path = temp_file.path().to_str().unwrap();

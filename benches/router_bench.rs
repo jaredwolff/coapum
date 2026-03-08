@@ -12,7 +12,7 @@ use tower::Service; // make sure to use your actual project name and import path
 
 async fn test() -> Raw {
     let json = "{\"resp\":\"OK\"}";
-    log::info!("Writing: {}", json);
+    tracing::info!("Writing: {}", json);
 
     Raw {
         payload: json.as_bytes().to_vec(),

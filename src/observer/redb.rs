@@ -195,7 +195,7 @@ impl Observer for RedbObserver {
             .or_insert_with(HashMap::new)
             .insert(path.to_string(), sender);
 
-        log::debug!(
+        tracing::debug!(
             "Registered observer for device '{}' at path '{}'",
             device_id,
             path
@@ -222,7 +222,7 @@ impl Observer for RedbObserver {
             tokio::spawn(async move {
                 tokio::select! {
                     _ = async {
-                        log::debug!("Starting redb watcher for device: {}", id);
+                        tracing::debug!("Starting redb watcher for device: {}", id);
 
                         // Wait for shutdown signal - no polling needed since redb
                         // doesn't support external change watching and all changes
@@ -231,7 +231,7 @@ impl Observer for RedbObserver {
                         future::pending::<()>().await;
                     } => {}
                     _ = rx.recv() => {
-                        log::debug!("Terminating redb subscriber for device: {}", id);
+                        tracing::debug!("Terminating redb subscriber for device: {}", id);
                     }
                 }
             });
@@ -291,7 +291,7 @@ impl Observer for RedbObserver {
         // Set value at correct provided path
         let new_value = super::path_to_json(path, payload);
 
-        log::debug!("New value: {:?} for path: {}", new_value, path);
+        tracing::debug!("New value: {:?} for path: {}", new_value, path);
 
         // Phase 1: Read existing value and merge (blocking DB read)
         let db = self.db.clone();
@@ -318,13 +318,13 @@ impl Observer for RedbObserver {
                                 // Perform merge
                                 super::merge_json(&mut merged_value, &nv);
 
-                                log::debug!("Merged value: {:?}", merged_value);
+                                tracing::debug!("Merged value: {:?}", merged_value);
 
                                 // Return merged result
                                 merged_value
                             }
                             Err(e) => {
-                                log::warn!("Unable to deserialize. Err: {}", e);
+                                tracing::warn!("Unable to deserialize. Err: {}", e);
                                 nv
                             }
                         }
@@ -339,18 +339,18 @@ impl Observer for RedbObserver {
         // Only check observers for this specific device
         let channels = self.channels.read().await;
 
-        log::debug!(
+        tracing::debug!(
             "Looking for observers for device '{}' with write to path '{}'",
             device_id,
             path
         );
-        log::debug!(
+        tracing::debug!(
             "Currently registered devices: {:?}",
             channels.keys().collect::<Vec<_>>()
         );
 
         if let Some(device_channels) = channels.get(device_id) {
-            log::debug!(
+            tracing::debug!(
                 "Found device '{}' with {} observers",
                 device_id,
                 device_channels.len()
@@ -361,20 +361,20 @@ impl Observer for RedbObserver {
                 let json_pointer = match validate_json_pointer_path(obs_path) {
                     Ok(path) => path,
                     Err(e) => {
-                        log::warn!("Invalid observer path '{}': {}", obs_path, e);
+                        tracing::warn!("Invalid observer path '{}': {}", obs_path, e);
                         continue;
                     }
                 };
                 let current_value_at_path = current_value.pointer(&json_pointer);
                 let incoming_value_at_path = value.pointer(&json_pointer);
 
-                log::debug!("Comparing paths: {} for device: {}", obs_path, device_id);
-                log::debug!("Current value at path: {:?}", current_value_at_path);
-                log::debug!("Incoming value at path: {:?}", incoming_value_at_path);
+                tracing::debug!("Comparing paths: {} for device: {}", obs_path, device_id);
+                tracing::debug!("Current value at path: {:?}", current_value_at_path);
+                tracing::debug!("Incoming value at path: {:?}", incoming_value_at_path);
 
                 // Get the pointed value
                 if current_value_at_path != incoming_value_at_path {
-                    log::debug!(
+                    tracing::debug!(
                         "Value changed at path: {} for device: {}",
                         obs_path,
                         device_id
@@ -393,7 +393,7 @@ impl Observer for RedbObserver {
                         })
                         .await
                     {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to send observer notification for device {} path {}: {}",
                             device_id,
                             obs_path,
@@ -403,10 +403,10 @@ impl Observer for RedbObserver {
                 }
             }
         } else {
-            log::warn!("No observers found for device '{}'", device_id);
+            tracing::warn!("No observers found for device '{}'", device_id);
         }
 
-        log::debug!("Value to write: {:?}", value);
+        tracing::debug!("Value to write: {:?}", value);
 
         // Phase 3: Write merged value back (blocking DB write)
         let db = self.db.clone();
@@ -419,7 +419,7 @@ impl Observer for RedbObserver {
                 table.insert(did.as_str(), value_str.as_str())?;
             }
             write_txn.commit()?;
-            log::debug!("Value successfully written to redb");
+            tracing::debug!("Value successfully written to redb");
             Ok(())
         })
         .await??;
@@ -442,12 +442,12 @@ impl Observer for RedbObserver {
                     let value_str = value.value();
                     let value: Value = serde_json::from_str(value_str)?;
 
-                    log::debug!("Got value for validated path");
+                    tracing::debug!("Got value for validated path");
 
                     // Get the value at the indicated path
                     let pointer_value = value.pointer(&validated_path).cloned();
 
-                    log::debug!("Pointer value: {:?}", pointer_value);
+                    tracing::debug!("Pointer value: {:?}", pointer_value);
 
                     Ok(pointer_value)
                 }
@@ -486,7 +486,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_redb_observer_write_and_read() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         // Use a temporary file path for the redb database
         let tempdir = tempfile::tempdir().unwrap();
@@ -532,7 +534,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_redb_observer_observe_and_write() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         // Create test DB using a temporary file path
         let tempdir = tempfile::tempdir().unwrap();

@@ -218,7 +218,9 @@ async fn send_coap_request(
 
 #[tokio::test]
 async fn test_observe_registration_and_deregistration() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create test state
     let (tx, _rx) = broadcast::channel(10);
@@ -300,7 +302,9 @@ async fn test_observe_registration_and_deregistration() {
 
 #[tokio::test]
 async fn test_observe_notifications() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create test state
     let (tx, _rx) = broadcast::channel(10);
@@ -389,7 +393,9 @@ async fn test_observe_notifications() {
 #[cfg(feature = "sled-observer")]
 #[tokio::test]
 async fn test_observe_with_sled_backend() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create test state
     let (tx, _rx) = broadcast::channel(10);
@@ -471,7 +477,9 @@ async fn test_observe_with_sled_backend() {
 
 #[tokio::test]
 async fn test_observe_multiple_clients() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create test state
     let (tx, _rx) = broadcast::channel(10);
@@ -557,7 +565,9 @@ async fn test_observe_multiple_clients() {
 
 #[tokio::test]
 async fn test_observe_error_conditions() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create test state
     let (tx, _rx) = broadcast::channel(10);
@@ -613,7 +623,9 @@ async fn test_observe_error_conditions() {
 
 #[tokio::test]
 async fn test_observe_with_cbor_payload() {
-    let _ = env_logger::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
     // Create test state
     let (tx, _rx) = broadcast::channel(10);

@@ -53,10 +53,10 @@ impl Subscriptions {
         if let Some(device_channels) = self.channels.get(device_id)
             && let Some(path_channels) = device_channels.get(path)
         {
-            log::info!("Notifying to all listening to: {}", path);
+            tracing::info!("Notifying to all listening to: {}", path);
 
             for (sub, tx) in path_channels {
-                log::info!("Sending to: {}", sub);
+                tracing::info!("Sending to: {}", sub);
                 let _ = tx.send(value.clone());
             }
         }
@@ -120,7 +120,7 @@ impl SubscribableDatabase for MemObserver {
         // New value with path applied
         let new_value = path_to_json(path, &new_value);
 
-        log::info!("New: {:?}", new_value);
+        tracing::info!("New: {:?}", new_value);
 
         // If the current value is something...
         let new_value = if let Some(current_value) = current_value {
@@ -128,7 +128,7 @@ impl SubscribableDatabase for MemObserver {
             let mut merged_value = current_value.clone();
             merge_json(&mut merged_value, &new_value);
 
-            log::info!("Merged: {:?}", merged_value);
+            tracing::info!("Merged: {:?}", merged_value);
 
             // Compare the two
             if !current_value.eq(&new_value) {
@@ -136,7 +136,7 @@ impl SubscribableDatabase for MemObserver {
                 let subscriptions = self.subscriptions.lock().await;
                 if let Some(paths) = subscriptions.channels.get(device_id) {
                     for p in paths.keys() {
-                        log::info!("Path: {}", p);
+                        tracing::info!("Path: {}", p);
 
                         // Get the pointers
                         let current_pointer = current_value.pointer(p);
@@ -144,7 +144,7 @@ impl SubscribableDatabase for MemObserver {
 
                         // Compare (TODO: double check this works ok)
                         if current_pointer != new_pointer && new_pointer.is_some() {
-                            log::info!("Notify: {} with: {:?}", p, new_pointer);
+                            tracing::info!("Notify: {} with: {:?}", p, new_pointer);
 
                             // Notify
                             subscriptions.notify_subscribers(
@@ -161,7 +161,7 @@ impl SubscribableDatabase for MemObserver {
         } else {
             let new_pointer = new_value.pointer(path).cloned().unwrap();
 
-            log::info!("Notify: {} with: {:?}", path, new_pointer);
+            tracing::info!("Notify: {} with: {:?}", path, new_pointer);
 
             self.subscriptions
                 .lock()
@@ -210,7 +210,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscribable_database() {
-        let _ = env_logger::try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
         let mut db = MemObserver::new().unwrap();
 
@@ -225,7 +227,7 @@ mod tests {
             "data": "new_value",
         });
 
-        log::info!("Set to: {:?}", new_value);
+        tracing::info!("Set to: {:?}", new_value);
 
         db.set(device_id, path, new_value.clone()).await.unwrap();
 
@@ -240,7 +242,7 @@ mod tests {
             "data": "new_new_value",
         });
 
-        log::info!("Set to: {:?}", new_value);
+        tracing::info!("Set to: {:?}", new_value);
 
         db.set(device_id, path, new_value.clone()).await.unwrap();
 
@@ -250,7 +252,7 @@ mod tests {
         let next = receiver2.recv().await.unwrap();
         assert_eq!(new_value, next);
 
-        log::info!("Set to: {:?}", new_value);
+        tracing::info!("Set to: {:?}", new_value);
 
         // Should not notify
         db.set(device_id, path, new_value.clone()).await.unwrap();

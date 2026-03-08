@@ -127,7 +127,7 @@ fn extract_identity(identity_hint: Vec<u8>) -> Option<String> {
     const MAX_IDENTITY_LENGTH: usize = 256;
 
     if identity_hint.len() > MAX_IDENTITY_LENGTH {
-        log::error!(
+        tracing::error!(
             "Identity hint too long: {} bytes (max: {})",
             identity_hint.len(),
             MAX_IDENTITY_LENGTH
@@ -144,14 +144,14 @@ fn extract_identity(identity_hint: Vec<u8>) -> Option<String> {
                 .collect();
 
             if sanitized.is_empty() {
-                log::error!("Identity hint contains no valid characters");
+                tracing::error!("Identity hint contains no valid characters");
                 None
             } else {
                 Some(sanitized)
             }
         }
         Err(e) => {
-            log::error!("Invalid UTF-8 in identity hint: {}", e);
+            tracing::error!("Invalid UTF-8 in identity hint: {}", e);
             None
         }
     }
@@ -170,7 +170,7 @@ async fn manage_connection(
 
     if let Some(old_conn) = guard.get(identity) {
         if old_conn.established_at.elapsed() < MIN_RECONNECT_INTERVAL {
-            log::warn!(
+            tracing::warn!(
                 "Rate limited: Rapid reconnection attempt from {} for identity '{}' (interval: {:?})",
                 socket_addr,
                 identity,
@@ -180,7 +180,7 @@ async fn manage_connection(
         }
 
         if old_conn.reconnect_count > MAX_RECONNECT_ATTEMPTS {
-            log::error!(
+            tracing::error!(
                 "Security: Too many reconnection attempts from {} for identity '{}' (count: {})",
                 socket_addr,
                 identity,
@@ -203,7 +203,7 @@ async fn manage_connection(
     };
 
     guard.insert(identity.to_string(), conn_info);
-    log::info!(
+    tracing::info!(
         "Connection established for identity '{}' from {}",
         identity,
         socket_addr
@@ -222,7 +222,7 @@ async fn handle_notification<O, S>(
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
-    log::info!("Got notification: {:?}", value);
+    tracing::info!("Got notification: {:?}", value);
 
     let notification_path = value.path.clone();
     let req = value.to_request(socket_addr);
@@ -230,7 +230,7 @@ async fn handle_notification<O, S>(
     match router.call(req).await {
         Ok(mut resp) => {
             if *resp.get_status() == ResponseType::BadRequest {
-                log::error!("Error: {:?}", resp.message);
+                tracing::error!("Error: {:?}", resp.message);
                 return;
             }
 
@@ -255,20 +255,20 @@ async fn handle_notification<O, S>(
                     .retain(|&id, _| id.wrapping_sub(cutoff) < 256);
             }
 
-            log::info!(
+            tracing::info!(
                 "Sending notification (seq={}) to: {}",
                 obs.sequence,
                 socket_addr
             );
             match resp.message.to_bytes() {
                 Ok(bytes) => match conn.send(&bytes).await {
-                    Ok(n) => log::debug!("Wrote {} notification bytes", n),
-                    Err(e) => log::error!("Error: {}", e),
+                    Ok(n) => tracing::debug!("Wrote {} notification bytes", n),
+                    Err(e) => tracing::error!("Error: {}", e),
                 },
-                Err(e) => log::error!("Failed to serialize response: {}", e),
+                Err(e) => tracing::error!("Failed to serialize response: {}", e),
             }
         }
-        Err(e) => log::error!("Error: {}", e),
+        Err(e) => tracing::error!("Error: {}", e),
     }
 }
 
@@ -276,10 +276,10 @@ async fn handle_notification<O, S>(
 async fn send_response(conn: &(dyn Conn + Send + Sync), resp: &crate::CoapResponse) {
     match resp.message.to_bytes() {
         Ok(bytes) => match conn.send(&bytes).await {
-            Ok(n) => log::debug!("Wrote {} bytes", n),
-            Err(e) => log::error!("Error sending response: {}", e),
+            Ok(n) => tracing::debug!("Wrote {} bytes", n),
+            Err(e) => tracing::error!("Error sending response: {}", e),
         },
-        Err(e) => log::error!("Failed to serialize response: {}", e),
+        Err(e) => tracing::error!("Failed to serialize response: {}", e),
     }
 }
 
@@ -301,7 +301,7 @@ async fn handle_request<O, S>(
     // RFC 7641 §3.2: RST deregisters observer
     if packet.header.get_type() == MessageType::Reset {
         if let Some(path) = obs.notification_msg_ids.remove(&packet.header.message_id) {
-            log::info!("RST deregistration for '{}' path '{}'", identity, path);
+            tracing::info!("RST deregistration for '{}' path '{}'", identity, path);
             let _ = router.unregister_observer(identity, &path).await;
         }
         return;
@@ -319,7 +319,7 @@ async fn handle_request<O, S>(
             return;
         }
         Err(e) => {
-            log::error!("Block transfer error: {}", e.message);
+            tracing::error!("Block transfer error: {}", e.message);
             if let Some(ref resp) = coap_request.response {
                 send_response(conn, resp).await;
             }
@@ -347,10 +347,10 @@ async fn handle_request<O, S>(
                         .register_observer(identity, &normalized_path, obs_tx.clone())
                         .await
                     {
-                        log::error!("Failed to register observer: {:?}", e);
+                        tracing::error!("Failed to register observer: {:?}", e);
                     }
                 } else {
-                    log::warn!(
+                    tracing::warn!(
                         "Observer registration rejected for '{}' on '{}': no observe route",
                         identity,
                         normalized_path
@@ -358,7 +358,7 @@ async fn handle_request<O, S>(
                 }
             }
             Err(e) => {
-                log::error!(
+                tracing::error!(
                     "Invalid observer path '{}' from {}: {}",
                     path,
                     socket_addr,
@@ -371,11 +371,11 @@ async fn handle_request<O, S>(
             match validate_observer_path(path) {
                 Ok(normalized_path) => {
                     if let Err(e) = router.unregister_observer(identity, &normalized_path).await {
-                        log::error!("Failed to unregister observer: {:?}", e);
+                        tracing::error!("Failed to unregister observer: {:?}", e);
                     }
                 }
                 Err(e) => {
-                    log::error!(
+                    tracing::error!(
                         "Invalid observer path '{}' from {}: {}",
                         path,
                         socket_addr,
@@ -404,15 +404,15 @@ async fn handle_request<O, S>(
             let mut block_req = CoapRequest::from_packet(packet_for_block2, socket_addr);
             block_req.response = Some(resp);
             if let Err(e) = block_handler.intercept_response(&mut block_req) {
-                log::error!("Block transfer response error: {}", e.message);
+                tracing::error!("Block transfer response error: {}", e.message);
             }
 
             if let Some(ref resp) = block_req.response {
-                log::debug!("Got response: {:?}", resp.message);
+                tracing::debug!("Got response: {:?}", resp.message);
                 send_response(conn, resp).await;
             }
         }
-        Err(e) => log::error!("Error: {}", e),
+        Err(e) => tracing::error!("Error: {}", e),
     }
 }
 
@@ -437,7 +437,7 @@ where
 
     loop {
         if let Ok((conn, socket_addr)) = listener.accept().await {
-            log::info!("Got a connection from: {}", socket_addr);
+            tracing::info!("Got a connection from: {}", socket_addr);
 
             let mut router = router.clone();
             let config_clone = config.clone();
@@ -446,7 +446,7 @@ where
             let state = if let Some(dtls) = conn.as_any().downcast_ref::<DTLSConn>() {
                 dtls.connection_state().await
             } else {
-                log::error!("Unable to get state!");
+                tracing::error!("Unable to get state!");
                 continue;
             };
 
@@ -455,7 +455,7 @@ where
                 None => continue,
             };
 
-            log::info!("PSK Identity: {}", identity);
+            tracing::info!("PSK Identity: {}", identity);
 
             let cons = connections.clone();
 
@@ -488,7 +488,7 @@ where
                             let recv = match recv {
                                 Ok(r) => r,
                                 Err(e) => {
-                                    log::error!("Timeout! Err: {}", e);
+                                    tracing::error!("Timeout! Err: {}", e);
                                     let _ = cons.lock().await.remove(&identity);
                                     break;
                                 }
@@ -498,7 +498,7 @@ where
                                 let packet = match Packet::from_bytes(&b[..n]) {
                                     Ok(p) => p,
                                     Err(e) => {
-                                        log::error!("Failed to parse packet: {}", e);
+                                        tracing::error!("Failed to parse packet: {}", e);
                                         continue;
                                     }
                                 };
@@ -510,7 +510,7 @@ where
                             }
                         }
                         _ = rx.recv() => {
-                            log::info!("Terminating connection with: {}", socket_addr);
+                            tracing::info!("Terminating connection with: {}", socket_addr);
                             break;
                         }
                     }
@@ -518,7 +518,7 @@ where
 
                 cons.lock().await.remove(&identity);
                 let _ = router.unregister_all(&identity).await;
-                log::info!(
+                tracing::info!(
                     "Terminated connection for identity: {} ({})",
                     &identity,
                     &socket_addr
@@ -607,7 +607,7 @@ where
 /// // User controls how to run the server
 /// tokio::spawn(async move {
 ///     if let Err(e) = server_future.await {
-///         log::error!("Server error: {}", e);
+///         tracing::error!("Server error: {}", e);
 ///     }
 /// });
 ///
@@ -675,21 +675,21 @@ where
     dtls_cfg.psk = Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
         let hint_str = String::from_utf8(hint.to_vec()).map_err(|_| Error::ErrIdentityNoPsk)?;
 
-        log::debug!("PSK callback for identity: {}", hint_str);
+        tracing::debug!("PSK callback for identity: {}", hint_str);
 
         // Use blocking read since we're in a sync context
         let store = store_for_psk.blocking_read();
 
         if let Some(entry) = store.get(&hint_str) {
             if entry.metadata.enabled {
-                log::info!("PSK found for identity: {}", hint_str);
+                tracing::info!("PSK found for identity: {}", hint_str);
                 Ok(entry.key.clone())
             } else {
-                log::warn!("Client {} is disabled", hint_str);
+                tracing::warn!("Client {} is disabled", hint_str);
                 Err(Error::ErrIdentityNoPsk)
             }
         } else {
-            log::warn!("PSK not found for identity: {}", hint_str);
+            tracing::warn!("PSK not found for identity: {}", hint_str);
             Err(Error::ErrIdentityNoPsk)
         }
     }));
@@ -721,41 +721,41 @@ async fn process_client_command(cmd: ClientCommand, store: &ClientStore) {
                 }),
             };
             store.insert(identity.clone(), entry);
-            log::info!("Added client: {}", identity);
+            tracing::info!("Added client: {}", identity);
         }
         ClientCommand::RemoveClient { identity } => {
             let mut store = store.write().await;
             if store.remove(&identity).is_some() {
-                log::info!("Removed client: {}", identity);
+                tracing::info!("Removed client: {}", identity);
             } else {
-                log::warn!("Client not found for removal: {}", identity);
+                tracing::warn!("Client not found for removal: {}", identity);
             }
         }
         ClientCommand::UpdateKey { identity, key } => {
             let mut store = store.write().await;
             if let Some(entry) = store.get_mut(&identity) {
                 entry.key = key;
-                log::info!("Updated key for client: {}", identity);
+                tracing::info!("Updated key for client: {}", identity);
             } else {
-                log::warn!("Client not found for key update: {}", identity);
+                tracing::warn!("Client not found for key update: {}", identity);
             }
         }
         ClientCommand::UpdateMetadata { identity, metadata } => {
             let mut store = store.write().await;
             if let Some(entry) = store.get_mut(&identity) {
                 entry.metadata = metadata;
-                log::info!("Updated metadata for client: {}", identity);
+                tracing::info!("Updated metadata for client: {}", identity);
             } else {
-                log::warn!("Client not found for metadata update: {}", identity);
+                tracing::warn!("Client not found for metadata update: {}", identity);
             }
         }
         ClientCommand::SetClientEnabled { identity, enabled } => {
             let mut store = store.write().await;
             if let Some(entry) = store.get_mut(&identity) {
                 entry.metadata.enabled = enabled;
-                log::info!("Set client {} enabled: {}", identity, enabled);
+                tracing::info!("Set client {} enabled: {}", identity, enabled);
             } else {
-                log::warn!("Client not found for enable/disable: {}", identity);
+                tracing::warn!("Client not found for enable/disable: {}", identity);
             }
         }
         ClientCommand::ListClients { response } => {

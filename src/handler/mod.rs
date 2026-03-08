@@ -68,7 +68,7 @@ where
         Box::pin(async move {
             let result = (self.f)().await;
             Ok(result.into_response().unwrap_or_else(|e| {
-                log::error!("Response conversion failed: {}", e);
+                tracing::error!("Response conversion failed: {}", e);
                 crate::extract::StatusCode::InternalServerError
                     .into_response()
                     .unwrap()
@@ -97,7 +97,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -108,7 +108,7 @@ where
 
             let result = (self.f)(t1).await;
             Ok(result.into_response().unwrap_or_else(|e| {
-                log::error!("Response conversion failed: {}", e);
+                tracing::error!("Response conversion failed: {}", e);
                 crate::extract::StatusCode::InternalServerError
                     .into_response()
                     .unwrap()
@@ -140,7 +140,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -152,7 +152,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -164,7 +164,7 @@ where
 
             let result = (self.f)(t1, t2).await;
             Ok(result.into_response().unwrap_or_else(|e| {
-                log::error!("Response conversion failed: {}", e);
+                tracing::error!("Response conversion failed: {}", e);
                 crate::extract::StatusCode::InternalServerError
                     .into_response()
                     .unwrap()
@@ -198,7 +198,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -210,7 +210,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -222,7 +222,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -234,7 +234,7 @@ where
 
             let result = (self.f)(t1, t2, t3).await;
             Ok(result.into_response().unwrap_or_else(|e| {
-                log::error!("Response conversion failed: {}", e);
+                tracing::error!("Response conversion failed: {}", e);
                 crate::extract::StatusCode::InternalServerError
                     .into_response()
                     .unwrap()
@@ -270,7 +270,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -282,7 +282,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -294,7 +294,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -306,7 +306,7 @@ where
                 Ok(val) => val,
                 Err(rejection) => {
                     return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        log::error!("Rejection response conversion failed: {}", e);
+                        tracing::error!("Rejection response conversion failed: {}", e);
                         crate::extract::StatusCode::BadRequest
                             .into_response()
                             .unwrap()
@@ -318,7 +318,7 @@ where
 
             let result = (self.f)(t1, t2, t3, t4).await;
             Ok(result.into_response().unwrap_or_else(|e| {
-                log::error!("Response conversion failed: {}", e);
+                tracing::error!("Response conversion failed: {}", e);
                 crate::extract::StatusCode::InternalServerError
                     .into_response()
                     .unwrap()
