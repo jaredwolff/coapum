@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773083213071,
+  "lastUpdate": 1773083297141,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -329,6 +329,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1042,
             "range": "± 4",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "8505a0dc8c4a296314eccc3408405223429341b5",
+          "message": "deps: use git dependency for dimpl instead of local path\n\nFixes CI builds by pointing to the circuitdojo/dimpl fork\ninstead of a sibling directory that doesn't exist in CI.",
+          "timestamp": "2026-03-09T15:04:11-04:00",
+          "tree_id": "181ce7abb2b4c773443ca11a6c84838af3b471ac",
+          "url": "https://github.com/jaredwolff/coapum/commit/8505a0dc8c4a296314eccc3408405223429341b5"
+        },
+        "date": 1773083296804,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1034,
+            "range": "± 9",
             "unit": "ns/iter"
           }
         ]
