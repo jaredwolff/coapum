@@ -374,9 +374,8 @@ mod config_integration_tests {
             "Buffer should be reasonable size"
         );
 
-        // Test that DTLS config exists
-        // Note: DTLSConfig fields are mostly private, but we can verify it exists
-        let _dtls_config = &config.dtls_cfg;
+        // Test that dimpl config is None by default (set via serve_with_credential_store)
+        assert!(config.dimpl_cfg.is_none());
     }
 
     #[tokio::test]

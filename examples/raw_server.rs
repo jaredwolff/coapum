@@ -1,22 +1,8 @@
-use std::{
-    self,
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+use std::collections::HashMap;
 
 use coapum::{
-    Raw,
-    dtls::{
-        Error,
-        cipher_suite::CipherSuiteId,
-        config::{Config, ExtendedMasterSecretType},
-    },
-    observer::memory::MemObserver,
-    router::RouterBuilder,
-    serve,
+    MemoryCredentialStore, Raw, observer::memory::MemObserver, router::RouterBuilder, serve,
 };
-
-type PskStore = Arc<RwLock<HashMap<String, Vec<u8>>>>;
 
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
@@ -39,46 +25,21 @@ async fn main() {
 
     tracing::info!("Server!");
 
-    // Set up store
-    let psk_store: PskStore = Arc::new(RwLock::new(HashMap::new()));
-
-    // Add entry
-    {
-        let mut psk_store_write = psk_store.write().unwrap();
-        psk_store_write.insert("goobie!".to_string(), PSK.to_vec());
-    }
+    // Set up PSK credentials
+    let mut clients = HashMap::new();
+    clients.insert("goobie!".to_string(), PSK.to_vec());
+    let credential_store = MemoryCredentialStore::from_clients(&clients);
 
     let obs = MemObserver::new();
-
     let router = RouterBuilder::new((), obs).get("test", test).build();
 
-    // Setup socket
-    let addr = "127.0.0.1:5684";
-    let dtls_cfg = Config {
-        psk: Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
-            let hint = String::from_utf8(hint.to_vec()).unwrap();
-
-            tracing::info!("Client's hint: {}", hint);
-
-            // Look up the hint in the database
-            if let Some(psk) = psk_store.read().unwrap().get(&hint) {
-                Ok(psk.clone())
-            } else {
-                tracing::info!("Hint {} not found in store", hint);
-                Err(Error::ErrIdentityNoPsk)
-            }
-        })),
-        psk_identity_hint: Some("coapum server".as_bytes().to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
-        extended_master_secret: ExtendedMasterSecretType::Require,
-        ..Default::default()
-    };
-
     // Server config
+    let addr = "127.0.0.1:5684";
     let cfg = coapum::config::Config {
-        dtls_cfg,
+        psk_identity_hint: Some(b"coapum server".to_vec()),
         ..Default::default()
     };
 
-    let _ = serve::serve(addr.to_string(), cfg, router).await;
+    let _ =
+        serve::serve_with_credential_store(addr.to_string(), cfg, router, credential_store).await;
 }

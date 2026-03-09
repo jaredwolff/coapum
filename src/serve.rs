@@ -9,13 +9,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tokio::sync::{
-    Mutex,
-    mpsc::{self, Sender, channel},
+use dimpl::{Dtls, Output};
+use tokio::{
+    net::UdpSocket,
+    sync::{
+        Mutex,
+        mpsc::{self, Sender, channel},
+    },
 };
 use tower::Service;
-use webrtc_dtls::{Error, conn::DTLSConn, listener};
-use webrtc_util::conn::{Conn, Listener};
 
 use coap_lite::{
     BlockHandler, BlockHandlerConfig, CoapRequest, MessageType, ObserveOption, Packet, RequestType,
@@ -24,7 +26,7 @@ use coap_lite::{
 
 use crate::{
     config::Config,
-    credential::{CredentialStore, memory::MemoryCredentialStore},
+    credential::{CredentialStore, memory::MemoryCredentialStore, resolver::CapturingResolver},
     observer::{Observer, ObserverValue, validate_observer_path},
     router::{ClientCommand, ClientManager, CoapRouter, CoapumRequest},
 };
@@ -57,10 +59,10 @@ impl ObserveState {
     }
 }
 
-/// Extract and validate PSK identity from a DTLS identity hint.
+/// Extract and validate PSK identity from raw bytes.
 ///
 /// Validates length, UTF-8 encoding, and sanitizes to safe characters only.
-fn extract_identity(identity_hint: Vec<u8>) -> Option<String> {
+fn extract_identity(identity_hint: &[u8]) -> Option<String> {
     const MAX_IDENTITY_LENGTH: usize = 256;
 
     if identity_hint.len() > MAX_IDENTITY_LENGTH {
@@ -72,7 +74,7 @@ fn extract_identity(identity_hint: Vec<u8>) -> Option<String> {
         return None;
     }
 
-    match String::from_utf8(identity_hint) {
+    match std::str::from_utf8(identity_hint) {
         Ok(s) => {
             let sanitized: String = s
                 .chars()
@@ -152,12 +154,54 @@ async fn manage_connection(
     true
 }
 
+/// Drain all pending DTLS output packets and send them over the socket.
+async fn drain_packets(
+    dtls: &mut Dtls,
+    out_buf: &mut [u8],
+    socket: &UdpSocket,
+    remote: SocketAddr,
+) {
+    loop {
+        match dtls.poll_output(out_buf) {
+            Output::Packet(p) => {
+                if let Err(e) = socket.send_to(p, remote).await {
+                    tracing::error!(addr = %remote, error = %e, "udp.send_failed");
+                }
+            }
+            Output::Timeout(_) => break,
+            _ => {} // Connected, PeerCert, KeyingMaterial, ApplicationData handled elsewhere
+        }
+    }
+}
+
+/// Send a CoAP response over a DTLS connection.
+async fn send_response(
+    dtls: &mut Dtls,
+    out_buf: &mut [u8],
+    socket: &UdpSocket,
+    remote: SocketAddr,
+    resp: &crate::CoapResponse,
+) {
+    match resp.message.to_bytes() {
+        Ok(bytes) => {
+            if let Err(e) = dtls.send_application_data(&bytes) {
+                tracing::error!(error = %e, "dtls.send_failed");
+                return;
+            }
+            drain_packets(dtls, out_buf, socket, remote).await;
+        }
+        Err(e) => tracing::error!("Failed to serialize response: {}", e),
+    }
+}
+
 /// Handle an observer notification: route, set RFC 7641 headers, and send.
 async fn handle_notification<O, S>(
     value: ObserverValue,
     router: &mut CoapRouter<O, S>,
-    conn: &(dyn Conn + Send + Sync),
-    socket_addr: SocketAddr,
+    dtls: &mut Dtls,
+    out_buf: &mut [u8],
+    socket: &UdpSocket,
+    remote: SocketAddr,
     obs: &mut ObserveState,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
@@ -166,7 +210,7 @@ async fn handle_notification<O, S>(
     tracing::info!("Got notification: {:?}", value);
 
     let notification_path = value.path.clone();
-    let req = value.to_request(socket_addr);
+    let req = value.to_request(remote);
 
     match router.call(req).await {
         Ok(mut resp) => {
@@ -196,31 +240,10 @@ async fn handle_notification<O, S>(
                     .retain(|&id, _| id.wrapping_sub(cutoff) < 256);
             }
 
-            tracing::info!(
-                "Sending notification (seq={}) to: {}",
-                obs.sequence,
-                socket_addr
-            );
-            match resp.message.to_bytes() {
-                Ok(bytes) => match conn.send(&bytes).await {
-                    Ok(n) => tracing::debug!("Wrote {} notification bytes", n),
-                    Err(e) => tracing::error!("Error: {}", e),
-                },
-                Err(e) => tracing::error!("Failed to serialize response: {}", e),
-            }
+            tracing::info!("Sending notification (seq={}) to: {}", obs.sequence, remote);
+            send_response(dtls, out_buf, socket, remote, &resp).await;
         }
         Err(e) => tracing::error!("Error: {}", e),
-    }
-}
-
-/// Send a CoAP response over a connection.
-async fn send_response(conn: &(dyn Conn + Send + Sync), resp: &crate::CoapResponse) {
-    match resp.message.to_bytes() {
-        Ok(bytes) => match conn.send(&bytes).await {
-            Ok(n) => tracing::debug!("Wrote {} bytes", n),
-            Err(e) => tracing::error!("Error sending response: {}", e),
-        },
-        Err(e) => tracing::error!("Failed to serialize response: {}", e),
     }
 }
 
@@ -231,7 +254,9 @@ async fn handle_request<O, S>(
     socket_addr: SocketAddr,
     identity: &str,
     router: &mut CoapRouter<O, S>,
-    conn: &(dyn Conn + Send + Sync),
+    dtls: &mut Dtls,
+    out_buf: &mut [u8],
+    socket: &UdpSocket,
     obs_tx: &Arc<Sender<ObserverValue>>,
     obs: &mut ObserveState,
     block_handler: &mut BlockHandler<SocketAddr>,
@@ -256,14 +281,14 @@ async fn handle_request<O, S>(
         Ok(true) => {
             // Block handler handled it (intermediate Block1 or Block2 cache hit)
             if let Some(ref resp) = coap_request.response {
-                send_response(conn, resp).await;
+                send_response(dtls, out_buf, socket, socket_addr, resp).await;
             }
             return;
         }
         Err(e) => {
             tracing::error!("Block transfer error: {}", e.message);
             if let Some(ref resp) = coap_request.response {
-                send_response(conn, resp).await;
+                send_response(dtls, out_buf, socket, socket_addr, resp).await;
             }
             return;
         }
@@ -365,38 +390,269 @@ async fn handle_request<O, S>(
 
             if let Some(ref resp) = block_req.response {
                 tracing::debug!("Got response: {:?}", resp.message);
-                send_response(conn, resp).await;
+                send_response(dtls, out_buf, socket, socket_addr, resp).await;
             }
         }
         Err(e) => tracing::error!("Error: {}", e),
     }
 }
 
-/// Start basic CoAP server without client management
-pub async fn serve_basic<O, S>(
+/// Process DTLS outputs after handle_packet(), handling Connected and ApplicationData events.
+///
+/// Returns `false` if the connection should be terminated.
+#[allow(clippy::too_many_arguments)]
+async fn process_outputs<O, S>(
+    dtls: &mut Dtls,
+    out_buf: &mut [u8],
+    socket: &UdpSocket,
+    remote: SocketAddr,
+    resolver: &CapturingResolver<impl CredentialStore>,
+    connected: &mut bool,
+    identity: &mut Option<String>,
+    router: &mut CoapRouter<O, S>,
+    obs_tx: &Arc<Sender<ObserverValue>>,
+    obs: &mut ObserveState,
+    block_handler: &mut BlockHandler<SocketAddr>,
+    max_observers_per_device: usize,
+    connections: &Mutex<HashMap<String, ConnectionInfo>>,
+    disconnect_tx: Sender<()>,
+    config: &Config,
+) -> bool
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+{
+    loop {
+        match dtls.poll_output(out_buf) {
+            Output::Packet(p) => {
+                if let Err(e) = socket.send_to(p, remote).await {
+                    tracing::error!(addr = %remote, error = %e, "udp.send_failed");
+                }
+            }
+            Output::Connected => {
+                tracing::debug!(addr = %remote, "dtls.connected");
+
+                let raw_identity = match resolver.take_last_identity() {
+                    Some(id) => id,
+                    None => {
+                        tracing::error!(addr = %remote, "dtls.no_identity");
+                        return false;
+                    }
+                };
+
+                let validated = match extract_identity(raw_identity.as_bytes()) {
+                    Some(id) => id,
+                    None => return false,
+                };
+
+                if !manage_connection(
+                    &validated,
+                    remote,
+                    disconnect_tx.clone(),
+                    connections,
+                    config.min_reconnect_interval,
+                    config.max_reconnect_attempts,
+                )
+                .await
+                {
+                    return false;
+                }
+
+                tracing::info!(identity = %validated, addr = %remote, "connection.accepted");
+                *identity = Some(validated);
+                *connected = true;
+            }
+            Output::ApplicationData(data) => {
+                if let Some(id) = identity.as_ref() {
+                    let packet = match Packet::from_bytes(data) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::error!("Failed to parse packet: {}", e);
+                            continue;
+                        }
+                    };
+                    handle_request(
+                        packet,
+                        remote,
+                        id,
+                        router,
+                        dtls,
+                        out_buf,
+                        socket,
+                        obs_tx,
+                        obs,
+                        block_handler,
+                        max_observers_per_device,
+                    )
+                    .await;
+                }
+            }
+            Output::Timeout(_) => break,
+            _ => {} // PeerCert, KeyingMaterial — not used for PSK
+        }
+    }
+    true
+}
+
+/// Per-connection task. Each spawned task owns its own Dtls instance.
+#[allow(clippy::too_many_arguments)]
+async fn connection_task<O, S, C>(
+    remote: SocketAddr,
+    mut packet_rx: mpsc::Receiver<Vec<u8>>,
+    socket: Arc<UdpSocket>,
+    dimpl_config: Arc<dimpl::Config>,
+    resolver: Arc<CapturingResolver<C>>,
+    mut router: CoapRouter<O, S>,
+    config: Config,
+    connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
+    conn_count: Arc<AtomicUsize>,
+    cleanup_tx: mpsc::Sender<SocketAddr>,
+) where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
+{
+    let mut dtls = Dtls::new_12_psk(dimpl_config, Instant::now());
+    let mut out_buf = vec![0u8; 2048];
+    let mut connected = false;
+    let mut identity: Option<String> = None;
+
+    let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
+    let obs_tx = Arc::new(obs_tx);
+    let mut obs = ObserveState::new();
+    let mut block_handler = BlockHandler::new(BlockHandlerConfig {
+        max_total_message_size: config.max_message_size,
+        cache_expiry_duration: config.block_cache_expiry,
+    });
+
+    let (disconnect_tx, mut disconnect_rx) = channel::<()>(1);
+    let timeout_duration = Duration::from_secs(config.timeout);
+
+    loop {
+        // Compute next DTLS retransmit deadline
+        let dtls_timeout = tokio::time::sleep(timeout_duration);
+        tokio::pin!(dtls_timeout);
+
+        tokio::select! {
+            // Incoming DTLS packet from dispatch
+            packet = packet_rx.recv() => {
+                let Some(raw) = packet else {
+                    // Channel closed — dispatch removed us
+                    tracing::debug!(addr = %remote, "connection.channel_closed");
+                    break;
+                };
+
+                if let Err(e) = dtls.handle_packet(&raw) {
+                    tracing::error!(addr = %remote, error = %e, "dtls.packet_error");
+                    break;
+                }
+
+                if !process_outputs(
+                    &mut dtls, &mut out_buf, &socket, remote,
+                    &resolver, &mut connected, &mut identity,
+                    &mut router, &obs_tx, &mut obs, &mut block_handler,
+                    config.max_observers_per_device,
+                    &connections, disconnect_tx.clone(), &config,
+                ).await {
+                    break;
+                }
+            }
+
+            // Observer notification
+            Some(value) = obs_rx.recv(), if connected => {
+                handle_notification(
+                    value, &mut router, &mut dtls, &mut out_buf,
+                    &socket, remote, &mut obs,
+                ).await;
+            }
+
+            // Disconnect signal
+            _ = disconnect_rx.recv() => {
+                tracing::info!(addr = %remote, identity = ?identity, "connection.terminating");
+                break;
+            }
+
+            // Idle timeout
+            () = &mut dtls_timeout => {
+                tracing::info!(addr = %remote, "connection.timeout");
+                break;
+            }
+        }
+
+        // Drive DTLS retransmit timers after every event
+        if let Err(e) = dtls.handle_timeout(Instant::now()) {
+            tracing::error!(addr = %remote, error = %e, "dtls.timeout_error");
+            break;
+        }
+        drain_packets(&mut dtls, &mut out_buf, &socket, remote).await;
+    }
+
+    // Cleanup
+    conn_count.fetch_sub(1, Ordering::Relaxed);
+    if let Some(ref id) = identity {
+        connections.lock().await.remove(id);
+        let _ = router.unregister_device(id).await;
+        tracing::info!(identity = %id, addr = %remote, "connection.terminated");
+    }
+    let _ = cleanup_tx.send(remote).await;
+}
+
+/// Build a dimpl Config from a credential store.
+fn build_dimpl_config<C: CredentialStore>(
+    config: &Config,
+    credential_store: C,
+) -> (Arc<dimpl::Config>, Arc<CapturingResolver<C>>) {
+    let resolver = Arc::new(CapturingResolver::new(credential_store));
+    let mut builder =
+        dimpl::Config::builder().with_psk_resolver(resolver.clone() as Arc<dyn dimpl::PskResolver>);
+
+    if let Some(ref hint) = config.psk_identity_hint {
+        builder = builder.with_psk_identity_hint(hint.clone());
+    }
+
+    let dimpl_cfg = builder.build().expect("valid DTLS config");
+
+    (Arc::new(dimpl_cfg), resolver)
+}
+
+/// Start basic CoAP server with quinn-style dispatch + per-connection tasks.
+pub async fn serve_basic<O, S, C>(
     addr: String,
     config: Config,
     router: CoapRouter<O, S>,
+    resolver: Arc<CapturingResolver<C>>,
+    dimpl_config: Arc<dimpl::Config>,
     mut disconnect_rx: Option<mpsc::Receiver<String>>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
 {
-    let dtls_config = config.dtls_cfg.clone();
-    let listener = Arc::new(
-        listener::listen(addr.clone(), dtls_config)
-            .await
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?,
-    );
+    let socket = Arc::new(UdpSocket::bind(&addr).await?);
+    tracing::info!(addr = %addr, "server.started");
+
     let connections: Arc<Mutex<HashMap<String, ConnectionInfo>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let active_connections = Arc::new(AtomicUsize::new(0));
     let max_connections = config.max_connections;
     let mut shutdown_rx = config.shutdown.clone();
 
+    // Dispatch table: SocketAddr → per-connection packet sender
+    let mut dispatch: HashMap<SocketAddr, mpsc::Sender<Vec<u8>>> = HashMap::new();
+
+    // Cleanup channel: connection tasks notify dispatch when they exit
+    let (cleanup_tx, mut cleanup_rx) = mpsc::channel::<SocketAddr>(64);
+
+    let mut recv_buf = vec![0u8; config.buffer_size()];
+
     loop {
-        // Drain any pending disconnect commands
+        // Drain completed connections
+        while let Ok(remote) = cleanup_rx.try_recv() {
+            dispatch.remove(&remote);
+        }
+
+        // Drain disconnect commands
         if let Some(ref mut rx) = disconnect_rx {
             while let Ok(identity) = rx.try_recv() {
                 let cons = connections.lock().await;
@@ -407,8 +663,8 @@ where
             }
         }
 
-        // Check for shutdown signal alongside accepting connections
-        let accept_result = tokio::select! {
+        tokio::select! {
+            // Shutdown signal
             _ = async {
                 match &mut shutdown_rx {
                     Some(rx) => { let _ = rx.changed().await; }
@@ -418,129 +674,58 @@ where
                 tracing::info!("Shutdown signal received, stopping server");
                 return Ok(());
             }
-            result = listener.accept() => result,
-        };
 
-        if let Ok((conn, socket_addr)) = accept_result {
-            tracing::debug!(addr = %socket_addr, "connection.incoming");
+            // Incoming UDP packet
+            result = socket.recv_from(&mut recv_buf) => {
+                let (n, remote) = result?;
 
-            if active_connections.load(Ordering::Relaxed) >= max_connections {
-                tracing::warn!(
-                    addr = %socket_addr,
-                    limit = max_connections,
-                    "connection.rejected.limit"
-                );
-                continue;
-            }
-
-            let mut router = router.clone();
-            let config_clone = config.clone();
-            let timeout = config_clone.timeout;
-
-            let state = if let Some(dtls) = conn.as_any().downcast_ref::<DTLSConn>() {
-                dtls.connection_state().await
-            } else {
-                tracing::error!("Unable to get state!");
-                continue;
-            };
-
-            let identity = match extract_identity(state.identity_hint) {
-                Some(id) => id,
-                None => continue,
-            };
-
-            tracing::info!(identity = %identity, addr = %socket_addr, "connection.accepted");
-
-            let cons = connections.clone();
-            let conn_count = active_connections.clone();
-            conn_count.fetch_add(1, Ordering::Relaxed);
-
-            tokio::spawn(async move {
-                let (tx, mut rx) = channel::<()>(1);
-
-                if !manage_connection(
-                    &identity,
-                    socket_addr,
-                    tx,
-                    &cons,
-                    config_clone.min_reconnect_interval,
-                    config_clone.max_reconnect_attempts,
-                )
-                .await
-                {
-                    conn_count.fetch_sub(1, Ordering::Relaxed);
-                    return;
-                }
-
-                let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
-                let obs_tx = Arc::new(obs_tx);
-
-                let mut obs = ObserveState::new();
-                let mut block_handler = BlockHandler::new(BlockHandlerConfig {
-                    max_total_message_size: config_clone.max_message_size,
-                    cache_expiry_duration: config_clone.block_cache_expiry,
-                });
-                let mut b = vec![0u8; config_clone.buffer_size()];
-
-                loop {
-                    tokio::select! {
-                        Some(value) = obs_rx.recv() => {
-                            handle_notification(
-                                value, &mut router, conn.as_ref(), socket_addr,
-                                &mut obs,
-                            ).await;
-                        }
-                        recv = tokio::time::timeout(Duration::from_secs(timeout), conn.recv(&mut b)) => {
-                            let recv = match recv {
-                                Ok(r) => r,
-                                Err(e) => {
-                                    tracing::error!("Timeout! Err: {}", e);
-                                    let _ = cons.lock().await.remove(&identity);
-                                    break;
-                                }
-                            };
-
-                            if let Ok(n) = recv {
-                                let packet = match Packet::from_bytes(&b[..n]) {
-                                    Ok(p) => p,
-                                    Err(e) => {
-                                        tracing::error!("Failed to parse packet: {}", e);
-                                        continue;
-                                    }
-                                };
-                                handle_request(
-                                    packet, socket_addr, &identity, &mut router,
-                                    conn.as_ref(), &obs_tx, &mut obs,
-                                    &mut block_handler,
-                                    config_clone.max_observers_per_device,
-                                ).await;
-                            }
-                        }
-                        _ = rx.recv() => {
-                            tracing::info!(identity = %identity, addr = %socket_addr, "connection.terminating");
-                            break;
-                        }
+                if let Some(tx) = dispatch.get(&remote) {
+                    // Fast path: known connection
+                    let _ = tx.try_send(recv_buf[..n].to_vec());
+                } else {
+                    // New connection
+                    if active_connections.load(Ordering::Relaxed) >= max_connections {
+                        tracing::warn!(
+                            addr = %remote,
+                            limit = max_connections,
+                            "connection.rejected.limit"
+                        );
+                        continue;
                     }
-                }
 
-                conn_count.fetch_sub(1, Ordering::Relaxed);
-                cons.lock().await.remove(&identity);
-                let _ = router.unregister_device(&identity).await;
-                tracing::info!(
-                    identity = %identity,
-                    addr = %socket_addr,
-                    "connection.terminated"
-                );
-            });
+                    tracing::debug!(addr = %remote, "connection.incoming");
+
+                    let (tx, rx) = mpsc::channel(32);
+                    let _ = tx.try_send(recv_buf[..n].to_vec());
+                    dispatch.insert(remote, tx);
+
+                    active_connections.fetch_add(1, Ordering::Relaxed);
+
+                    let socket = socket.clone();
+                    let dimpl_config = dimpl_config.clone();
+                    let resolver = resolver.clone();
+                    let router = router.clone();
+                    let config = config.clone();
+                    let connections = connections.clone();
+                    let conn_count = active_connections.clone();
+                    let cleanup_tx = cleanup_tx.clone();
+
+                    tokio::spawn(async move {
+                        connection_task(
+                            remote, rx, socket, dimpl_config, resolver,
+                            router, config, connections, conn_count, cleanup_tx,
+                        ).await;
+                    });
+                }
+            }
         }
     }
 }
 
-/// Start a basic CoAP server without client management
+/// Start a basic CoAP server without client management.
 ///
-/// This function runs a CoAP server that blocks forever, handling incoming requests
-/// using the provided router. For client management capabilities, use
-/// `serve_with_client_management()` instead.
+/// Requires `config.dimpl_cfg` to be set with a valid dimpl configuration
+/// including a PSK resolver.
 ///
 /// # Example
 ///
@@ -568,106 +753,16 @@ where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
-    serve_basic(addr, config, router, None).await
-}
+    let dimpl_cfg = config
+        .dimpl_cfg
+        .clone()
+        .ok_or("DTLS config not set. Set config.dimpl_cfg or use serve_with_credential_store().")?;
 
-/// Start a CoAP server with dynamic client management capability
-///
-/// This function sets up client management and returns both a ClientManager for real-time
-/// client operations and a Future that runs the server. The user controls when and how
-/// to execute the server future.
-///
-/// # Returns
-///
-/// Returns a tuple of:
-/// - A ClientManager handle for managing clients
-/// - A Future that runs the server (user must execute it)
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use coapum::{RouterBuilder, observer::memory::MemObserver, config::Config};
-/// # use coapum::serve::serve_with_client_management;
-/// # use std::collections::HashMap;
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// # #[derive(Clone, Debug)]
-/// # struct AppState {}
-/// # let state = AppState {};
-/// # let observer = MemObserver::new();
-/// # let router = RouterBuilder::new(state, observer).build();
-///
-/// // Configure initial clients
-/// let mut initial_clients = HashMap::new();
-/// initial_clients.insert("device_001".to_string(), b"secret_key_123".to_vec());
-///
-/// let config = Config::default().with_client_management(initial_clients);
-///
-/// // Setup client management and get server future
-/// let (client_manager, server_future) = serve_with_client_management(
-///     "0.0.0.0:5683".to_string(),
-///     config,
-///     router
-/// ).await?;
-///
-/// // Add a new client before starting server
-/// client_manager.add_client("device_002", b"new_secret").await?;
-///
-/// // User controls how to run the server
-/// tokio::spawn(async move {
-///     if let Err(e) = server_future.await {
-///         tracing::error!("Server error: {}", e);
-///     }
-/// });
-///
-/// // Continue using client manager
-/// client_manager.update_key("device_001", b"rotated_key").await?;
-/// # Ok(())
-/// # }
-/// ```
-pub async fn serve_with_client_management<O, S>(
-    addr: String,
-    config: Config,
-    router: CoapRouter<O, S>,
-) -> Result<
-    (
-        ClientManager,
-        impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
-    ),
-    Box<dyn std::error::Error>,
->
-where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
-{
-    // Check if client management is enabled
-    let initial_clients = config
-        .initial_clients
-        .as_ref()
-        .ok_or("Client management not enabled. Use Config::with_client_management() to enable.")?;
+    // Create a no-op resolver for the basic serve case (identity captured by user's resolver)
+    let store = MemoryCredentialStore::new();
+    let resolver = Arc::new(CapturingResolver::new(store));
 
-    // Build MemoryCredentialStore from initial clients
-    let credential_store = MemoryCredentialStore::from_clients(initial_clients);
-
-    // Create client management channel
-    let (cmd_sender, mut cmd_receiver) = mpsc::channel(config.client_command_buffer);
-    let client_manager = ClientManager::new(cmd_sender);
-
-    // Create disconnect channel for force-disconnecting clients
-    let (disconnect_tx, disconnect_rx) = mpsc::channel::<String>(32);
-
-    // Spawn client command processor
-    let store_for_processor = credential_store.clone();
-    tokio::spawn(async move {
-        while let Some(cmd) = cmd_receiver.recv().await {
-            process_client_command(cmd, &store_for_processor, &disconnect_tx).await;
-        }
-    });
-
-    // Wire credential store into DTLS config and start server with disconnect channel
-    let final_config = wire_credential_store(config, credential_store);
-    let server_future = serve_basic(addr, final_config, router, Some(disconnect_rx));
-
-    Ok((client_manager, server_future))
+    serve_basic(addr, config, router, resolver, dimpl_cfg, None).await
 }
 
 /// Start a CoAP server with a custom credential store for PSK authentication.
@@ -706,41 +801,167 @@ where
     O: Observer + Send + Sync + 'static,
     C: CredentialStore,
 {
-    let final_config = wire_credential_store(config, credential_store);
-    serve_basic(addr, final_config, router, None).await
+    let (dimpl_cfg, resolver) = build_dimpl_config(&config, credential_store);
+    serve_basic(addr, config, router, resolver, dimpl_cfg, None).await
 }
 
-/// Wire a credential store's PSK lookup into the DTLS config.
-fn wire_credential_store<C: CredentialStore>(mut config: Config, credential_store: C) -> Config {
-    let mut dtls_cfg = config.dtls_cfg.clone();
+/// Start a CoAP server with dynamic client management capability.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use coapum::{RouterBuilder, observer::memory::MemObserver, config::Config};
+/// # use coapum::serve::serve_with_client_management;
+/// # use std::collections::HashMap;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[derive(Clone, Debug)]
+/// # struct AppState {}
+/// # let state = AppState {};
+/// # let observer = MemObserver::new();
+/// # let router = RouterBuilder::new(state, observer).build();
+///
+/// let mut initial_clients = HashMap::new();
+/// initial_clients.insert("device_001".to_string(), b"secret_key_123".to_vec());
+///
+/// let config = Config::default().with_client_management(initial_clients);
+///
+/// let (client_manager, server_future) = serve_with_client_management(
+///     "0.0.0.0:5683".to_string(),
+///     config,
+///     router
+/// ).await?;
+///
+/// client_manager.add_client("device_002", b"new_secret").await?;
+///
+/// tokio::spawn(async move {
+///     if let Err(e) = server_future.await {
+///         tracing::error!("Server error: {}", e);
+///     }
+/// });
+///
+/// client_manager.update_key("device_001", b"rotated_key").await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn serve_with_client_management<O, S>(
+    addr: String,
+    config: Config,
+    router: CoapRouter<O, S>,
+) -> Result<
+    (
+        ClientManager,
+        impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+    ),
+    Box<dyn std::error::Error>,
+>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+{
+    let initial_clients = config
+        .initial_clients
+        .as_ref()
+        .ok_or("Client management not enabled. Use Config::with_client_management() to enable.")?;
 
-    dtls_cfg.psk = Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
-        let hint_str = String::from_utf8(hint.to_vec()).map_err(|_| Error::ErrIdentityNoPsk)?;
+    let credential_store = MemoryCredentialStore::from_clients(initial_clients);
 
-        tracing::debug!("PSK callback for identity: {}", hint_str);
+    let (cmd_sender, mut cmd_receiver) = mpsc::channel(config.client_command_buffer);
+    let client_manager = ClientManager::new(cmd_sender);
 
-        match credential_store.lookup_psk(&hint_str) {
-            Ok(Some(entry)) if entry.enabled => {
-                tracing::info!(identity = %hint_str, "auth.psk_found");
-                Ok(entry.key)
-            }
-            Ok(Some(_)) => {
-                tracing::warn!(identity = %hint_str, "auth.failed.disabled");
-                Err(Error::ErrIdentityNoPsk)
-            }
-            Ok(None) => {
-                tracing::warn!(identity = %hint_str, "auth.failed.not_found");
-                Err(Error::ErrIdentityNoPsk)
-            }
-            Err(e) => {
-                tracing::error!(identity = %hint_str, error = ?e, "auth.failed.store_error");
-                Err(Error::ErrIdentityNoPsk)
-            }
+    let (disconnect_tx, disconnect_rx) = mpsc::channel::<String>(32);
+
+    let store_for_processor = credential_store.clone();
+    tokio::spawn(async move {
+        while let Some(cmd) = cmd_receiver.recv().await {
+            process_client_command(cmd, &store_for_processor, &disconnect_tx).await;
         }
-    }));
+    });
 
-    config.dtls_cfg = dtls_cfg;
-    config
+    let (dimpl_cfg, resolver) = build_dimpl_config(&config, credential_store);
+    let server_future = serve_basic(
+        addr,
+        config,
+        router,
+        resolver,
+        dimpl_cfg,
+        Some(disconnect_rx),
+    );
+
+    Ok((client_manager, server_future))
+}
+
+/// Start a CoAP server with a custom credential store and client management.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use coapum::{RouterBuilder, observer::memory::MemObserver, config::Config};
+/// # use coapum::credential::memory::MemoryCredentialStore;
+/// # use coapum::serve::serve_with_credential_store_and_management;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[derive(Clone, Debug)]
+/// # struct AppState {}
+/// # let state = AppState {};
+/// # let observer = MemObserver::new();
+/// # let router = RouterBuilder::new(state, observer).build();
+/// let config = Config::default();
+/// let credentials = MemoryCredentialStore::new();
+///
+/// let (client_manager, server_future) =
+///     serve_with_credential_store_and_management(
+///         "0.0.0.0:5683".to_string(), config, router, credentials,
+///     ).await?;
+///
+/// tokio::spawn(async move {
+///     if let Err(e) = server_future.await {
+///         tracing::error!("Server error: {}", e);
+///     }
+/// });
+///
+/// client_manager.disconnect_client("revoked_device").await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn serve_with_credential_store_and_management<O, S, C>(
+    addr: String,
+    config: Config,
+    router: CoapRouter<O, S>,
+    credential_store: C,
+) -> Result<
+    (
+        ClientManager,
+        impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+    ),
+    Box<dyn std::error::Error>,
+>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
+{
+    let (cmd_sender, mut cmd_receiver) = mpsc::channel(config.client_command_buffer);
+    let client_manager = ClientManager::new(cmd_sender);
+
+    let (disconnect_tx, disconnect_rx) = mpsc::channel::<String>(32);
+
+    let store_for_processor = credential_store.clone();
+    tokio::spawn(async move {
+        while let Some(cmd) = cmd_receiver.recv().await {
+            process_client_command(cmd, &store_for_processor, &disconnect_tx).await;
+        }
+    });
+
+    let (dimpl_cfg, resolver) = build_dimpl_config(&config, credential_store);
+    let server_future = serve_basic(
+        addr,
+        config,
+        router,
+        resolver,
+        dimpl_cfg,
+        Some(disconnect_rx),
+    );
+
+    Ok((client_manager, server_future))
 }
 
 /// Process a client command by delegating to a credential store.

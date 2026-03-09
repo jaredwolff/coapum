@@ -1,15 +1,9 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
-use tokio::net::UdpSocket;
-
-use coapum::{
-    dtls::{Error, cipher_suite::CipherSuiteId, config::Config, conn::DTLSConn},
-    util::Conn,
-    {CoapRequest, ContentFormat, Packet, RequestType},
-};
+use coapum::{CoapRequest, ContentFormat, Packet, RequestType, client::DtlsClient};
 use serde::{Deserialize, Serialize};
 
-const IDENTITY: &[u8] = "goobie!".as_bytes();
+const IDENTITY: &str = "goobie!";
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,7 +20,7 @@ struct ApiResponse {
 }
 
 async fn send_request(
-    dtls_conn: &DTLSConn,
+    client: &mut DtlsClient,
     method: RequestType,
     path: &str,
     payload: Option<Vec<u8>>,
@@ -46,34 +40,22 @@ async fn send_request(
 
     tracing::info!("Sending {:?} request to {}", method, path);
 
-    match dtls_conn.send(&request.message.to_bytes().unwrap()).await {
-        Ok(n) => {
-            tracing::info!("Wrote {} bytes", n);
-        }
-        Err(e) => {
-            tracing::error!("Error writing: {}", e);
-            return Err(e.into());
-        }
-    };
+    client.send(&request.message.to_bytes().unwrap()).await?;
+    tracing::info!("Sent request");
 
-    let mut buffer = vec![0u8; 1024];
-    if let Ok(n) = dtls_conn.recv(&mut buffer).await {
-        tracing::debug!("Read {} bytes", n);
-        let packet = Packet::from_bytes(&buffer[0..n]).unwrap();
-        tracing::info!("Response status: {:?}", packet.header.code);
+    let data = client.recv(Duration::from_secs(5)).await?;
+    let packet = Packet::from_bytes(&data).unwrap();
+    tracing::info!("Response status: {:?}", packet.header.code);
 
-        if !packet.payload.is_empty() {
-            tracing::debug!("Response payload: {} bytes", packet.payload.len());
-        }
-
-        Ok(packet)
-    } else {
-        Err("Failed to receive response".into())
+    if !packet.payload.is_empty() {
+        tracing::debug!("Response payload: {} bytes", packet.payload.len());
     }
+
+    Ok(packet)
 }
 
 async fn test_device_state_endpoints(
-    dtls_conn: &DTLSConn,
+    client: &mut DtlsClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Testing Device State Endpoints ===");
 
@@ -95,7 +77,7 @@ async fn test_device_state_endpoints(
     };
 
     let response = send_request(
-        dtls_conn,
+        client,
         RequestType::Post,
         &path,
         Some(cbor_payload),
@@ -110,7 +92,7 @@ async fn test_device_state_endpoints(
 
     // Test 2: GET - Retrieve device state
     println!("\n2. Testing GET (retrieve device state)");
-    let response = send_request(dtls_conn, RequestType::Get, &path, None, None).await?;
+    let response = send_request(client, RequestType::Get, &path, None, None).await?;
 
     if !response.payload.is_empty() {
         let retrieved_state: DeviceState = ciborium::de::from_reader(&response.payload[..])?;
@@ -119,12 +101,12 @@ async fn test_device_state_endpoints(
 
     // Test 3: DELETE - Remove device state
     println!("\n3. Testing DELETE (remove device state)");
-    let _response = send_request(dtls_conn, RequestType::Delete, &path, None, None).await?;
+    let _response = send_request(client, RequestType::Delete, &path, None, None).await?;
 
     Ok(())
 }
 
-async fn test_stream_endpoints(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_stream_endpoints(client: &mut DtlsClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Testing Stream Endpoints ===");
 
     let stream_id = "stream456";
@@ -135,7 +117,7 @@ async fn test_stream_endpoints(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std::
     let stream_data = b"Sample stream data payload";
 
     let _response = send_request(
-        dtls_conn,
+        client,
         RequestType::Post,
         &path,
         Some(stream_data.to_vec()),
@@ -146,7 +128,7 @@ async fn test_stream_endpoints(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-async fn test_utility_endpoints(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_utility_endpoints(client: &mut DtlsClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Testing Utility Endpoints ===");
 
     // Test 1: Echo endpoint
@@ -154,7 +136,7 @@ async fn test_utility_endpoints(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std:
     let echo_data = b"Hello, CoAP world!";
 
     let response = send_request(
-        dtls_conn,
+        client,
         RequestType::Put,
         "echo",
         Some(echo_data.to_vec()),
@@ -172,7 +154,7 @@ async fn test_utility_endpoints(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std:
     let hello_data = b"Hello from GET!";
 
     let response = send_request(
-        dtls_conn,
+        client,
         RequestType::Get,
         "hello",
         Some(hello_data.to_vec()),
@@ -187,25 +169,24 @@ async fn test_utility_endpoints(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std:
 
     // Test 3: Ping endpoint
     println!("\n3. Testing ping endpoint");
-    let _response = send_request(dtls_conn, RequestType::Get, "", None, None).await?;
+    let _response = send_request(client, RequestType::Get, "", None, None).await?;
 
     Ok(())
 }
 
-async fn test_error_conditions(dtls_conn: &DTLSConn) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_error_conditions(client: &mut DtlsClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Testing Error Conditions ===");
 
     // Test 1: Invalid path
     println!("\n1. Testing invalid path");
-    let _response =
-        send_request(dtls_conn, RequestType::Get, "nonexistent/path", None, None).await?;
+    let _response = send_request(client, RequestType::Get, "nonexistent/path", None, None).await?;
 
     // Test 2: Invalid CBOR data
     println!("\n2. Testing invalid CBOR data");
     let invalid_cbor = vec![0xFF, 0xFF, 0xFF, 0xFF];
 
     let _response = send_request(
-        dtls_conn,
+        client,
         RequestType::Post,
         ".d/test",
         Some(invalid_cbor),
@@ -222,57 +203,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    println!("🚀 Ergonomic CoAP Client Starting!");
+    println!("Ergonomic CoAP Client Starting!");
     println!("Testing the new ergonomic server API...");
 
-    // Setup socket
-    let local_addr = "127.0.0.1:0";
+    // Build dimpl config for PSK client
+    let mut keys = HashMap::new();
+    keys.insert(IDENTITY.to_string(), PSK.to_vec());
+
+    let resolver = Arc::new(coapum::credential::resolver::MapResolver::new(keys));
+
+    let config = dimpl::Config::builder()
+        .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
+        .with_psk_identity(IDENTITY.as_bytes().to_vec())
+        .build()
+        .expect("valid DTLS config");
+
     let server_addr = "127.0.0.1:5684";
-
-    let conn = Arc::new(UdpSocket::bind(local_addr).await?);
-    conn.connect(server_addr).await?;
-
-    println!("📡 Connected to server at {}", server_addr);
-
-    // Setup DTLS config
-    let config = Config {
-        psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
-            tracing::info!(
-                "Server's hint: {}",
-                String::from_utf8(hint.to_vec()).unwrap()
-            );
-            Ok(PSK.to_vec())
-        })),
-        psk_identity_hint: Some(IDENTITY.to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
-        ..Default::default()
-    };
-
-    let dtls_conn = Arc::new(DTLSConn::new(conn, config, true, None).await?);
-    println!("🔒 DTLS connection established");
+    let mut client = DtlsClient::connect(server_addr, Arc::new(config)).await?;
+    println!("DTLS connection established to {}", server_addr);
 
     // Run all test suites
-    match test_device_state_endpoints(&dtls_conn).await {
-        Ok(_) => println!("✅ Device state endpoints test passed"),
-        Err(e) => println!("❌ Device state endpoints test failed: {}", e),
+    match test_device_state_endpoints(&mut client).await {
+        Ok(_) => println!("Device state endpoints test passed"),
+        Err(e) => println!("Device state endpoints test failed: {}", e),
     }
 
-    match test_stream_endpoints(&dtls_conn).await {
-        Ok(_) => println!("✅ Stream endpoints test passed"),
-        Err(e) => println!("❌ Stream endpoints test failed: {}", e),
+    match test_stream_endpoints(&mut client).await {
+        Ok(_) => println!("Stream endpoints test passed"),
+        Err(e) => println!("Stream endpoints test failed: {}", e),
     }
 
-    match test_utility_endpoints(&dtls_conn).await {
-        Ok(_) => println!("✅ Utility endpoints test passed"),
-        Err(e) => println!("❌ Utility endpoints test failed: {}", e),
+    match test_utility_endpoints(&mut client).await {
+        Ok(_) => println!("Utility endpoints test passed"),
+        Err(e) => println!("Utility endpoints test failed: {}", e),
     }
 
-    match test_error_conditions(&dtls_conn).await {
-        Ok(_) => println!("✅ Error conditions test passed"),
-        Err(e) => println!("❌ Error conditions test failed: {}", e),
+    match test_error_conditions(&mut client).await {
+        Ok(_) => println!("Error conditions test passed"),
+        Err(e) => println!("Error conditions test failed: {}", e),
     }
 
-    println!("\n🎉 All tests completed!");
+    println!("\nAll tests completed!");
     println!("The ergonomic API is working correctly!");
 
     Ok(())

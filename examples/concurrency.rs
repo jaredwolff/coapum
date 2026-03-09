@@ -1,19 +1,7 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
-use tokio::net::UdpSocket;
+use coapum::{CoapRequest, ContentFormat, Packet, RequestType, client::DtlsClient};
 
-use coapum::{
-    CoapRequest, ContentFormat, Packet, RequestType,
-    dtls::{
-        Error,
-        cipher_suite::CipherSuiteId,
-        config::{Config, ExtendedMasterSecretType},
-        conn::DTLSConn,
-    },
-    util::Conn,
-};
-
-// const IDENTITY: &[u8] = "goobie!".as_bytes();
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
 const CONCURRENCY: usize = 100; // The number of simultaneous clients
@@ -27,40 +15,29 @@ async fn main() {
 
     tracing::info!("Client!");
 
-    // Setup socket
-    let addr = "127.0.0.1:0";
-    let saddr: &str = "127.0.0.1:5684";
+    let saddr = "127.0.0.1:5684";
     let mut handles = Vec::new();
 
-    for (identity_count, _) in (0..CONCURRENCY).enumerate() {
+    for identity_count in 0..CONCURRENCY {
         let handle = tokio::spawn(async move {
-            let conn = Arc::new(UdpSocket::bind(addr).await.unwrap());
-            conn.connect(saddr).await.unwrap();
-
             let identity = format!("goobie-{}", identity_count);
 
-            // Setup SSL context for PSK
-            let config = Config {
-                psk: Some(Arc::new(|hint: &[u8]| -> Result<Vec<u8>, Error> {
-                    tracing::info!(
-                        "Server's hint: {}",
-                        String::from_utf8(hint.to_vec()).unwrap()
-                    );
-                    Ok(PSK.to_vec())
-                })),
-                psk_identity_hint: Some(identity.as_bytes().to_vec()),
-                cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
-                extended_master_secret: ExtendedMasterSecretType::Require,
-                ..Default::default()
-            };
+            // Build dimpl config for this client
+            let mut keys = HashMap::new();
+            keys.insert(identity.clone(), PSK.to_vec());
 
-            let dtls_conn: Arc<dyn Conn + Send + Sync> = Arc::new(
-                DTLSConn::new(conn, config.clone(), true, None)
-                    .await
-                    .unwrap(),
-            );
+            let resolver = Arc::new(coapum::credential::resolver::MapResolver::new(keys));
 
-            let mut b = vec![0u8; 1024];
+            let config = dimpl::Config::builder()
+                .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
+                .with_psk_identity(identity.as_bytes().to_vec())
+                .build()
+                .expect("valid DTLS config");
+
+            let mut client = DtlsClient::connect(saddr, Arc::new(config))
+                .await
+                .expect("DTLS handshake failed");
+
             let payload_json = "{\"foo\": {\"bar\": 1, \"baz\": [1, 2, 3]}}";
 
             for _ in 0..REQUESTS {
@@ -73,9 +50,10 @@ async fn main() {
                 request
                     .message
                     .set_content_format(ContentFormat::ApplicationJSON);
-                match dtls_conn.send(&request.message.to_bytes().unwrap()).await {
-                    Ok(n) => {
-                        tracing::info!("Wrote {} bytes", n);
+
+                match client.send(&request.message.to_bytes().unwrap()).await {
+                    Ok(()) => {
+                        tracing::info!("Sent request");
                     }
                     Err(e) => {
                         tracing::error!("Error writing: {}", e);
@@ -83,13 +61,19 @@ async fn main() {
                     }
                 };
 
-                if let Ok(n) = dtls_conn.recv(&mut b).await {
-                    tracing::debug!("Read {} bytes", n);
-
-                    let packet = Packet::from_bytes(&b[0..n]).unwrap();
-
-                    tracing::info!("Response: {:?}", String::from_utf8(packet.payload).unwrap());
-                    tracing::info!("Status: {:?}", packet.header.code);
+                match client.recv(Duration::from_secs(5)).await {
+                    Ok(data) => {
+                        let packet = Packet::from_bytes(&data).unwrap();
+                        tracing::info!(
+                            "Response: {:?}",
+                            String::from_utf8(packet.payload).unwrap()
+                        );
+                        tracing::info!("Status: {:?}", packet.header.code);
+                    }
+                    Err(e) => {
+                        tracing::error!("Error reading: {}", e);
+                        break;
+                    }
                 }
             }
         });

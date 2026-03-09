@@ -2,34 +2,23 @@
 //!
 //! These tests verify the complete observe workflow from client registration
 //! to server notifications and client deregistration.
+//!
+//! **Must run with `--test-threads=1`** to avoid port conflicts from the
+//! bind-drop-rebind pattern used to discover free ports.
 
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
-use tokio::{
-    net::UdpSocket,
-    sync::{Mutex, broadcast},
-    time::timeout,
-};
+use tokio::sync::{Mutex, broadcast};
 
 use coapum::{
-    CoapRequest, ContentFormat, Packet, RequestType, ResponseType,
+    CoapRequest, ContentFormat, MemoryCredentialStore, Packet, RequestType, ResponseType,
+    client::DtlsClient,
     config::Config as ServerConfig,
-    dtls::{
-        Error as DtlsError,
-        cipher_suite::CipherSuiteId,
-        config::{Config as DtlsConfig, ExtendedMasterSecretType},
-        conn::DTLSConn,
-    },
+    credential::resolver::MapResolver,
     extract::{Cbor, Path, State, StatusCode},
     observer::memory::MemObserver,
     router::RouterBuilder,
     serve,
-    util::Conn,
 };
 
 use coap_lite::ObserveOption;
@@ -96,7 +85,7 @@ async fn notify_sensor_data(
 /// Create a DTLS client connection
 async fn create_client_connection(
     server_addr: SocketAddr,
-) -> Result<Arc<dyn Conn + Send + Sync>, Box<dyn std::error::Error>> {
+) -> Result<DtlsClient, Box<dyn std::error::Error>> {
     create_client_connection_with_identity(server_addr, IDENTITY).await
 }
 
@@ -104,20 +93,19 @@ async fn create_client_connection(
 async fn create_client_connection_with_identity(
     server_addr: SocketAddr,
     identity: &str,
-) -> Result<Arc<dyn Conn + Send + Sync>, Box<dyn std::error::Error>> {
-    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
-    socket.connect(server_addr).await?;
+) -> Result<DtlsClient, Box<dyn std::error::Error>> {
+    let mut keys = HashMap::new();
+    keys.insert(identity.to_string(), PSK.to_vec());
 
-    let config = DtlsConfig {
-        psk: Some(Arc::new(|_hint: &[u8]| Ok(PSK.to_vec()))),
-        psk_identity_hint: Some(identity.as_bytes().to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
-        extended_master_secret: ExtendedMasterSecretType::Require,
-        ..Default::default()
-    };
+    let resolver = Arc::new(MapResolver::new(keys));
 
-    let dtls_conn = DTLSConn::new(socket, config, true, None).await?;
-    Ok(Arc::new(dtls_conn))
+    let config = dimpl::Config::builder()
+        .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
+        .with_psk_identity(identity.as_bytes().to_vec())
+        .build()
+        .expect("valid DTLS config");
+
+    DtlsClient::connect(&server_addr.to_string(), Arc::new(config)).await
 }
 
 /// Start a test server and return the bound address
@@ -129,20 +117,12 @@ async fn start_test_server(
     let addr = listener.local_addr()?;
     drop(listener); // Close the socket so the server can bind to it
 
-    let psk_store: Arc<RwLock<HashMap<String, Vec<u8>>>> = Arc::new(RwLock::new(HashMap::new()));
-    psk_store
-        .write()
-        .unwrap()
-        .insert(IDENTITY.to_string(), PSK.to_vec());
-    // Add additional identities for multi-client tests
-    psk_store
-        .write()
-        .unwrap()
-        .insert("test_client1".to_string(), PSK.to_vec());
-    psk_store
-        .write()
-        .unwrap()
-        .insert("test_client2".to_string(), PSK.to_vec());
+    let mut clients = HashMap::new();
+    clients.insert(IDENTITY.to_string(), PSK.to_vec());
+    clients.insert("test_client1".to_string(), PSK.to_vec());
+    clients.insert("test_client2".to_string(), PSK.to_vec());
+
+    let credential_store = MemoryCredentialStore::from_clients(&clients);
 
     let router = RouterBuilder::new(app_state, observer)
         .get("/sensors/:id", get_sensor_data)
@@ -150,30 +130,21 @@ async fn start_test_server(
         .observe("/sensors/:id", get_sensor_data, notify_sensor_data)
         .build();
 
-    let dtls_config = DtlsConfig {
-        psk: Some(Arc::new(move |hint: &[u8]| {
-            let hint = String::from_utf8_lossy(hint);
-            psk_store
-                .read()
-                .unwrap()
-                .get(&hint.to_string())
-                .cloned()
-                .ok_or(DtlsError::ErrIdentityNoPsk)
-        })),
-        psk_identity_hint: Some(b"test_server".to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
-        extended_master_secret: ExtendedMasterSecretType::Require,
-        ..Default::default()
-    };
-
     let server_config = ServerConfig {
-        dtls_cfg: dtls_config,
+        psk_identity_hint: Some(b"test_server".to_vec()),
         timeout: TIMEOUT_SECS,
         ..Default::default()
     };
 
     tokio::spawn(async move {
-        if let Err(e) = serve::serve(addr.to_string(), server_config, router).await {
+        if let Err(e) = serve::serve_with_credential_store(
+            addr.to_string(),
+            server_config,
+            router,
+            credential_store,
+        )
+        .await
+        {
             eprintln!("Server error: {}", e);
         }
     });
@@ -186,7 +157,7 @@ async fn start_test_server(
 
 /// Send a CoAP request and receive response
 async fn send_coap_request(
-    conn: &Arc<dyn Conn + Send + Sync>,
+    client: &mut DtlsClient,
     method: RequestType,
     path: &str,
     observe: Option<ObserveOption>,
@@ -208,12 +179,11 @@ async fn send_coap_request(
     }
 
     let request_bytes = request.message.to_bytes()?;
-    conn.send(&request_bytes).await?;
+    client.send(&request_bytes).await?;
 
-    let mut buffer = vec![0u8; 1024];
-    let n = timeout(Duration::from_secs(TIMEOUT_SECS), conn.recv(&mut buffer)).await??;
+    let data = client.recv(Duration::from_secs(TIMEOUT_SECS)).await?;
 
-    Ok(Packet::from_bytes(&buffer[0..n])?)
+    Ok(Packet::from_bytes(&data)?)
 }
 
 #[tokio::test]
@@ -236,7 +206,7 @@ async fn test_observe_registration_and_deregistration() {
         .expect("Failed to start server");
 
     // Create client connection
-    let conn = create_client_connection(server_addr)
+    let mut client = create_client_connection(server_addr)
         .await
         .expect("Failed to create client connection");
 
@@ -255,7 +225,7 @@ async fn test_observe_registration_and_deregistration() {
 
     // 1. Register observer
     let response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/sensor1",
         Some(ObserveOption::Register),
@@ -274,9 +244,15 @@ async fn test_observe_registration_and_deregistration() {
     );
 
     // 2. Verify we can still get regular responses
-    let response = send_coap_request(&conn, RequestType::Get, "/sensors/sensor1", None, None)
-        .await
-        .expect("Failed to send regular GET request");
+    let response = send_coap_request(
+        &mut client,
+        RequestType::Get,
+        "/sensors/sensor1",
+        None,
+        None,
+    )
+    .await
+    .expect("Failed to send regular GET request");
 
     assert_eq!(
         response.header.code,
@@ -285,7 +261,7 @@ async fn test_observe_registration_and_deregistration() {
 
     // 3. Deregister observer
     let response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/sensor1",
         Some(ObserveOption::Deregister),
@@ -320,7 +296,7 @@ async fn test_observe_notifications() {
         .expect("Failed to start server");
 
     // Create client connection
-    let conn = create_client_connection(server_addr)
+    let mut client = create_client_connection(server_addr)
         .await
         .expect("Failed to create client connection");
 
@@ -339,7 +315,7 @@ async fn test_observe_notifications() {
 
     // Register observer
     let _response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/sensor1",
         Some(ObserveOption::Register),
@@ -363,7 +339,7 @@ async fn test_observe_notifications() {
 
     // Send update request
     let _response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Post,
         "/sensors/sensor1",
         None,
@@ -373,9 +349,15 @@ async fn test_observe_notifications() {
     .expect("Failed to update sensor data");
 
     // Verify the data was updated by sending another GET
-    let response = send_coap_request(&conn, RequestType::Get, "/sensors/sensor1", None, None)
-        .await
-        .expect("Failed to get updated sensor data");
+    let response = send_coap_request(
+        &mut client,
+        RequestType::Get,
+        "/sensors/sensor1",
+        None,
+        None,
+    )
+    .await
+    .expect("Failed to get updated sensor data");
 
     assert_eq!(
         response.header.code,
@@ -411,7 +393,7 @@ async fn test_observe_with_sled_backend() {
         .expect("Failed to start server");
 
     // Create client connection
-    let conn = create_client_connection(server_addr)
+    let mut client = create_client_connection(server_addr)
         .await
         .expect("Failed to create client connection");
 
@@ -430,7 +412,7 @@ async fn test_observe_with_sled_backend() {
 
     // Register observer
     let response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/sensor2",
         Some(ObserveOption::Register),
@@ -446,7 +428,7 @@ async fn test_observe_with_sled_backend() {
 
     // Verify data persistence by deregistering and re-registering
     let _response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/sensor2",
         Some(ObserveOption::Deregister),
@@ -457,7 +439,7 @@ async fn test_observe_with_sled_backend() {
 
     // Re-register should work
     let response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/sensor2",
         Some(ObserveOption::Register),
@@ -495,11 +477,11 @@ async fn test_observe_multiple_clients() {
         .expect("Failed to start server");
 
     // Create multiple client connections with different identities
-    let conn1 = create_client_connection_with_identity(server_addr, "test_client1")
+    let mut client1 = create_client_connection_with_identity(server_addr, "test_client1")
         .await
         .expect("Failed to create client connection 1");
 
-    let conn2 = create_client_connection_with_identity(server_addr, "test_client2")
+    let mut client2 = create_client_connection_with_identity(server_addr, "test_client2")
         .await
         .expect("Failed to create client connection 2");
 
@@ -525,9 +507,9 @@ async fn test_observe_multiple_clients() {
 
     // Both clients register for DIFFERENT resources
     let response1 = send_coap_request(
-        &conn1,
+        &mut client1,
         RequestType::Get,
-        "/sensors/sensor_client1", // Unique ID for client 1
+        "/sensors/sensor_client1",
         Some(ObserveOption::Register),
         None,
     )
@@ -535,9 +517,9 @@ async fn test_observe_multiple_clients() {
     .expect("Failed to register observer 1");
 
     let response2 = send_coap_request(
-        &conn2,
+        &mut client2,
         RequestType::Get,
-        "/sensors/sensor_client2", // Unique ID for client 2
+        "/sensors/sensor_client2",
         Some(ObserveOption::Register),
         None,
     )
@@ -583,13 +565,13 @@ async fn test_observe_error_conditions() {
         .expect("Failed to start server");
 
     // Create client connection
-    let conn = create_client_connection(server_addr)
+    let mut client = create_client_connection(server_addr)
         .await
         .expect("Failed to create client connection");
 
     // 1. Try to observe non-existent resource
     let response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/nonexistent",
         Some(ObserveOption::Register),
@@ -605,7 +587,7 @@ async fn test_observe_error_conditions() {
 
     // 2. Try to deregister without registering first
     let response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/test",
         Some(ObserveOption::Deregister),
@@ -641,7 +623,7 @@ async fn test_observe_with_cbor_payload() {
         .expect("Failed to start server");
 
     // Create client connection
-    let conn = create_client_connection(server_addr)
+    let mut client = create_client_connection(server_addr)
         .await
         .expect("Failed to create client connection");
 
@@ -660,7 +642,7 @@ async fn test_observe_with_cbor_payload() {
 
     // Register observer
     let response = send_coap_request(
-        &conn,
+        &mut client,
         RequestType::Get,
         "/sensors/sensor_complex",
         Some(ObserveOption::Register),

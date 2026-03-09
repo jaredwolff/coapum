@@ -7,8 +7,8 @@
 //! Run with: cargo run --example external_state_updates
 
 use coapum::{
-    StateUpdateHandle, config::Config, observer::memory::MemObserver, router::RouterBuilder,
-    serve::serve,
+    MemoryCredentialStore, StateUpdateHandle, config::Config, observer::memory::MemObserver,
+    router::RouterBuilder, serve::serve_with_credential_store,
 };
 use std::collections::HashMap;
 use tokio::time::{Duration, interval};
@@ -246,9 +246,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         external_monitoring(monitor_handle).await;
     });
 
-    // Start the CoAP server
     let config = Config::default();
-    serve("0.0.0.0:5683".to_string(), config, router).await
+    let credential_store = MemoryCredentialStore::new();
+
+    // Start the CoAP server
+    serve_with_credential_store("0.0.0.0:5683".to_string(), config, router, credential_store).await
 }
 
 // Helper function for random f32 generation (simplified)

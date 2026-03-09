@@ -11,6 +11,7 @@
 //! See the `lookup_psk` documentation for safe patterns.
 
 pub mod memory;
+pub mod resolver;
 
 use std::fmt::Debug;
 use std::future::Future;

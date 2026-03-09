@@ -1,9 +1,7 @@
 //! In-memory credential store implementation.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use crate::router::{ClientEntry, ClientMetadata};
 
@@ -15,9 +13,8 @@ use super::{ClientInfo, CredentialStore, PskEntry};
 /// For persistent or shared credential storage, implement [`CredentialStore`]
 /// with your preferred backend.
 ///
-/// **Note:** Uses `tokio::sync::RwLock::blocking_read()` for `lookup_psk()`,
-/// which requires a multi-threaded tokio runtime. For `current_thread` runtimes,
-/// use `DashMap` or `parking_lot::RwLock` instead.
+/// **Note:** Uses `std::sync::RwLock` so `lookup_psk()` can be called
+/// synchronously from within the DTLS PSK resolver callback.
 #[derive(Clone, Debug)]
 pub struct MemoryCredentialStore {
     store: Arc<RwLock<HashMap<String, ClientEntry>>>,
@@ -65,7 +62,7 @@ impl CredentialStore for MemoryCredentialStore {
     type Error = std::convert::Infallible;
 
     fn lookup_psk(&self, identity: &str) -> Result<Option<PskEntry>, Self::Error> {
-        let store = self.store.blocking_read();
+        let store = self.store.read().unwrap();
         Ok(store.get(identity).map(|entry| PskEntry {
             key: entry.key.clone(),
             enabled: entry.metadata.enabled,
@@ -78,7 +75,7 @@ impl CredentialStore for MemoryCredentialStore {
         key: Vec<u8>,
         metadata: Option<ClientMetadata>,
     ) -> Result<(), Self::Error> {
-        let mut store = self.store.write().await;
+        let mut store = self.store.write().unwrap();
         let entry = ClientEntry {
             key,
             metadata: metadata.unwrap_or(ClientMetadata {
@@ -92,7 +89,7 @@ impl CredentialStore for MemoryCredentialStore {
     }
 
     async fn remove_client(&self, identity: &str) -> Result<bool, Self::Error> {
-        let mut store = self.store.write().await;
+        let mut store = self.store.write().unwrap();
         let existed = store.remove(identity).is_some();
         if existed {
             tracing::info!("Removed client: {}", identity);
@@ -103,7 +100,7 @@ impl CredentialStore for MemoryCredentialStore {
     }
 
     async fn update_key(&self, identity: &str, key: Vec<u8>) -> Result<bool, Self::Error> {
-        let mut store = self.store.write().await;
+        let mut store = self.store.write().unwrap();
         if let Some(entry) = store.get_mut(identity) {
             entry.key = key;
             tracing::info!("Updated key for client: {}", identity);
@@ -119,7 +116,7 @@ impl CredentialStore for MemoryCredentialStore {
         identity: &str,
         metadata: ClientMetadata,
     ) -> Result<bool, Self::Error> {
-        let mut store = self.store.write().await;
+        let mut store = self.store.write().unwrap();
         if let Some(entry) = store.get_mut(identity) {
             entry.metadata = metadata;
             tracing::info!("Updated metadata for client: {}", identity);
@@ -131,7 +128,7 @@ impl CredentialStore for MemoryCredentialStore {
     }
 
     async fn set_enabled(&self, identity: &str, enabled: bool) -> Result<bool, Self::Error> {
-        let mut store = self.store.write().await;
+        let mut store = self.store.write().unwrap();
         if let Some(entry) = store.get_mut(identity) {
             entry.metadata.enabled = enabled;
             tracing::info!("Set client {} enabled: {}", identity, enabled);
@@ -143,12 +140,12 @@ impl CredentialStore for MemoryCredentialStore {
     }
 
     async fn list_clients(&self) -> Result<Vec<String>, Self::Error> {
-        let store = self.store.read().await;
+        let store = self.store.read().unwrap();
         Ok(store.keys().cloned().collect())
     }
 
     async fn get_client(&self, identity: &str) -> Result<Option<ClientInfo>, Self::Error> {
-        let store = self.store.read().await;
+        let store = self.store.read().unwrap();
         Ok(store.get(identity).map(|entry| ClientInfo {
             identity: identity.to_string(),
             enabled: entry.metadata.enabled,

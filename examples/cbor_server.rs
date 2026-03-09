@@ -44,25 +44,16 @@
 //! for the identity "goobie!" with the key "63ef2024b1de6417f856fab7005d38f6".
 //! In production, use strong, randomly generated keys.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use coapum::{
-    dtls::{
-        Error,
-        cipher_suite::CipherSuiteId,
-        config::{Config, ExtendedMasterSecretType},
-    },
+    MemoryCredentialStore,
     extract::{Cbor, Identity, Path, State, StatusCode},
     observer::memory::MemObserver,
     router::RouterBuilder,
     serve,
 };
 use serde::{Deserialize, Serialize};
-
-type PskStore = Arc<RwLock<HashMap<String, Vec<u8>>>>;
 
 const PSK: &[u8] = "63ef2024b1de6417f856fab7005d38f6".as_bytes();
 
@@ -215,12 +206,10 @@ async fn main() {
 
     tracing::info!("Starting ergonomic CoAP server!");
 
-    // Set up PSK store
-    let psk_store: PskStore = Arc::new(RwLock::new(HashMap::new()));
-    {
-        let mut psk_store_write = psk_store.write().unwrap();
-        psk_store_write.insert("goobie!".to_string(), PSK.to_vec());
-    }
+    // Set up PSK credentials
+    let mut clients = HashMap::new();
+    clients.insert("goobie!".to_string(), PSK.to_vec());
+    let credential_store = MemoryCredentialStore::from_clients(&clients);
 
     // Create application state
     let app_state = AppState {
@@ -245,29 +234,10 @@ async fn main() {
         .get("", ping_handler)
         .build();
 
-    // Setup DTLS configuration
-    let addr = "127.0.0.1:5684";
-    let dtls_cfg = Config {
-        psk: Some(Arc::new(move |hint: &[u8]| -> Result<Vec<u8>, Error> {
-            let hint = String::from_utf8(hint.to_vec()).unwrap();
-            tracing::info!("Client's hint: {}", hint);
-
-            if let Some(psk) = psk_store.read().unwrap().get(&hint) {
-                Ok(psk.clone())
-            } else {
-                tracing::info!("Hint {} not found in store", hint);
-                Err(Error::ErrIdentityNoPsk)
-            }
-        })),
-        psk_identity_hint: Some("coapum ergonomic server".as_bytes().to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
-        extended_master_secret: ExtendedMasterSecretType::Require,
-        ..Default::default()
-    };
-
     // Server configuration
+    let addr = "127.0.0.1:5684";
     let cfg = coapum::config::Config {
-        dtls_cfg,
+        psk_identity_hint: Some(b"coapum ergonomic server".to_vec()),
         ..Default::default()
     };
 
@@ -282,7 +252,9 @@ async fn main() {
     tracing::info!("  ANY    /              - Ping");
 
     // Start the server
-    if let Err(e) = serve::serve(addr.to_string(), cfg, router).await {
+    if let Err(e) =
+        serve::serve_with_credential_store(addr.to_string(), cfg, router, credential_store).await
+    {
         tracing::error!("Server error: {}", e);
     }
 }

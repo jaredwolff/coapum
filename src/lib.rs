@@ -1,3 +1,4 @@
+pub mod client;
 pub mod config;
 pub mod credential;
 pub mod extract;
@@ -36,8 +37,7 @@ pub use coap_lite::{
     CoapRequest, CoapResponse, ContentFormat, MessageClass, MessageType, Packet, RequestType,
     ResponseType,
 };
-pub use webrtc_dtls as dtls;
-pub use webrtc_util as util;
+pub use dimpl as dtls;
 
 #[cfg(test)]
 #[macro_use]

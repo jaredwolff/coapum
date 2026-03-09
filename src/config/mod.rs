@@ -1,11 +1,20 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::watch;
 
 #[derive(Clone)]
 pub struct Config {
-    /// DTLS configuration
-    pub dtls_cfg: webrtc_dtls::config::Config,
+    /// DTLS configuration. Must be set before serving.
+    ///
+    /// Build with `dimpl::Config::builder()` and wrap in `Arc`.
+    /// When using `serve_with_credential_store()`, this is built automatically
+    /// from the credential store.
+    pub dimpl_cfg: Option<Arc<dimpl::Config>>,
+
+    /// PSK identity hint sent by the server during handshake.
+    /// Used when building dimpl config from a credential store.
+    pub psk_identity_hint: Option<Vec<u8>>,
 
     /// Timeout in seconds
     pub timeout: u64,
@@ -185,7 +194,8 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            dtls_cfg: Default::default(),
+            dimpl_cfg: None,
+            psk_identity_hint: None,
             timeout: 60,
             buffer_size: Self::DEFAULT_BUFFER_SIZE,
             initial_clients: None,
@@ -211,6 +221,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.timeout, 60);
         assert_eq!(config.buffer_size(), Config::DEFAULT_BUFFER_SIZE);
+        assert!(config.dimpl_cfg.is_none());
     }
 
     #[test]

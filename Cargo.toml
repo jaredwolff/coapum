@@ -40,8 +40,7 @@ sled = { version = "0.34.7", optional = true }
 redb = { version = "3.0.0", optional = true }
 
 # DTLS
-webrtc-dtls = { version = "0.12" }
-webrtc-util = { version = "0.11" }
+dimpl = { path = "../dimpl" }
 
 # SenML
 coapum-senml = { path = "./coapum-senml" }
