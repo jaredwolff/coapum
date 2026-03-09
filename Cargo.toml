@@ -40,7 +40,7 @@ sled = { version = "0.34.7", optional = true }
 redb = { version = "3.1.1", optional = true }
 
 # DTLS
-dimpl = { path = "../dimpl" }
+dimpl = { git = "https://github.com/circuitdojo/dimpl.git" }
 
 # SenML
 coapum-senml = { path = "./coapum-senml" }
