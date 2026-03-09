@@ -11,18 +11,10 @@ echo "Running pre-commit checks..."
 run_checks_in_dir() {
     local dir="$1"
     local name="$2"
-    
+
     if [ -f "$dir/Cargo.toml" ]; then
         echo "📁 Checking $name in $dir..."
-        
-        # Check code formatting
-        echo "  Checking code formatting..."
-        if ! (cd "$dir" && cargo fmt -- --check); then
-            echo "❌ Code formatting issues found in $name."
-            echo "Run 'cd $dir && cargo fmt' to fix formatting, then commit again."
-            exit 1
-        fi
-        
+
         # Run clippy for linting
         echo "  Running clippy..."
         if ! (cd "$dir" && cargo clippy --all-targets --all-features -- -D warnings); then
@@ -30,7 +22,15 @@ run_checks_in_dir() {
             echo "Fix the issues above, then commit again."
             exit 1
         fi
-        
+
+        # Check code formatting
+        echo "  Checking code formatting..."
+        if ! (cd "$dir" && cargo fmt -- --check); then
+            echo "❌ Code formatting issues found in $name."
+            echo "Run 'cd $dir && cargo fmt' to fix formatting, then commit again."
+            exit 1
+        fi
+
         # Run tests
         # echo "  Running tests..."
         # if ! (cd "$dir" && cargo test --all); then
@@ -38,7 +38,7 @@ run_checks_in_dir() {
         #     echo "Fix failing tests, then commit again."
         #     exit 1
         # fi
-        
+
         echo "  ✅ $name checks passed!"
     fi
 }
