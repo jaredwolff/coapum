@@ -33,7 +33,7 @@ updates:
       coap:
         patterns:
           - "coap-lite"
-          - "webrtc-*"
+          - "dimpl"
         update-types:
           - "minor"
           - "patch"
@@ -76,7 +76,7 @@ updates:
       time: "10:00"
     open-pull-requests-limit: 5
     reviewers:
-      - "maintainer-username"  # Replace with actual maintainer
+      - "jaredwolff"
     commit-message:
       prefix: "ci"
       include: "scope"
