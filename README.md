@@ -82,52 +82,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use coapum::{
-    dtls::{
-        cipher_suite::CipherSuiteId,
-        config::{Config, ExtendedMasterSecretType},
-    },
-    config,
+    MemoryCredentialStore, Raw,
+    config::Config,
+    observer::memory::MemObserver,
     router::RouterBuilder,
-    observer::sled::SledObserver,
     serve,
 };
-use std::{collections::HashMap, sync::{Arc, RwLock}};
+use std::collections::HashMap;
+
+async fn status() -> Raw {
+    Raw { payload: b"OK".to_vec(), content_format: None }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Setup PSK store
-    let psk_store = Arc::new(RwLock::new(HashMap::new()));
-    psk_store.write().unwrap().insert(
-        "device123".to_string(),
-        "secret_key".as_bytes().to_vec()
-    );
+    // Register device PSK credentials
+    let mut clients = HashMap::new();
+    clients.insert("device123".to_string(), b"secret_key".to_vec());
+    let credential_store = MemoryCredentialStore::from_clients(&clients);
 
-    // Create router with persistent observer storage
-    let router = RouterBuilder::new((), SledObserver::new("observer.db").unwrap())
-        .get("/status", || async { "OK" })
+    // Create router
+    let router = RouterBuilder::new((), MemObserver::new())
+        .get("/status", status)
         .build();
 
-    // Configure DTLS
-    let dtls_config = Config {
-        psk: Some(Arc::new(move |hint: &[u8]| {
-            let hint = String::from_utf8_lossy(hint);
-            psk_store.read().unwrap()
-                .get(&hint.to_string())
-                .cloned()
-                .ok_or(coapum::dtls::Error::ErrIdentityNoPsk)
-        })),
-        psk_identity_hint: Some("coapum-server".as_bytes().to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
-        extended_master_secret: ExtendedMasterSecretType::Require,
+    // Server config with PSK identity hint
+    let server_config = Config {
+        psk_identity_hint: Some(b"coapum-server".to_vec()),
         ..Default::default()
     };
 
-    let server_config = config::Config {
-        dtls_cfg: dtls_config,
-        ..Default::default()
-    };
-
-    serve::serve("127.0.0.1:5684".to_string(), server_config, router).await?;
+    serve::serve_with_credential_store(
+        "127.0.0.1:5684".to_string(),
+        server_config,
+        router,
+        credential_store,
+    ).await?;
     Ok(())
 }
 ```
@@ -136,42 +126,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use coapum::{
-    dtls::{cipher_suite::CipherSuiteId, config::Config, conn::DTLSConn},
-    util::Conn,
-    CoapRequest, RequestType, Packet,
+    CoapRequest, Packet, RequestType,
+    client::DtlsClient,
+    credential::resolver::MapResolver,
 };
-use tokio::net::UdpSocket;
-use std::sync::Arc;
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Setup UDP connection
-    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
-    socket.connect("127.0.0.1:5684").await?;
+    // Configure DTLS client with PSK credentials
+    let mut keys = HashMap::new();
+    keys.insert("device123".to_string(), b"secret_key".to_vec());
+    let resolver = Arc::new(MapResolver::new(keys));
 
-    // Configure DTLS client
-    let config = Config {
-        psk: Some(Arc::new(|_hint: &[u8]| Ok("secret_key".as_bytes().to_vec()))),
-        psk_identity_hint: Some("device123".as_bytes().to_vec()),
-        cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256],
-        ..Default::default()
-    };
+    let config = dimpl::Config::builder()
+        .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
+        .with_psk_identity(b"device123".to_vec())
+        .build()?;
 
-    let dtls_conn: Arc<dyn Conn + Send + Sync> =
-        Arc::new(DTLSConn::new(socket, config, true, None).await?);
+    let mut client = DtlsClient::connect("127.0.0.1:5684", Arc::new(config)).await?;
 
     // Send CoAP request
-    let mut request = CoapRequest::new();
+    let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
     request.set_method(RequestType::Get);
     request.set_path("status");
-
-    dtls_conn.send(&request.message.to_bytes()?).await?;
+    client.send(&request.message.to_bytes()?).await?;
 
     // Receive response
-    let mut buffer = vec![0u8; 1024];
-    let n = dtls_conn.recv(&mut buffer).await?;
-    let response = Packet::from_bytes(&buffer[0..n])?;
-
+    let data = client.recv(Duration::from_secs(5)).await?;
+    let response = Packet::from_bytes(&data)?;
     println!("Response: {}", String::from_utf8_lossy(&response.payload));
     Ok(())
 }
@@ -453,7 +436,7 @@ at your option.
 ## Acknowledgments
 
 - Built on the excellent [coap-lite](https://crates.io/crates/coap-lite) library
-- DTLS implementation from [webrtc-rs](https://github.com/webrtc-rs/webrtc)
+- DTLS implementation powered by [dimpl](https://github.com/jaredwolff/dimpl) (sans-IO DTLS 1.2)
 - Routing powered by [route-recognizer](https://crates.io/crates/route-recognizer)
 - Storage backend using [sled](https://crates.io/crates/sled)
 

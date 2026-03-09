@@ -161,9 +161,9 @@ grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existin
 - Integrates with the router for request handling
 
 **DTLS Integration**
-- Uses `webrtc-dtls` for secure transport
-- Supports PSK (Pre-Shared Key) authentication
-- Configurable cipher suites and security parameters
+- Uses `dimpl` for secure transport (sans-IO DTLS 1.2)
+- Supports PSK (Pre-Shared Key) authentication via `CredentialStore` trait
+- Per-connection `CapturingResolver` for race-free identity capture
 
 ### Request Flow
 
