@@ -122,8 +122,8 @@ impl<S> FromRequest<S> for Path<String> {
     ) -> Result<Self, Self::Rejection> {
         let path = req.get_path();
 
-        // Extract parameter from common IoT patterns
-        let param = extract_wildcard_param(path).ok_or(PathRejection {
+        // Extract the full wildcard path (everything after route prefix)
+        let param = extract_wildcard_path(path).ok_or(PathRejection {
             kind: PathRejectionKind::MissingPathParams,
         })?;
 
@@ -131,14 +131,14 @@ impl<S> FromRequest<S> for Path<String> {
     }
 }
 
-/// Extract wildcard parameter from IoT-specific path patterns
+/// Extract the last path segment from a URI path.
 ///
 /// Supports patterns like:
 /// - `.d/device123` -> `device123`
 /// - `.s/stream456` -> `stream456`
 /// - `devices/device123` -> `device123`
 /// - `api/v1/devices/device123` -> `device123` (extracts last segment)
-fn extract_wildcard_param(path: &str) -> Option<String> {
+pub fn extract_wildcard_param(path: &str) -> Option<String> {
     // Remove leading slash if present
     let path = path.strip_prefix('/').unwrap_or(path);
 
@@ -151,10 +151,43 @@ fn extract_wildcard_param(path: &str) -> Option<String> {
         return Some(param.to_string());
     }
 
-    // For other patterns, extract the last segment
+    // Extract the last segment
     let segments: Vec<&str> = path.split('/').collect();
     if segments.len() >= 2 {
         Some(segments.last()?.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract the full wildcard path after the route prefix segment.
+///
+/// For wildcard routes like `/t/*path`, returns everything after the first
+/// segment (the route prefix). Preserves the full hierarchical path.
+///
+/// - `t/humidity/test` -> `humidity/test`
+/// - `t/temperature` -> `temperature`
+/// - `devices/abc/props` -> `abc/props`
+pub fn extract_wildcard_path(path: &str) -> Option<String> {
+    let path = path.strip_prefix('/').unwrap_or(path);
+
+    // Handle common IoT patterns (same as extract_wildcard_param)
+    if let Some(param) = path.strip_prefix(".d/") {
+        return Some(param.to_string());
+    }
+
+    if let Some(param) = path.strip_prefix(".s/") {
+        return Some(param.to_string());
+    }
+
+    // Return everything after the first segment
+    if let Some(pos) = path.find('/') {
+        let rest = &path[pos + 1..];
+        if rest.is_empty() {
+            None
+        } else {
+            Some(rest.to_string())
+        }
     } else {
         None
     }
@@ -224,6 +257,28 @@ mod tests {
         assert_eq!(extract_wildcard_param(""), None);
     }
 
+    #[test]
+    fn test_extract_wildcard_path() {
+        assert_eq!(
+            extract_wildcard_path(".d/device123"),
+            Some("device123".to_string())
+        );
+        assert_eq!(
+            extract_wildcard_path("t/humidity/test"),
+            Some("humidity/test".to_string())
+        );
+        assert_eq!(
+            extract_wildcard_path("t/temperature"),
+            Some("temperature".to_string())
+        );
+        assert_eq!(
+            extract_wildcard_path("api/v1/devices/device123"),
+            Some("v1/devices/device123".to_string())
+        );
+        assert_eq!(extract_wildcard_path("empty"), None);
+        assert_eq!(extract_wildcard_path("t/"), None);
+    }
+
     #[tokio::test]
     async fn test_path_extraction() {
         let req = create_test_request(".d/device123");
@@ -231,6 +286,15 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().0, "device123");
+    }
+
+    #[tokio::test]
+    async fn test_path_extraction_multi_segment() {
+        let req = create_test_request("t/humidity/test");
+        let result = Path::<String>::from_request(&req, &()).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "humidity/test");
     }
 
     #[tokio::test]
