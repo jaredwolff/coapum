@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773083297141,
+  "lastUpdate": 1773095302777,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -359,6 +359,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1034,
             "range": "± 9",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "bd119df167a3b50b738208a478b9f833b99e6da6",
+          "message": "feat: add extract_wildcard_path for multi-segment path extraction\n\nPath<String> now uses extract_wildcard_path instead of\nextract_wildcard_param, preserving the full hierarchical path after the\nroute prefix (e.g. t/humidity/test -> humidity/test). The original\nextract_wildcard_param (last-segment only) is kept and re-exported for\ncallers that need it.",
+          "timestamp": "2026-03-09T18:27:17-04:00",
+          "tree_id": "6eff00874c8d717ed74e13449ea2493bcd0d5325",
+          "url": "https://github.com/jaredwolff/coapum/commit/bd119df167a3b50b738208a478b9f833b99e6da6"
+        },
+        "date": 1773095302323,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1081,
+            "range": "± 30",
             "unit": "ns/iter"
           }
         ]
