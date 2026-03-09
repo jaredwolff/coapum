@@ -690,7 +690,7 @@ where
 
                     tracing::debug!(addr = %remote, "connection.incoming");
 
-                    let (tx, rx) = mpsc::channel(32);
+                    let (tx, rx) = mpsc::channel(256);
                     let _ = tx.try_send(recv_buf[..n].to_vec());
                     dispatch.insert(remote, tx);
 

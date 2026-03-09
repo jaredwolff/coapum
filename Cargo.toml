@@ -61,6 +61,10 @@ harness = false
 name = "push_bench"
 harness = false
 
+[[bench]]
+name = "rps_bench"
+harness = false
+
 [workspace]
 resolver = "2"
 members = [
