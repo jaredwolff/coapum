@@ -57,6 +57,10 @@ coapum = { path = ".", features = ["test-utils"] }
 name = "router_bench"
 harness = false
 
+[[bench]]
+name = "push_bench"
+harness = false
+
 [workspace]
 resolver = "2"
 members = [
