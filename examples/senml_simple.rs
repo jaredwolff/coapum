@@ -6,7 +6,8 @@
 //! 3. Demonstrate both JSON and CBOR format support
 
 use coapum::{
-    StatusCode, extract::SenML, observer::memory::MemObserver, router::RouterBuilder, serve,
+    MemoryCredentialStore, StatusCode, extract::SenML, observer::memory::MemObserver,
+    router::RouterBuilder, serve,
 };
 use coapum_senml::SenMLBuilder;
 
@@ -81,7 +82,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ]"#
     );
 
-    serve::serve("127.0.0.1:5683".to_string(), Default::default(), router).await?;
+    let credentials = MemoryCredentialStore::new();
+    serve::serve_with_credential_store(
+        "127.0.0.1:5683".to_string(),
+        Default::default(),
+        router,
+        credentials,
+    )
+    .await?;
 
     Ok(())
 }

@@ -494,14 +494,15 @@ where
     true
 }
 
-/// Per-connection task. Each spawned task owns its own Dtls instance.
+/// Per-connection task. Each spawned task owns its own Dtls instance and
+/// its own `CapturingResolver`, so identity capture is race-free.
 #[allow(clippy::too_many_arguments)]
 async fn connection_task<O, S, C>(
     remote: SocketAddr,
     mut packet_rx: mpsc::Receiver<Vec<u8>>,
     socket: Arc<UdpSocket>,
-    dimpl_config: Arc<dimpl::Config>,
-    resolver: Arc<CapturingResolver<C>>,
+    credential_store: C,
+    psk_identity_hint: Option<Vec<u8>>,
     mut router: CoapRouter<O, S>,
     config: Config,
     connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
@@ -512,6 +513,15 @@ async fn connection_task<O, S, C>(
     O: Observer + Send + Sync + 'static,
     C: CredentialStore,
 {
+    // Build per-connection resolver + dimpl config so identity capture is race-free
+    let resolver = Arc::new(CapturingResolver::new(credential_store));
+    let mut builder =
+        dimpl::Config::builder().with_psk_resolver(resolver.clone() as Arc<dyn dimpl::PskResolver>);
+    if let Some(ref hint) = psk_identity_hint {
+        builder = builder.with_psk_identity_hint(hint.clone());
+    }
+    let dimpl_config = Arc::new(builder.build().expect("valid DTLS config"));
+
     let mut dtls = Dtls::new_12_psk(dimpl_config, Instant::now());
     let mut out_buf = vec![0u8; 2048];
     let mut connected = false;
@@ -597,31 +607,16 @@ async fn connection_task<O, S, C>(
     let _ = cleanup_tx.send(remote).await;
 }
 
-/// Build a dimpl Config from a credential store.
-fn build_dimpl_config<C: CredentialStore>(
-    config: &Config,
-    credential_store: C,
-) -> (Arc<dimpl::Config>, Arc<CapturingResolver<C>>) {
-    let resolver = Arc::new(CapturingResolver::new(credential_store));
-    let mut builder =
-        dimpl::Config::builder().with_psk_resolver(resolver.clone() as Arc<dyn dimpl::PskResolver>);
-
-    if let Some(ref hint) = config.psk_identity_hint {
-        builder = builder.with_psk_identity_hint(hint.clone());
-    }
-
-    let dimpl_cfg = builder.build().expect("valid DTLS config");
-
-    (Arc::new(dimpl_cfg), resolver)
-}
-
 /// Start basic CoAP server with quinn-style dispatch + per-connection tasks.
+///
+/// Each connection gets its own `CapturingResolver` wrapping the shared
+/// `credential_store`, so PSK identity capture is race-free under concurrency.
 pub async fn serve_basic<O, S, C>(
     addr: String,
     config: Config,
     router: CoapRouter<O, S>,
-    resolver: Arc<CapturingResolver<C>>,
-    dimpl_config: Arc<dimpl::Config>,
+    credential_store: C,
+    psk_identity_hint: Option<Vec<u8>>,
     mut disconnect_rx: Option<mpsc::Receiver<String>>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
@@ -702,8 +697,8 @@ where
                     active_connections.fetch_add(1, Ordering::Relaxed);
 
                     let socket = socket.clone();
-                    let dimpl_config = dimpl_config.clone();
-                    let resolver = resolver.clone();
+                    let store = credential_store.clone();
+                    let hint = psk_identity_hint.clone();
                     let router = router.clone();
                     let config = config.clone();
                     let connections = connections.clone();
@@ -712,8 +707,9 @@ where
 
                     tokio::spawn(async move {
                         connection_task(
-                            remote, rx, socket, dimpl_config, resolver,
-                            router, config, connections, conn_count, cleanup_tx,
+                            remote, rx, socket, store,
+                            hint, router, config, connections,
+                            conn_count, cleanup_tx,
                         ).await;
                     });
                 }
@@ -753,16 +749,18 @@ where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
-    let dimpl_cfg = config
-        .dimpl_cfg
-        .clone()
-        .ok_or("DTLS config not set. Set config.dimpl_cfg or use serve_with_credential_store().")?;
+    if config.dimpl_cfg.is_none() {
+        return Err(
+            "DTLS config not set. Set config.dimpl_cfg or use serve_with_credential_store()."
+                .into(),
+        );
+    }
 
-    // Create a no-op resolver for the basic serve case (identity captured by user's resolver)
+    // Create a no-op store for the basic serve case (identity captured by user's resolver)
     let store = MemoryCredentialStore::new();
-    let resolver = Arc::new(CapturingResolver::new(store));
+    let hint = config.psk_identity_hint.clone();
 
-    serve_basic(addr, config, router, resolver, dimpl_cfg, None).await
+    serve_basic(addr, config, router, store, hint, None).await
 }
 
 /// Start a CoAP server with a custom credential store for PSK authentication.
@@ -801,8 +799,8 @@ where
     O: Observer + Send + Sync + 'static,
     C: CredentialStore,
 {
-    let (dimpl_cfg, resolver) = build_dimpl_config(&config, credential_store);
-    serve_basic(addr, config, router, resolver, dimpl_cfg, None).await
+    let hint = config.psk_identity_hint.clone();
+    serve_basic(addr, config, router, credential_store, hint, None).await
 }
 
 /// Start a CoAP server with dynamic client management capability.
@@ -877,13 +875,13 @@ where
         }
     });
 
-    let (dimpl_cfg, resolver) = build_dimpl_config(&config, credential_store);
+    let hint = config.psk_identity_hint.clone();
     let server_future = serve_basic(
         addr,
         config,
         router,
-        resolver,
-        dimpl_cfg,
+        credential_store,
+        hint,
         Some(disconnect_rx),
     );
 
@@ -951,13 +949,13 @@ where
         }
     });
 
-    let (dimpl_cfg, resolver) = build_dimpl_config(&config, credential_store);
+    let hint = config.psk_identity_hint.clone();
     let server_future = serve_basic(
         addr,
         config,
         router,
-        resolver,
-        dimpl_cfg,
+        credential_store,
+        hint,
         Some(disconnect_rx),
     );
 

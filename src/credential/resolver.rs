@@ -16,9 +16,10 @@ use super::CredentialStore;
 /// the identity so it can be read via [`take_last_identity`](Self::take_last_identity)
 /// when `Output::Connected` is received.
 ///
-/// The shared [`Mutex`] is effectively uncontended — each connection task calls
-/// `resolve()` synchronously inside `handle_packet()`, then reads the result
-/// immediately on `Output::Connected` before any other task can interleave.
+/// Each connection task creates its own `CapturingResolver`, so the [`Mutex`]
+/// is effectively uncontended — `resolve()` is called synchronously inside
+/// `handle_packet()`, then read via [`take_last_identity`](Self::take_last_identity)
+/// on `Output::Connected` within the same task.
 pub struct CapturingResolver<C> {
     store: C,
     last_identity: Mutex<Option<String>>,
