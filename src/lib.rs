@@ -34,8 +34,8 @@ pub use router::{
 
 // Re-export CoAP types
 pub use coap_lite::{
-    CoapRequest, CoapResponse, ContentFormat, MessageClass, MessageType, Packet, RequestType,
-    ResponseType,
+    CoapRequest, CoapResponse, ContentFormat, MessageClass, MessageType, ObserveOption, Packet,
+    RequestType, ResponseType,
 };
 pub use dimpl as dtls;
 
