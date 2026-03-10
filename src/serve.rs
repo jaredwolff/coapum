@@ -62,7 +62,7 @@ impl ObserveState {
 /// Extract and validate PSK identity from raw bytes.
 ///
 /// Validates length, UTF-8 encoding, and sanitizes to safe characters only.
-fn extract_identity(identity_hint: &[u8]) -> Option<String> {
+pub(crate) fn extract_identity(identity_hint: &[u8]) -> Option<String> {
     const MAX_IDENTITY_LENGTH: usize = 256;
 
     if identity_hint.len() > MAX_IDENTITY_LENGTH {

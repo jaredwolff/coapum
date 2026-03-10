@@ -1,0 +1,55 @@
+[package]
+name = "coapum-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+coap-lite = "0.13.3"
+ciborium = "0.2"
+serde_json = "1.0"
+
+[dependencies.coapum]
+path = ".."
+features = ["test-utils"]
+
+[[bin]]
+name = "coap_parse"
+path = "fuzz_targets/coap_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cbor_deser"
+path = "fuzz_targets/cbor_deser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_deser"
+path = "fuzz_targets/json_deser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "identity_validate"
+path = "fuzz_targets/identity_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "observer_path"
+path = "fuzz_targets/observer_path.rs"
+test = false
+doc = false
+bench = false
