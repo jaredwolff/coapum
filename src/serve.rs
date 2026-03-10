@@ -548,6 +548,11 @@ async fn connection_task<O, S, C>(
     let (disconnect_tx, mut disconnect_rx) = channel::<()>(1);
     let timeout_duration = Duration::from_secs(config.timeout);
 
+    // One-shot session lifetime timer (DTLS 1.2 key wear-out mitigation).
+    // Created once before the loop so it is NOT reset on activity.
+    let session_deadline = config.max_session_lifetime.map(tokio::time::sleep);
+    tokio::pin!(session_deadline);
+
     loop {
         // Compute next DTLS retransmit deadline
         let dtls_timeout = tokio::time::sleep(timeout_duration);
@@ -595,6 +600,21 @@ async fn connection_task<O, S, C>(
             // Idle timeout
             () = &mut dtls_timeout => {
                 tracing::info!(addr = %remote, "connection.timeout");
+                break;
+            }
+
+            // Session lifetime limit (DTLS 1.2 key wear-out mitigation)
+            Some(()) = async {
+                match session_deadline.as_mut().as_pin_mut() {
+                    Some(f) => { f.await; Some(()) }
+                    None => std::future::pending().await,
+                }
+            } => {
+                tracing::info!(
+                    addr = %remote,
+                    identity = ?identity,
+                    "connection.session_lifetime_exceeded"
+                );
                 break;
             }
         }

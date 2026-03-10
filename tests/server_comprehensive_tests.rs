@@ -374,6 +374,91 @@ mod config_integration_tests {
 
         // Test that dimpl config is None by default (set via serve_with_credential_store)
         assert!(config.dimpl_cfg.is_none());
+
+        // Session lifetime is opt-in
+        assert!(config.max_session_lifetime.is_none());
+    }
+
+    /// Validates that the session lifetime timer fires independently of
+    /// ongoing activity, using the same select! pattern as connection_task.
+    #[tokio::test]
+    async fn test_session_lifetime_fires_despite_activity() {
+        use tokio::sync::mpsc;
+
+        let lifetime = Duration::from_millis(100);
+
+        // Replicate the timer setup from connection_task
+        let session_deadline = Some(tokio::time::sleep(lifetime));
+        tokio::pin!(session_deadline);
+
+        // Simulate an activity channel (like packet_rx in connection_task)
+        let (activity_tx, mut activity_rx) = mpsc::channel::<()>(16);
+
+        // Send activity every 20ms — well within the 100ms lifetime
+        let sender = tokio::spawn(async move {
+            for _ in 0..20 {
+                let _ = activity_tx.send(()).await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+
+        let start = Instant::now();
+        let exit_reason = loop {
+            tokio::select! {
+                Some(()) = activity_rx.recv() => {
+                    // Activity received — idle timeout would reset here,
+                    // but session lifetime must NOT reset.
+                }
+                Some(()) = async {
+                    match session_deadline.as_mut().as_pin_mut() {
+                        Some(f) => { f.await; Some(()) }
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    break "session_lifetime";
+                }
+            }
+        };
+
+        let elapsed = start.elapsed();
+        assert_eq!(exit_reason, "session_lifetime");
+        // Should fire around 100ms, definitely before the activity stream ends (~400ms)
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "Session lifetime should fire at ~100ms, took {:?}",
+            elapsed
+        );
+
+        sender.abort();
+    }
+
+    /// Validates that when no session lifetime is set (None), the timer
+    /// branch never fires and the loop exits via other means.
+    #[tokio::test]
+    async fn test_no_session_lifetime_does_not_fire() {
+        use tokio::sync::mpsc;
+
+        // No session lifetime — should never trigger
+        let session_deadline: Option<tokio::time::Sleep> = None;
+        tokio::pin!(session_deadline);
+
+        let (_tx, mut activity_rx) = mpsc::channel::<()>(1);
+
+        let result = tokio::time::timeout(Duration::from_millis(200), async {
+            tokio::select! {
+                Some(()) = activity_rx.recv() => "activity",
+                Some(()) = async {
+                    match session_deadline.as_mut().as_pin_mut() {
+                        Some(f) => { f.await; Some(()) }
+                        None => std::future::pending().await,
+                    }
+                } => "session_lifetime",
+            }
+        })
+        .await;
+
+        // Should timeout — neither branch fires (channel open but empty, deadline is None)
+        assert!(result.is_err(), "Neither branch should fire");
     }
 
     #[tokio::test]

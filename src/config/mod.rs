@@ -62,6 +62,14 @@ pub struct Config {
     /// Default: 10.
     pub max_reconnect_attempts: usize,
 
+    /// Maximum duration a DTLS session may remain active before the server
+    /// forces a reconnect. Mitigates DTLS 1.2 key wear-out on long-lived
+    /// or high-frequency connections — DTLS 1.2 has no key update mechanism,
+    /// so the only way to rotate key material is to tear down and re-establish
+    /// the session. The client is expected to reconnect automatically.
+    /// Default: `None` (no limit).
+    pub max_session_lifetime: Option<Duration>,
+
     /// Optional shutdown signal. When the sender is dropped or a value is sent,
     /// the server stops accepting new connections and exits gracefully.
     /// Default: `None` (server runs until the process is killed).
@@ -182,6 +190,15 @@ impl Config {
         self.max_reconnect_attempts = max;
     }
 
+    /// Set the maximum DTLS session lifetime.
+    ///
+    /// After this duration, the server will disconnect the client, forcing
+    /// a fresh DTLS handshake with new key material. This mitigates key
+    /// wear-out in DTLS 1.2 which has no rekeying mechanism.
+    pub fn set_max_session_lifetime(&mut self, lifetime: Duration) {
+        self.max_session_lifetime = Some(lifetime);
+    }
+
     /// Set a shutdown signal receiver for graceful shutdown.
     ///
     /// When the corresponding [`watch::Sender`] sends a value or is dropped,
@@ -207,6 +224,7 @@ impl Default for Config {
             notification_timeout_ms: 1000,
             min_reconnect_interval: Duration::from_secs(5),
             max_reconnect_attempts: 10,
+            max_session_lifetime: None,
             shutdown: None,
         }
     }
@@ -222,6 +240,14 @@ mod tests {
         assert_eq!(config.timeout, 60);
         assert_eq!(config.buffer_size(), Config::DEFAULT_BUFFER_SIZE);
         assert!(config.dimpl_cfg.is_none());
+        assert!(config.max_session_lifetime.is_none());
+    }
+
+    #[test]
+    fn test_max_session_lifetime_setter() {
+        let mut config = Config::default();
+        config.set_max_session_lifetime(Duration::from_secs(3600));
+        assert_eq!(config.max_session_lifetime, Some(Duration::from_secs(3600)));
     }
 
     #[test]
