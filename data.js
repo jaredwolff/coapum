@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773161502331,
+  "lastUpdate": 1773161562634,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -509,6 +509,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1116,
             "range": "± 11",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "90541e517bf84ce9ab9b0dd8db02a850d7eb0ecc",
+          "message": "security: harden identity validation, CBOR depth limits, and credential docs\n\n- Reject PSK identities with invalid characters instead of silently\n  stripping them, preventing identity collisions (e.g. \"dev@1\" → \"dev.1\")\n- Add CBOR recursion depth limit (32) via from_reader_with_recursion_limit\n  to prevent stack overflow from deeply nested payloads\n- Expand CredentialStore::lookup_psk docs with concrete anti-patterns and\n  recommended sync access patterns\n- Document PskEntry key zeroization limitation (dimpl doesn't zeroize either)\n- Document Bytes/Raw extractor transport-layer size bounds",
+          "timestamp": "2026-03-10T12:50:18-04:00",
+          "tree_id": "8f8936c0b9244fb801be9f4d22aa3bf3aeba2d57",
+          "url": "https://github.com/jaredwolff/coapum/commit/90541e517bf84ce9ab9b0dd8db02a850d7eb0ecc"
+        },
+        "date": 1773161561530,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1055,
+            "range": "± 7",
             "unit": "ns/iter"
           }
         ]
