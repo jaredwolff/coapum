@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773169190768,
+  "lastUpdate": 1773169272491,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -629,6 +629,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1047,
             "range": "± 25",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "b5dd4ca9970ba248a9a1881d565c97ba93b7b694",
+          "message": "feat: implement RFC 7252 §4.2-4.5 Confirmable message reliability\n\nAdd CON retransmission with exponential backoff, message deduplication,\npiggybacked ACK responses, and configurable retransmission parameters\n(ack_timeout, ack_random_factor, max_retransmit). Observer notifications\ncan optionally use CON via observe_confirmable() builder method.",
+          "timestamp": "2026-03-10T14:58:50-04:00",
+          "tree_id": "cea8f5e901b55eacd78dd2a7621bd56ae2536bda",
+          "url": "https://github.com/jaredwolff/coapum/commit/b5dd4ca9970ba248a9a1881d565c97ba93b7b694"
+        },
+        "date": 1773169272076,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1080,
+            "range": "± 17",
             "unit": "ns/iter"
           }
         ]
