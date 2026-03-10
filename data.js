@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773161562634,
+  "lastUpdate": 1773168474262,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -539,6 +539,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1055,
             "range": "± 7",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "ddc28e67c59dde4b3c4f4e89e9d3cb0837b90949",
+          "message": "feat: add cargo-fuzz targets for security-critical input handling\n\nFive fuzz targets covering the main attack surface:\n- coap_parse: pre-auth CoAP packet parsing\n- cbor_deser: CBOR deserialization with depth/size limits\n- json_deser: JSON deserialization with size limits\n- identity_validate: DTLS identity validation with invariant checks\n- observer_path: observer path validation with traversal assertions\n\nExposes extract_identity via test-utils feature for fuzz testing.",
+          "timestamp": "2026-03-10T13:48:38-04:00",
+          "tree_id": "45b61c8b494236206d2dc167eb597be2fa6afc94",
+          "url": "https://github.com/jaredwolff/coapum/commit/ddc28e67c59dde4b3c4f4e89e9d3cb0837b90949"
+        },
+        "date": 1773168473995,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1061,
+            "range": "± 22",
             "unit": "ns/iter"
           }
         ]
