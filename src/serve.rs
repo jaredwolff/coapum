@@ -20,8 +20,8 @@ use tokio::{
 use tower::Service;
 
 use coap_lite::{
-    BlockHandler, BlockHandlerConfig, CoapRequest, MessageType, ObserveOption, Packet, RequestType,
-    ResponseType,
+    BlockHandler, BlockHandlerConfig, CoapRequest, ContentFormat, MessageType, ObserveOption,
+    Packet, RequestType, ResponseType,
 };
 
 use crate::{
@@ -210,6 +210,7 @@ async fn handle_notification<O, S>(
     tracing::info!("Got notification: {:?}", value);
 
     let notification_path = value.path.clone();
+    let notification_value = value.value.clone();
     let req = value.to_request(remote);
 
     match router.call(req).await {
@@ -218,6 +219,15 @@ async fn handle_notification<O, S>(
                 tracing::error!("Error: {:?}", resp.message);
                 return;
             }
+
+            resp.message.payload =
+                if resp.message.get_content_format() == Some(ContentFormat::ApplicationCBOR) {
+                    let mut buf = Vec::new();
+                    ciborium::into_writer(&notification_value, &mut buf).ok();
+                    buf
+                } else {
+                    serde_json::to_vec(&notification_value).unwrap_or_default()
+                };
 
             // RFC 7641 §3.3: Set observe sequence number
             obs.sequence = obs.sequence.wrapping_add(1);
