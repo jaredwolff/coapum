@@ -62,6 +62,10 @@ where
     pub observe_handler: Option<Box<dyn ErasedHandler<S>>>,
     /// The request type for the route.
     pub method: RequestType,
+    /// Whether observer notifications for this route use Confirmable messages (RFC 7252 §4.2).
+    /// When true, notifications are sent as CON and retransmitted until ACK'd.
+    /// Default: false (NonConfirmable).
+    pub confirmable_notifications: bool,
 }
 
 impl<S> Debug for RouteHandler<S>
@@ -83,6 +87,7 @@ where
             handler: self.handler.clone_erased(),
             observe_handler: self.observe_handler.as_ref().map(|h| h.clone_erased()),
             method: self.method,
+            confirmable_notifications: self.confirmable_notifications,
         }
     }
 }

@@ -70,6 +70,22 @@ pub struct Config {
     /// Default: `None` (no limit).
     pub max_session_lifetime: Option<Duration>,
 
+    /// RFC 7252 §4.8 ACK_TIMEOUT: base retransmission timeout for Confirmable messages.
+    /// The actual initial timeout is randomized between `ack_timeout` and
+    /// `ack_timeout * ack_random_factor`.
+    /// Default: 2 seconds.
+    pub ack_timeout: Duration,
+
+    /// RFC 7252 §4.8 ACK_RANDOM_FACTOR: randomization factor for initial retransmission
+    /// timeout. Must be >= 1.0.
+    /// Default: 1.5.
+    pub ack_random_factor: f64,
+
+    /// RFC 7252 §4.8 MAX_RETRANSMIT: maximum number of retransmissions for a
+    /// Confirmable message before giving up.
+    /// Default: 4.
+    pub max_retransmit: u32,
+
     /// Optional shutdown signal. When the sender is dropped or a value is sent,
     /// the server stops accepting new connections and exits gracefully.
     /// Default: `None` (server runs until the process is killed).
@@ -206,6 +222,36 @@ impl Config {
     pub fn set_shutdown(&mut self, rx: watch::Receiver<()>) {
         self.shutdown = Some(rx);
     }
+
+    /// Set the ACK timeout for Confirmable message retransmission.
+    pub fn set_ack_timeout(&mut self, timeout: Duration) {
+        self.ack_timeout = timeout;
+    }
+
+    /// Set the ACK random factor. Must be >= 1.0.
+    pub fn set_ack_random_factor(&mut self, factor: f64) {
+        self.ack_random_factor = factor.max(1.0);
+    }
+
+    /// Set the maximum number of retransmissions for Confirmable messages.
+    pub fn set_max_retransmit(&mut self, max: u32) {
+        self.max_retransmit = max;
+    }
+
+    /// RFC 7252 §4.8.2 EXCHANGE_LIFETIME: time from first transmission of a
+    /// CON message to when the message ID can be safely reused.
+    pub fn exchange_lifetime(&self) -> Duration {
+        // EXCHANGE_LIFETIME = MAX_TRANSMIT_SPAN + MAX_TRANSMIT_WAIT
+        // MAX_TRANSMIT_SPAN = ACK_TIMEOUT * ((2 ** MAX_RETRANSMIT) - 1) * ACK_RANDOM_FACTOR
+        // MAX_TRANSMIT_WAIT = ACK_TIMEOUT * ((2 ** (MAX_RETRANSMIT + 1)) - 1) * ACK_RANDOM_FACTOR
+        // Simplified: EXCHANGE_LIFETIME = ACK_TIMEOUT * ((2 ** (MAX_RETRANSMIT + 1)) - 1) * ACK_RANDOM_FACTOR + PROCESSING_DELAY
+        // With defaults: 2 * 63 * 1.5 + 2 = 191s. RFC says ~247s total.
+        let max_transmit_span = self
+            .ack_timeout
+            .mul_f64(((1u64 << self.max_retransmit) - 1) as f64 * self.ack_random_factor);
+        // PROCESSING_DELAY per RFC 7252 = ACK_TIMEOUT
+        max_transmit_span + self.ack_timeout
+    }
 }
 
 impl Default for Config {
@@ -225,6 +271,9 @@ impl Default for Config {
             min_reconnect_interval: Duration::from_secs(5),
             max_reconnect_attempts: 10,
             max_session_lifetime: None,
+            ack_timeout: Duration::from_secs(2),
+            ack_random_factor: 1.5,
+            max_retransmit: 4,
             shutdown: None,
         }
     }

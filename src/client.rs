@@ -136,6 +136,90 @@ impl DtlsClient {
         }
     }
 
+    /// Send a Confirmable CoAP request and wait for the ACK with retransmission.
+    ///
+    /// Implements RFC 7252 §4.2 exponential backoff retransmission.
+    /// The `data` must be a serialized CoAP packet with `MessageType::Confirmable`.
+    /// Returns the ACK response payload bytes, or an error after `max_retransmit` attempts.
+    pub async fn send_con(
+        &mut self,
+        data: &[u8],
+        params: &crate::reliability::RetransmitParams,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        use coap_lite::{MessageType, Packet};
+        use rand::RngExt;
+
+        let packet = Packet::from_bytes(data).map_err(|e| format!("invalid packet: {e}"))?;
+        let expected_msg_id = packet.header.message_id;
+
+        // RFC 7252 §4.2: Initial timeout randomized between ACK_TIMEOUT and ACK_TIMEOUT * ACK_RANDOM_FACTOR
+        let mut current_timeout = if params.ack_random_factor > 1.0 {
+            let factor = rand::rng().random_range(1.0..params.ack_random_factor);
+            params.ack_timeout.mul_f64(factor)
+        } else {
+            params.ack_timeout
+        };
+
+        // Initial send
+        self.send(data).await?;
+
+        let mut recv_buf = vec![0u8; 2048];
+        let mut retransmit_count = 0u32;
+
+        loop {
+            let deadline = tokio::time::Instant::now() + current_timeout;
+
+            // Wait for response within current timeout
+            loop {
+                if tokio::time::Instant::now() >= deadline {
+                    break; // timeout — retransmit
+                }
+
+                let remaining = deadline - tokio::time::Instant::now();
+                match tokio::time::timeout(remaining, self.socket.recv(&mut recv_buf)).await {
+                    Ok(Ok(n)) => {
+                        self.dtls.handle_packet(&recv_buf[..n])?;
+
+                        loop {
+                            match self.dtls.poll_output(&mut self.out_buf) {
+                                Output::ApplicationData(app_data) => {
+                                    // Check if this is the ACK we're waiting for
+                                    if let Ok(resp) = Packet::from_bytes(app_data)
+                                        && resp.header.message_id == expected_msg_id
+                                        && resp.header.get_type() == MessageType::Acknowledgement
+                                    {
+                                        return Ok(app_data.to_vec());
+                                    }
+                                    // Not our ACK — keep waiting
+                                }
+                                Output::Packet(p) => {
+                                    self.socket.send(p).await?;
+                                }
+                                Output::Timeout(_) => break,
+                                _ => {}
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => return Err(e.into()),
+                    Err(_) => break, // timeout
+                }
+            }
+
+            // Timeout expired — retransmit or give up
+            if retransmit_count >= params.max_retransmit {
+                return Err(format!(
+                    "CON message {} not ACK'd after {} retransmissions",
+                    expected_msg_id, retransmit_count
+                )
+                .into());
+            }
+
+            retransmit_count += 1;
+            current_timeout *= 2; // exponential backoff
+            self.send(data).await?;
+        }
+    }
+
     /// Get the remote address.
     pub fn remote_addr(&self) -> SocketAddr {
         self.remote

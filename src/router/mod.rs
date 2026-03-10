@@ -628,6 +628,20 @@ where
         self.lookup_observer_handler(path).is_some()
     }
 
+    /// Returns true if the given observe path uses Confirmable notifications.
+    pub fn is_confirmable_notify(&self, path: &str) -> bool {
+        match self.inner.recognize(path) {
+            Ok(matched) => {
+                let handler = matched.handler();
+                let reqtype: RequestTypeWrapper = RequestType::Get.into();
+                handler
+                    .get(&reqtype)
+                    .is_some_and(|h| h.confirmable_notifications)
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Looks up a handler for a given request.
     pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Box<dyn ErasedHandler<S>>> {
         match self.inner.recognize(r.get_path()) {
@@ -688,6 +702,7 @@ where
             handler: into_erased_handler(into_handler(handler)),
             observe_handler: None,
             method,
+            confirmable_notifications: false,
         };
         self.router.add(path, route_handler);
     }
@@ -766,6 +781,33 @@ where
             handler: into_erased_handler(into_handler(get_handler)),
             observe_handler: Some(into_erased_handler(into_handler(notify_handler))),
             method: RequestType::Get,
+            confirmable_notifications: false,
+        };
+        self.router.add(path, route_handler);
+        self
+    }
+
+    /// Add an observable GET route with Confirmable notifications (RFC 7252 §4.2).
+    /// Notifications will be sent as CON messages and retransmitted until ACK'd.
+    pub fn observe_confirmable<F1, T1, F2, T2>(
+        mut self,
+        path: &str,
+        get_handler: F1,
+        notify_handler: F2,
+    ) -> Self
+    where
+        HandlerFn<F1, S>: Handler<T1, S>,
+        HandlerFn<F2, S>: Handler<T2, S>,
+        F1: Send + Sync + Clone,
+        F2: Send + Sync + Clone,
+        T1: Send + Sync + 'static,
+        T2: Send + Sync + 'static,
+    {
+        let route_handler = RouteHandler {
+            handler: into_erased_handler(into_handler(get_handler)),
+            observe_handler: Some(into_erased_handler(into_handler(notify_handler))),
+            method: RequestType::Get,
+            confirmable_notifications: true,
         };
         self.router.add(path, route_handler);
         self
@@ -1059,6 +1101,7 @@ mod tests {
             handler: into_erased_handler(into_handler(|| async { StatusCode::Valid })),
             observe_handler: None,
             method: RequestType::Get,
+            confirmable_notifications: false,
         };
 
         router.add("/test", handler);
@@ -1086,6 +1129,7 @@ mod tests {
                 StatusCode::Content
             }))),
             method: RequestType::Get,
+            confirmable_notifications: false,
         };
 
         router.add("/observable", handler);

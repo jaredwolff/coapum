@@ -28,6 +28,7 @@ use crate::{
     config::Config,
     credential::{CredentialStore, memory::MemoryCredentialStore, resolver::CapturingResolver},
     observer::{Observer, ObserverValue, validate_observer_path},
+    reliability::{DedupResult, ReliabilityState, RetransmitAction, RetransmitParams},
     router::{ClientCommand, ClientManager, CoapRouter, CoapumRequest},
 };
 
@@ -195,6 +196,7 @@ async fn send_response(
 }
 
 /// Handle an observer notification: route, set RFC 7641 headers, and send.
+#[allow(clippy::too_many_arguments)]
 async fn handle_notification<O, S>(
     value: ObserverValue,
     router: &mut CoapRouter<O, S>,
@@ -203,6 +205,7 @@ async fn handle_notification<O, S>(
     socket: &UdpSocket,
     remote: SocketAddr,
     obs: &mut ObserveState,
+    reliability: &mut ReliabilityState,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
@@ -233,13 +236,18 @@ async fn handle_notification<O, S>(
             obs.sequence = obs.sequence.wrapping_add(1);
             resp.message.set_observe_value(obs.sequence);
 
-            // Set message type to Non-Confirmable for notifications
-            resp.message.header.set_type(MessageType::NonConfirmable);
-
             // Assign unique message ID for RST tracking
             let msg_id = obs.next_msg_id;
             obs.next_msg_id = obs.next_msg_id.wrapping_add(1);
             resp.message.header.message_id = msg_id;
+
+            // RFC 7252 §4.2 / RFC 7641 §4.5: Use CON or NON based on route config
+            let confirmable = router.is_confirmable_notify(&notification_path);
+            if confirmable {
+                resp.message.header.set_type(MessageType::Confirmable);
+            } else {
+                resp.message.header.set_type(MessageType::NonConfirmable);
+            }
 
             obs.notification_msg_ids.insert(msg_id, notification_path);
 
@@ -250,8 +258,18 @@ async fn handle_notification<O, S>(
                     .retain(|&id, _| id.wrapping_sub(cutoff) < 256);
             }
 
-            tracing::info!("Sending notification (seq={}) to: {}", obs.sequence, remote);
+            tracing::info!(
+                "Sending notification (seq={}, con={}) to: {}",
+                obs.sequence,
+                confirmable,
+                remote
+            );
             send_response(dtls, out_buf, socket, remote, &resp).await;
+
+            // Track for retransmission if CON
+            if confirmable && let Ok(bytes) = resp.message.to_bytes() {
+                reliability.track_outgoing_con(msg_id, bytes);
+            }
         }
         Err(e) => tracing::error!("Error: {}", e),
     }
@@ -271,17 +289,46 @@ async fn handle_request<O, S>(
     obs: &mut ObserveState,
     block_handler: &mut BlockHandler<SocketAddr>,
     max_observers_per_device: usize,
+    reliability: &mut ReliabilityState,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
-    // RFC 7641 §3.2: RST deregisters observer
-    if packet.header.get_type() == MessageType::Reset {
-        if let Some(path) = obs.notification_msg_ids.remove(&packet.header.message_id) {
+    let msg_type = packet.header.get_type();
+    let msg_id = packet.header.message_id;
+
+    // RFC 7641 §3.2: RST deregisters observer + stops CON retransmission
+    if msg_type == MessageType::Reset {
+        if let Some(path) = obs.notification_msg_ids.remove(&msg_id) {
             tracing::info!("RST deregistration for '{}' path '{}'", identity, path);
             let _ = router.unregister_observer(identity, &path).await;
         }
+        reliability.handle_rst(msg_id);
         return;
+    }
+
+    // RFC 7252 §4.2: ACK for a CON we sent — stop retransmitting
+    if msg_type == MessageType::Acknowledgement {
+        if reliability.handle_ack(msg_id) {
+            tracing::debug!(msg_id, "reliability.ack_received");
+        }
+        return;
+    }
+
+    // RFC 7252 §4.5: Deduplication for incoming CON requests
+    let is_confirmable = msg_type == MessageType::Confirmable;
+    if is_confirmable {
+        match reliability.check_dedup(msg_id) {
+            DedupResult::Duplicate(cached_bytes) => {
+                tracing::debug!(msg_id, "reliability.dedup_hit");
+                if let Err(e) = dtls.send_application_data(&cached_bytes) {
+                    tracing::error!(error = %e, "dtls.send_failed");
+                }
+                drain_packets(dtls, out_buf, socket, socket_addr).await;
+                return;
+            }
+            DedupResult::NewMessage => {}
+        }
     }
 
     let mut coap_request = CoapRequest::from_packet(packet, socket_addr);
@@ -398,9 +445,19 @@ async fn handle_request<O, S>(
                 tracing::error!("Block transfer response error: {}", e.message);
             }
 
-            if let Some(ref resp) = block_req.response {
+            if let Some(ref mut resp) = block_req.response {
+                // RFC 7252 §5.2.1: Piggybacked ACK for Confirmable requests
+                if is_confirmable {
+                    resp.message.header.set_type(MessageType::Acknowledgement);
+                }
+
                 tracing::debug!("Got response: {:?}", resp.message);
                 send_response(dtls, out_buf, socket, socket_addr, resp).await;
+
+                // Cache serialized response for deduplication
+                if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
+                    reliability.record_response(msg_id, bytes);
+                }
             }
         }
         Err(e) => tracing::error!("Error: {}", e),
@@ -427,6 +484,7 @@ async fn process_outputs<O, S>(
     connections: &Mutex<HashMap<String, ConnectionInfo>>,
     disconnect_tx: Sender<()>,
     config: &Config,
+    reliability: &mut ReliabilityState,
 ) -> bool
 where
     S: Debug + Clone + Send + Sync + 'static,
@@ -493,6 +551,7 @@ where
                         obs,
                         block_handler,
                         max_observers_per_device,
+                        reliability,
                     )
                     .await;
                 }
@@ -540,6 +599,7 @@ async fn connection_task<O, S, C>(
     let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
     let obs_tx = Arc::new(obs_tx);
     let mut obs = ObserveState::new();
+    let mut reliability = ReliabilityState::new(RetransmitParams::from_config(&config));
     let mut block_handler = BlockHandler::new(BlockHandlerConfig {
         max_total_message_size: config.max_message_size,
         cache_expiry_duration: config.block_cache_expiry,
@@ -578,6 +638,7 @@ async fn connection_task<O, S, C>(
                     &mut router, &obs_tx, &mut obs, &mut block_handler,
                     config.max_observers_per_device,
                     &connections, disconnect_tx.clone(), &config,
+                    &mut reliability,
                 ).await {
                     break;
                 }
@@ -587,7 +648,7 @@ async fn connection_task<O, S, C>(
             Some(value) = obs_rx.recv(), if connected => {
                 handle_notification(
                     value, &mut router, &mut dtls, &mut out_buf,
-                    &socket, remote, &mut obs,
+                    &socket, remote, &mut obs, &mut reliability,
                 ).await;
             }
 
@@ -616,6 +677,36 @@ async fn connection_task<O, S, C>(
                     "connection.session_lifetime_exceeded"
                 );
                 break;
+            }
+
+            // RFC 7252 §4.2: CON retransmission timer
+            () = async {
+                match reliability.next_retransmit_deadline() {
+                    Some(d) => tokio::time::sleep_until(d).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                for action in reliability.process_retransmits() {
+                    match action {
+                        RetransmitAction::Resend { msg_id, ref bytes } => {
+                            tracing::debug!(msg_id, "reliability.retransmit");
+                            if let Err(e) = dtls.send_application_data(bytes) {
+                                tracing::error!(error = %e, "reliability.retransmit.send_failed");
+                                continue;
+                            }
+                            drain_packets(&mut dtls, &mut out_buf, &socket, remote).await;
+                        }
+                        RetransmitAction::GiveUp { msg_id } => {
+                            tracing::warn!(msg_id, "reliability.give_up");
+                            if let Some(path) = obs.notification_msg_ids.remove(&msg_id)
+                                && let Some(ref id) = identity
+                            {
+                                let _ = router.unregister_observer(id, &path).await;
+                                tracing::info!(identity = %id, path = %path, "reliability.observer_deregistered");
+                            }
+                        }
+                    }
+                }
             }
         }
 

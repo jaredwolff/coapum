@@ -6,7 +6,15 @@
 //! **Must run with `--test-threads=1`** to avoid port conflicts from the
 //! bind-drop-rebind pattern used to discover free ports.
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicU16, Ordering},
+    },
+    time::Duration,
+};
 
 use tokio::sync::{Mutex, broadcast};
 
@@ -28,6 +36,9 @@ const PSK: &[u8] = b"test_psk_key_1234567890abcdef";
 const IDENTITY: &str = "test_client";
 const SERVER_ADDR: &str = "127.0.0.1:0"; // Use 0 to get random port
 const TIMEOUT_SECS: u64 = 10;
+
+/// Atomic counter for unique message IDs (RFC 7252 requires unique IDs within EXCHANGE_LIFETIME).
+static MSG_ID_COUNTER: AtomicU16 = AtomicU16::new(1);
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 struct SensorData {
@@ -164,6 +175,7 @@ async fn send_coap_request(
     payload: Option<Vec<u8>>,
 ) -> Result<Packet, Box<dyn std::error::Error>> {
     let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
+    request.message.header.message_id = MSG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     request.set_method(method);
     request.set_path(path);
 

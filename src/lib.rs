@@ -5,6 +5,7 @@ pub mod extract;
 pub mod handler;
 pub mod helper;
 pub mod observer;
+pub mod reliability;
 pub mod router;
 pub mod serve;
 

@@ -7,7 +7,15 @@
 //! **Must run with `--test-threads=1`** to avoid port conflicts from the
 //! bind-drop-rebind pattern used to discover free ports.
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicU16, Ordering},
+    },
+    time::Duration,
+};
 
 use tokio::{
     sync::Mutex,
@@ -31,6 +39,9 @@ use serde::{Deserialize, Serialize};
 const PSK: &[u8] = b"test_push_notification_key_123";
 const IDENTITY: &str = "push_test_client";
 const SERVER_ADDR: &str = "127.0.0.1:0";
+
+/// Atomic counter for unique message IDs (RFC 7252 requires unique IDs within EXCHANGE_LIFETIME).
+static MSG_ID_COUNTER: AtomicU16 = AtomicU16::new(1);
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 struct Temperature {
@@ -178,6 +189,7 @@ async fn test_observe_registration_and_initial_response() {
 
     // Send observe registration
     let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
+    request.message.header.message_id = MSG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     request.set_method(RequestType::Get);
     request.set_path("/temperature/sensor1");
     request.set_observe_flag(ObserveOption::Register);
@@ -251,6 +263,7 @@ async fn test_observe_push_notification_via_database_write() {
 
     // Send observe registration
     let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
+    request.message.header.message_id = MSG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     request.set_method(RequestType::Get);
     request.set_path("/temperature/sensor2");
     request.set_observe_flag(ObserveOption::Register);
@@ -389,6 +402,7 @@ async fn test_observe_deregistration() {
 
     // Register for observations
     let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
+    request.message.header.message_id = MSG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     request.set_method(RequestType::Get);
     request.set_path("/temperature/sensor3");
     request.set_observe_flag(ObserveOption::Register);
@@ -413,6 +427,7 @@ async fn test_observe_deregistration() {
 
     // Deregister
     let mut deregister_request: CoapRequest<SocketAddr> = CoapRequest::new();
+    deregister_request.message.header.message_id = MSG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     deregister_request.set_method(RequestType::Delete);
     deregister_request.set_path("/temperature/sensor3");
     deregister_request.set_observe_flag(ObserveOption::Deregister);
