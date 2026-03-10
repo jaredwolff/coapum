@@ -241,9 +241,14 @@ impl SenMLPack {
     }
 
     /// Deserialize from CBOR bytes
+    ///
+    /// Uses a recursion depth limit of 32 to prevent stack overflow from
+    /// maliciously crafted deeply-nested CBOR payloads.
     #[cfg(feature = "cbor")]
     pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
-        ciborium::de::from_reader(bytes).map_err(|e| SenMLError::deserialization(e.to_string()))
+        const MAX_CBOR_RECURSION_DEPTH: usize = 32;
+        ciborium::de::from_reader_with_recursion_limit(bytes, MAX_CBOR_RECURSION_DEPTH)
+            .map_err(|e| SenMLError::deserialization(e.to_string()))
     }
 }
 

@@ -16,7 +16,16 @@ use coapum_senml::SenMLPack;
 /// Extract raw bytes from the request payload
 ///
 /// This is the most basic payload extractor that simply returns the raw bytes
-/// from the CoAP message payload.
+/// from the CoAP message payload without application-layer size enforcement.
+///
+/// # Size Limits
+///
+/// Payload size is bounded by the transport layer, not this extractor:
+/// - **UDP receive buffer**: [`Config::buffer_size`](crate::config::Config) (default 8 KB, max 64 KB)
+/// - **DTLS record size**: limited by the DTLS implementation
+/// - **Block-wise transfer**: [`Config::max_message_size`](crate::config::Config) (default 1152 bytes per RFC 7252)
+///
+/// For payloads requiring stricter limits, use [`Cbor`] (8 KB) or [`Json`] (1 MB) instead.
 ///
 /// # Example
 ///
@@ -161,6 +170,7 @@ enum CborRejectionKind {
     MissingCborContentType,
     EmptyPayload,
     PayloadTooLarge,
+    RecursionLimitExceeded,
 }
 
 impl fmt::Display for CborRejection {
@@ -178,6 +188,9 @@ impl fmt::Display for CborRejection {
             CborRejectionKind::PayloadTooLarge => {
                 write!(f, "Payload too large")
             }
+            CborRejectionKind::RecursionLimitExceeded => {
+                write!(f, "CBOR nesting depth exceeds limit")
+            }
         }
     }
 }
@@ -193,6 +206,7 @@ impl IntoResponse for CborRejection {
             }
             CborRejectionKind::EmptyPayload => StatusCode::BadRequest.into_response(),
             CborRejectionKind::PayloadTooLarge => StatusCode::RequestEntityTooLarge.into_response(),
+            CborRejectionKind::RecursionLimitExceeded => StatusCode::BadRequest.into_response(),
         }
     }
 }
@@ -235,15 +249,23 @@ where
             }
         }
 
-        // Security: Deserialize CBOR data with size constraints
-        // Note: ciborium doesn't expose public deserializer configuration,
-        // but the from_reader function already has internal protections
-        let value =
-            ciborium::de::from_reader(&req.message.payload[..]).map_err(|e| CborRejection {
-                kind: CborRejectionKind::InvalidCborData {
+        // Security: Deserialize CBOR with a recursion depth limit to prevent
+        // stack overflow from deeply nested structures (a few KB can nest 1000+ levels).
+        const MAX_CBOR_RECURSION_DEPTH: usize = 32;
+        let value = ciborium::de::from_reader_with_recursion_limit(
+            &req.message.payload[..],
+            MAX_CBOR_RECURSION_DEPTH,
+        )
+        .map_err(|e| {
+            let kind = if e.to_string().contains("recursion") {
+                CborRejectionKind::RecursionLimitExceeded
+            } else {
+                CborRejectionKind::InvalidCborData {
                     error: e.to_string(),
-                },
-            })?;
+                }
+            };
+            CborRejection { kind }
+        })?;
 
         Ok(Cbor(value))
     }
@@ -452,6 +474,12 @@ where
 ///
 /// This extractor provides access to the raw CoAP request for cases where
 /// you need fine-grained control over the response construction.
+///
+/// # Size Limits
+///
+/// Like [`Bytes`], this extractor does not enforce an application-layer size limit.
+/// Payload size is bounded by the transport layer (UDP buffer, DTLS records,
+/// block-wise transfer). See [`Bytes`] documentation for details.
 pub struct Raw {
     pub payload: Vec<u8>,
     pub content_format: Option<ContentFormat>,

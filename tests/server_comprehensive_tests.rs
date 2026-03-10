@@ -250,7 +250,8 @@ mod path_validation_tests {
 
 mod identity_sanitization_tests {
 
-    // Test identity sanitization logic based on serve.rs implementation
+    // Test identity validation logic based on serve.rs implementation.
+    // Identities with invalid characters are rejected outright (not filtered).
     fn test_identity_sanitization(identity: &str) -> Result<String, String> {
         const MAX_IDENTITY_LENGTH: usize = 256;
 
@@ -258,20 +259,18 @@ mod identity_sanitization_tests {
             return Err(format!("Identity too long: {} bytes", identity.len()));
         }
 
-        // Sanitize identity to prevent injection attacks
-        let sanitized: String = identity
-            .chars()
-            .filter(|c| {
-                c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.' || *c == ':'
-            })
-            .take(MAX_IDENTITY_LENGTH)
-            .collect();
-
-        if sanitized.is_empty() {
-            return Err("Identity contains no valid characters".to_string());
+        if identity.is_empty() {
+            return Err("Identity is empty".to_string());
         }
 
-        Ok(sanitized)
+        if !identity
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':')
+        {
+            return Err("Identity contains invalid characters".to_string());
+        }
+
+        Ok(identity.to_string())
     }
 
     #[test]
@@ -298,25 +297,24 @@ mod identity_sanitization_tests {
     }
 
     #[test]
-    fn test_identity_sanitization_filtering() {
-        let test_cases = vec![
-            ("client@domain", "clientdomain"),
-            ("device#123", "device123"),
-            ("sensor;DROP", "sensorDROP"),
-            ("node\x00null", "nodenull"),
-            ("test!@#$%^&*()+=", "test"),
-            ("spaces in name", "spacesinname"),
+    fn test_identity_rejects_invalid_characters() {
+        let invalid_identities = vec![
+            "client@domain",
+            "device#123",
+            "sensor;DROP",
+            "node\x00null",
+            "test!@#$%^&*()+=",
+            "spaces in name",
         ];
 
-        for (input, expected) in test_cases {
+        for input in invalid_identities {
             let result = test_identity_sanitization(input);
-            assert!(result.is_ok(), "Should sanitize identity: {}", input);
-            assert_eq!(
-                result.unwrap(),
-                expected,
-                "Incorrect sanitization for: {}",
+            assert!(
+                result.is_err(),
+                "Should reject identity with invalid chars: {}",
                 input
             );
+            assert!(result.unwrap_err().contains("invalid characters"));
         }
     }
 
@@ -329,11 +327,11 @@ mod identity_sanitization_tests {
     }
 
     #[test]
-    fn test_empty_after_sanitization() {
+    fn test_all_invalid_characters_rejected() {
         let invalid_identities = vec![
             "!@#$%^&*()",         // All invalid characters
             "\x00\x01\x02",       // All non-printable
-            "   ",                // Only spaces (filtered out)
+            "   ",                // Only spaces
             "+=[]{}|\\;\"'<>,?/", // All symbols (except : which is allowed)
         ];
 
@@ -341,10 +339,10 @@ mod identity_sanitization_tests {
             let result = test_identity_sanitization(identity);
             assert!(
                 result.is_err(),
-                "Should reject identity with no valid chars: {}",
+                "Should reject identity with invalid chars: {}",
                 identity
             );
-            assert!(result.unwrap_err().contains("no valid characters"));
+            assert!(result.unwrap_err().contains("invalid characters"));
         }
     }
 

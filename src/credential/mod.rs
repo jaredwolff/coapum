@@ -19,9 +19,19 @@ use std::future::Future;
 use crate::router::ClientMetadata;
 
 /// Minimum info returned by a PSK lookup.
+///
+/// # Key Material Security
+///
+/// PSK key bytes are stored as plain `Vec<u8>` and are **not** zeroized on drop.
+/// Key material is cloned during the DTLS handshake flow (`lookup_psk` → `PskResolver::resolve`),
+/// and the downstream `dimpl` crate also does not zeroize its copy. Adding `zeroize` to coapum
+/// alone would not provide meaningful protection. Production deployments requiring key zeroization
+/// should track upstream support in `dimpl`.
 #[derive(Debug, Clone)]
 pub struct PskEntry {
     /// The pre-shared key bytes.
+    ///
+    /// **Note:** Not zeroized on drop. See [`PskEntry`] docs for details.
     pub key: Vec<u8>,
     /// Whether this client is enabled for connections.
     pub enabled: bool,
@@ -78,18 +88,36 @@ pub trait CredentialStore: Clone + Debug + Send + Sync + 'static {
 
     /// Synchronous PSK lookup — called from the DTLS handshake callback.
     ///
-    /// This method is invoked from a synchronous context during the DTLS
-    /// handshake. Implementations **must not** use `.await` or
-    /// `tokio::runtime::Handle::current().block_on()`, as either can deadlock
-    /// when called from within the tokio runtime.
+    /// This method is invoked from a **synchronous** context during the DTLS
+    /// handshake. Implementations **must not** block the async runtime.
     ///
-    /// Recommended patterns:
+    /// # What NOT To Do
+    ///
+    /// ```rust,ignore
+    /// // WRONG — will deadlock on current_thread runtime, may deadlock on multi-thread:
+    /// fn lookup_psk(&self, identity: &str) -> Result<Option<PskEntry>, Self::Error> {
+    ///     tokio::runtime::Handle::current().block_on(self.db.query(identity))
+    /// }
+    ///
+    /// // WRONG — .await is not available in a sync context:
+    /// fn lookup_psk(&self, identity: &str) -> Result<Option<PskEntry>, Self::Error> {
+    ///     self.async_store.get(identity).await  // compile error
+    /// }
+    /// ```
+    ///
+    /// # Recommended Patterns
+    ///
+    /// - **`std::sync::RwLock`** — used by [`memory::MemoryCredentialStore`].
+    ///   Simple and correct for in-memory stores.
     /// - **`DashMap`** — lock-free concurrent reads; best for database-backed
-    ///   stores that maintain an in-memory cache.
+    ///   stores that maintain an in-memory cache refreshed by a background task.
     /// - **`parking_lot::RwLock`** — synchronous lock that does not interact
     ///   with tokio's cooperative scheduling.
-    /// - **`tokio::sync::RwLock::blocking_read()`** — works on multi-threaded
-    ///   runtimes only. **Will deadlock on `current_thread` runtimes.**
+    /// - **`tokio::sync::RwLock::blocking_read()`** — works on **multi-threaded
+    ///   runtimes only**. Will deadlock on `current_thread` runtimes
+    ///   (e.g., `#[tokio::test]` defaults to `current_thread`).
+    ///
+    /// See [`memory::MemoryCredentialStore`] for a reference implementation.
     fn lookup_psk(&self, identity: &str) -> Result<Option<PskEntry>, Self::Error>;
 
     /// Add a client with a PSK key and optional metadata.

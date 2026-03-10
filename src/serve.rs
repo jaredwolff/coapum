@@ -76,20 +76,20 @@ fn extract_identity(identity_hint: &[u8]) -> Option<String> {
 
     match std::str::from_utf8(identity_hint) {
         Ok(s) => {
-            let sanitized: String = s
-                .chars()
-                .filter(|c| {
-                    c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.' || *c == ':'
-                })
-                .take(MAX_IDENTITY_LENGTH)
-                .collect();
-
-            if sanitized.is_empty() {
-                tracing::error!("Identity hint contains no valid characters");
-                None
-            } else {
-                Some(sanitized)
+            if s.is_empty() {
+                tracing::error!("Identity hint is empty");
+                return None;
             }
+
+            if !s
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':')
+            {
+                tracing::error!("Identity hint contains invalid characters");
+                return None;
+            }
+
+            Some(s.to_string())
         }
         Err(e) => {
             tracing::error!("Invalid UTF-8 in identity hint: {}", e);

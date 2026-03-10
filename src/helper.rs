@@ -36,8 +36,12 @@ use serde_json::Value as JsonValue;
 /// assert_eq!(json_value, json!({"foo": "bar"}));
 /// ```
 pub fn convert_cbor_to_json(cbor_data: &[u8]) -> serde_json::Result<JsonValue> {
-    let cbor_value: CborValue = ciborium::de::from_reader(Cursor::new(cbor_data))
-        .map_err(|e| serde_json::Error::custom(format!("CBOR deserialization failed: {}", e)))?;
+    const MAX_CBOR_RECURSION_DEPTH: usize = 32;
+    let cbor_value: CborValue = ciborium::de::from_reader_with_recursion_limit(
+        Cursor::new(cbor_data),
+        MAX_CBOR_RECURSION_DEPTH,
+    )
+    .map_err(|e| serde_json::Error::custom(format!("CBOR deserialization failed: {}", e)))?;
     let json_value: JsonValue = serde_json::to_value(cbor_value)?;
     Ok(json_value)
 }
