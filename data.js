@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773119832921,
+  "lastUpdate": 1773119914993,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -449,6 +449,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1060,
             "range": "± 4",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "b273f3e011ee671146614180b645d2135d50cd4c",
+          "message": "fix: forward trigger_notification value in observe response payload\n\nThe notification handler called router.call() but never placed the\nactual ObserverValue data into the response payload. Clone the value\nbefore to_request() consumes it, then serialize it into the response\nusing CBOR or JSON based on the handler's content format.",
+          "timestamp": "2026-03-10T01:15:01-04:00",
+          "tree_id": "305530f462a27c6cb517faf56f9e67a799f2c552",
+          "url": "https://github.com/jaredwolff/coapum/commit/b273f3e011ee671146614180b645d2135d50cd4c"
+        },
+        "date": 1773119914662,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1038,
+            "range": "± 18",
             "unit": "ns/iter"
           }
         ]
