@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773191380613,
+  "lastUpdate": 1773192794098,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -719,6 +719,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1064,
             "range": "± 21",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "981dc1e7a6ea4d3df8b607c5a631feef057f12ec",
+          "message": "fix: remove private intra-doc link breaking documentation CI",
+          "timestamp": "2026-03-10T21:32:04-04:00",
+          "tree_id": "93771d3e9fff2a1d2dc1b6a71e3e286cdb5cb780",
+          "url": "https://github.com/jaredwolff/coapum/commit/981dc1e7a6ea4d3df8b607c5a631feef057f12ec"
+        },
+        "date": 1773192793889,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1038,
+            "range": "± 11",
             "unit": "ns/iter"
           }
         ]
