@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773269198754,
+  "lastUpdate": 1773269221750,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -809,6 +809,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1062,
             "range": "± 7",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "12d156545fe5a8c57c39e7cdcfb92b1ac50a6e01",
+          "message": "chore: update dimpl\n\nSigned-off-by: Jared Wolff <hello@jaredwolff.com>",
+          "timestamp": "2026-03-11T18:44:48-04:00",
+          "tree_id": "3e194cde27af966f6f0460215feb06bd2830ce4b",
+          "url": "https://github.com/jaredwolff/coapum/commit/12d156545fe5a8c57c39e7cdcfb92b1ac50a6e01"
+        },
+        "date": 1773269221401,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1078,
+            "range": "± 8",
             "unit": "ns/iter"
           }
         ]
