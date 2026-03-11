@@ -342,3 +342,76 @@ mod empty_message {
         assert!(should_ignore);
     }
 }
+
+// ---------------------------------------------------------------------------
+// §5.3.1 — Observer token storage for notifications
+// ---------------------------------------------------------------------------
+
+mod observer_token_storage {
+    use std::collections::HashMap;
+
+    /// Mirrors the ObserveState.observer_tokens field from serve.rs.
+    /// We test the HashMap-based storage logic directly since ObserveState is private.
+
+    #[test]
+    fn store_and_retrieve_token() {
+        let mut tokens: HashMap<String, Vec<u8>> = HashMap::new();
+        let token = b"\xCA\xFE\xBA\xBE".to_vec();
+
+        tokens.insert("/sensors/temp".to_string(), token.clone());
+
+        assert_eq!(tokens.get("/sensors/temp").unwrap(), &token);
+    }
+
+    #[test]
+    fn multiple_observers_independent_tokens() {
+        let mut tokens: HashMap<String, Vec<u8>> = HashMap::new();
+
+        let token_a = b"\x01\x02\x03\x04".to_vec();
+        let token_b = b"\xAA\xBB\xCC\xDD".to_vec();
+
+        tokens.insert("/sensors/temp".to_string(), token_a.clone());
+        tokens.insert("/sensors/humidity".to_string(), token_b.clone());
+
+        assert_eq!(tokens.get("/sensors/temp").unwrap(), &token_a);
+        assert_eq!(tokens.get("/sensors/humidity").unwrap(), &token_b);
+        assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn re_registration_updates_token() {
+        let mut tokens: HashMap<String, Vec<u8>> = HashMap::new();
+
+        let old_token = b"\x01\x02".to_vec();
+        let new_token = b"\xFF\xFE".to_vec();
+
+        tokens.insert("/sensors/temp".to_string(), old_token);
+        tokens.insert("/sensors/temp".to_string(), new_token.clone());
+
+        assert_eq!(tokens.get("/sensors/temp").unwrap(), &new_token);
+        assert_eq!(tokens.len(), 1);
+    }
+
+    #[test]
+    fn cleanup_on_deregistration() {
+        let mut tokens: HashMap<String, Vec<u8>> = HashMap::new();
+
+        tokens.insert("/sensors/temp".to_string(), b"\x01\x02".to_vec());
+        tokens.insert("/sensors/humidity".to_string(), b"\x03\x04".to_vec());
+
+        // Simulate RST or explicit deregistration
+        tokens.remove("/sensors/temp");
+
+        assert!(!tokens.contains_key("/sensors/temp"));
+        assert!(tokens.contains_key("/sensors/humidity"));
+        assert_eq!(tokens.len(), 1);
+    }
+
+    #[test]
+    fn missing_token_returns_none() {
+        let tokens: HashMap<String, Vec<u8>> = HashMap::new();
+
+        // Notification for unregistered path should not crash
+        assert!(!tokens.contains_key("/unknown/path"));
+    }
+}

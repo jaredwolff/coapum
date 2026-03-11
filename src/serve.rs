@@ -48,6 +48,9 @@ struct ObserveState {
     next_msg_id: u16,
     /// Maps message IDs to observer paths for RST-based deregistration.
     notification_msg_ids: HashMap<u16, String>,
+    /// RFC 7252 §5.3.1: Maps observer paths to the token from the original
+    /// OBSERVE GET so notifications echo the correct token.
+    observer_tokens: HashMap<String, Vec<u8>>,
 }
 
 impl ObserveState {
@@ -56,6 +59,7 @@ impl ObserveState {
             sequence: 0,
             next_msg_id: 1,
             notification_msg_ids: HashMap::new(),
+            observer_tokens: HashMap::new(),
         }
     }
 }
@@ -232,6 +236,11 @@ async fn handle_notification<O, S>(
                     serde_json::to_vec(&notification_value).unwrap_or_default()
                 };
 
+            // RFC 7252 §5.3.1: Echo the token from the original OBSERVE GET
+            if let Some(token) = obs.observer_tokens.get(&notification_path) {
+                resp.message.set_token(token.clone());
+            }
+
             // RFC 7641 §3.3: Set observe sequence number
             obs.sequence = obs.sequence.wrapping_add(1);
             resp.message.set_observe_value(obs.sequence);
@@ -301,6 +310,7 @@ async fn handle_request<O, S>(
     if msg_type == MessageType::Reset {
         if let Some(path) = obs.notification_msg_ids.remove(&msg_id) {
             tracing::info!("RST deregistration for '{}' path '{}'", identity, path);
+            obs.observer_tokens.remove(&path);
             let _ = router.unregister_observer(identity, &path).await;
         }
         reliability.handle_rst(msg_id);
@@ -424,6 +434,7 @@ async fn handle_request<O, S>(
         (Some(ObserveOption::Deregister), RequestType::Delete) => {
             match validate_observer_path(path) {
                 Ok(normalized_path) => {
+                    obs.observer_tokens.remove(&normalized_path);
                     if let Err(e) = router.unregister_observer(identity, &normalized_path).await {
                         tracing::error!("Failed to unregister observer: {:?}", e);
                     }
@@ -447,7 +458,7 @@ async fn handle_request<O, S>(
     match router.call(request).await {
         Ok(mut resp) => {
             // RFC 7252 §5.3.1: Echo the request token in the response
-            resp.message.set_token(request_token);
+            resp.message.set_token(request_token.clone());
             resp.message.header.message_id = msg_id;
 
             // RFC 7641 §3.1: Register observer only after handler succeeds
@@ -461,6 +472,9 @@ async fn handle_request<O, S>(
                     tracing::error!(identity = %identity, path = %normalized_path, error = ?e, "observer.register.failed");
                 } else {
                     tracing::info!(identity = %identity, path = %normalized_path, "observer.registered");
+                    // RFC 7252 §5.3.1: Store token for future notifications
+                    obs.observer_tokens
+                        .insert(normalized_path.clone(), request_token);
                     obs.sequence = obs.sequence.wrapping_add(1);
                     resp.message.set_observe_value(obs.sequence);
                 }
@@ -729,6 +743,7 @@ async fn connection_task<O, S, C>(
                             if let Some(path) = obs.notification_msg_ids.remove(&msg_id)
                                 && let Some(ref id) = identity
                             {
+                                obs.observer_tokens.remove(&path);
                                 let _ = router.unregister_observer(id, &path).await;
                                 tracing::info!(identity = %id, path = %path, "reliability.observer_deregistered");
                             }
