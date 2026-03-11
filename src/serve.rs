@@ -20,8 +20,8 @@ use tokio::{
 use tower::Service;
 
 use coap_lite::{
-    BlockHandler, BlockHandlerConfig, CoapRequest, ContentFormat, MessageType, ObserveOption,
-    Packet, RequestType, ResponseType,
+    BlockHandler, BlockHandlerConfig, CoapRequest, ContentFormat, MessageClass, MessageType,
+    ObserveOption, Packet, RequestType, ResponseType,
 };
 
 use crate::{
@@ -315,6 +315,27 @@ async fn handle_request<O, S>(
         return;
     }
 
+    // RFC 7252 §4.3: Empty message handling (code 0.00)
+    // CON Empty = ping → respond with RST; NON Empty = silently ignore
+    if packet.header.code == MessageClass::Empty {
+        if msg_type == MessageType::Confirmable {
+            tracing::debug!(msg_id, "ping received, responding with RST");
+            let mut rst = Packet::new();
+            rst.header.set_type(MessageType::Reset);
+            rst.header.code = MessageClass::Empty;
+            rst.header.message_id = msg_id;
+            if let Ok(bytes) = rst.to_bytes() {
+                if let Err(e) = dtls.send_application_data(&bytes) {
+                    tracing::error!(error = %e, "dtls.send_failed");
+                }
+                drain_packets(dtls, out_buf, socket, socket_addr).await;
+            }
+        } else {
+            tracing::debug!(msg_id, "ignoring NON empty message");
+        }
+        return;
+    }
+
     // RFC 7252 §4.5: Deduplication for incoming CON requests
     let is_confirmable = msg_type == MessageType::Confirmable;
     if is_confirmable {
@@ -330,6 +351,9 @@ async fn handle_request<O, S>(
             DedupResult::NewMessage => {}
         }
     }
+
+    // RFC 7252 §5.3.1: Save request token for echoing into the response
+    let request_token = packet.get_token().to_vec();
 
     let mut coap_request = CoapRequest::from_packet(packet, socket_addr);
 
@@ -422,6 +446,10 @@ async fn handle_request<O, S>(
     // Route the request
     match router.call(request).await {
         Ok(mut resp) => {
+            // RFC 7252 §5.3.1: Echo the request token in the response
+            resp.message.set_token(request_token);
+            resp.message.header.message_id = msg_id;
+
             // RFC 7641 §3.1: Register observer only after handler succeeds
             if let Some(ref normalized_path) = pending_observe
                 && !resp.get_status().is_error()
