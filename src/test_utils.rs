@@ -31,7 +31,7 @@ pub fn create_test_request_with_payload(path: &str, payload: Vec<u8>) -> CoapumR
 
 /// Validate and extract a client identity from raw DTLS identity hint bytes.
 ///
-/// Exposed for fuzz testing. See [`crate::serve::extract_identity`].
+/// Exposed for fuzz testing. Delegates to the internal `serve::extract_identity`.
 pub fn extract_identity(identity_hint: &[u8]) -> Option<String> {
     crate::serve::extract_identity(identity_hint)
 }
