@@ -580,8 +580,8 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.4.2"
-source = "git+https://github.com/circuitdojo/dimpl.git?rev=1da9191#1da91917b22e3345867b0aa2c7bb7afd8839f04f"
+version = "0.4.3"
+source = "git+https://github.com/circuitdojo/dimpl.git?rev=be12cbad6033d7160e5c7b19cb0b07ee3baf#be12cbad6033d7160e5c7b19cb0b07ee3bafb79b"
 dependencies = [
  "aes",
  "arrayvec",
