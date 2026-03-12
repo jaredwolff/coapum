@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773269221750,
+  "lastUpdate": 1773328776316,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -839,6 +839,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1078,
             "range": "± 8",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "7dbade02f91e3886b84f884655e1ab5093274c35",
+          "message": "fix: RFC compliance improvements across SenML, router, and server\n\nSenML (coapum-senml):\n- Add explicit base fields (bn, bt, bu, bv, bs, bver) to SenMLRecord\n  instead of overloading regular fields\n- Implement RFC 8428 Table 6 integer CBOR labels for wire encoding\n- Fix normalization to use base fields and process all records per §4.1\n- Add value mutual exclusion validation (§4.3)\n\nRouter:\n- Fix RequestTypeWrapper hash collision (all variants hashed to 0)\n- Return proper 4.04 Not Found / 4.05 Method Not Allowed instead of\n  generic Bad Request via new LookupResult enum\n\nServer (serve.rs):\n- Reject unrecognized critical options with 4.02 Bad Option (§5.4.1)\n- Fragment notification payloads with Block2 (RFC 7959)\n- Piggyback ACK and cache responses for CON block transfers (§5.2.1)\n- Fix observe deregister to use GET per RFC 7641\n- Mask observe sequence to 24 bits per §3.4\n- Add max_latency config and fix exchange_lifetime formula (§4.8.2)",
+          "timestamp": "2026-03-12T11:15:17-04:00",
+          "tree_id": "3cd38c35b7f396ac5d173f1a3f4957d1fb5d17db",
+          "url": "https://github.com/jaredwolff/coapum/commit/7dbade02f91e3886b84f884655e1ab5093274c35"
+        },
+        "date": 1773328775960,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1063,
+            "range": "± 13",
             "unit": "ns/iter"
           }
         ]
