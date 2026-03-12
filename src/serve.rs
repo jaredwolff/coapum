@@ -371,14 +371,19 @@ async fn handle_request<O, S>(
     match block_handler.intercept_request(&mut coap_request) {
         Ok(true) => {
             // Block handler handled it (intermediate Block1 or Block2 cache hit)
-            if let Some(ref resp) = coap_request.response {
+            if let Some(ref mut resp) = coap_request.response {
+                // RFC 7252 §5.3.1: Echo request token in block transfer responses
+                resp.message.set_token(request_token.clone());
+                resp.message.header.message_id = msg_id;
                 send_response(dtls, out_buf, socket, socket_addr, resp).await;
             }
             return;
         }
         Err(e) => {
             tracing::error!("Block transfer error: {}", e.message);
-            if let Some(ref resp) = coap_request.response {
+            if let Some(ref mut resp) = coap_request.response {
+                resp.message.set_token(request_token.clone());
+                resp.message.header.message_id = msg_id;
                 send_response(dtls, out_buf, socket, socket_addr, resp).await;
             }
             return;

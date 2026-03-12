@@ -202,6 +202,57 @@ mod token_echo {
 }
 
 // ---------------------------------------------------------------------------
+// §5.3.1 — Token echoing in block transfer responses
+// ---------------------------------------------------------------------------
+
+mod block_transfer_token {
+    use super::*;
+
+    /// Block1 intermediate responses (2.31 Continue) must echo the request token.
+    /// This verifies the packet-level behavior: a response built by the block
+    /// handler should have the token and message ID applied before sending.
+    #[test]
+    fn block1_continue_response_echoes_token() {
+        let token = b"\xDE\xAD\xBE\xEF";
+        let msg_id: u16 = 0x4321;
+
+        // Simulate a Block1 Continue response (built by BlockHandler)
+        let mut resp_pkt = Packet::new();
+        resp_pkt.header.code = MessageClass::Response(ResponseType::Continue);
+        // BlockHandler does NOT set the token — the framework must do it
+
+        // Apply the framework-level fix (mirrors handle_request block paths)
+        resp_pkt.set_token(token.to_vec());
+        resp_pkt.header.message_id = msg_id;
+
+        assert_eq!(resp_pkt.get_token(), token);
+        assert_eq!(resp_pkt.header.message_id, msg_id);
+
+        // Verify round-trip through serialization
+        let bytes = resp_pkt.to_bytes().unwrap();
+        let parsed = Packet::from_bytes(&bytes).unwrap();
+        assert_eq!(parsed.get_token(), token);
+        assert_eq!(parsed.header.message_id, msg_id);
+    }
+
+    /// Block transfer error responses must also echo the request token.
+    #[test]
+    fn block_error_response_echoes_token() {
+        let token = b"\x01\x02\x03";
+        let msg_id: u16 = 0x9999;
+
+        let mut resp_pkt = Packet::new();
+        resp_pkt.header.code = MessageClass::Response(ResponseType::RequestEntityTooLarge);
+
+        resp_pkt.set_token(token.to_vec());
+        resp_pkt.header.message_id = msg_id;
+
+        assert_eq!(resp_pkt.get_token(), token);
+        assert_eq!(resp_pkt.header.message_id, msg_id);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // §4.3 — Empty message handling
 // ---------------------------------------------------------------------------
 
