@@ -222,7 +222,7 @@ async fn handle_notification<O, S>(
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
-    tracing::info!("Got notification: {:?}", value);
+    tracing::trace!("Got notification: {:?}", value);
 
     let notification_path = value.path.clone();
     let notification_value = value.value.clone();
@@ -275,7 +275,7 @@ async fn handle_notification<O, S>(
                     .retain(|&id, _| id.wrapping_sub(cutoff) < 256);
             }
 
-            tracing::info!(
+            tracing::trace!(
                 "Sending notification (seq={}, con={}) to: {}",
                 obs.sequence,
                 confirmable,
