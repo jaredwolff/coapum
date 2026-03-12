@@ -199,6 +199,13 @@ async fn send_response(
     }
 }
 
+/// RFC 7959 §2.9.1: Add Size1 option to indicate max acceptable payload size.
+fn add_size1_option(message: &mut Packet, max_message_size: usize) {
+    let bytes = (max_message_size as u32).to_be_bytes();
+    let start = bytes.iter().position(|&b| b != 0).unwrap_or(3);
+    message.add_option(CoapOption::Size1, bytes[start..].to_vec());
+}
+
 /// Handle an observer notification: route, set RFC 7641 headers, and send.
 #[allow(clippy::too_many_arguments)]
 async fn handle_notification<O, S>(
@@ -307,6 +314,7 @@ async fn handle_request<O, S>(
     obs_tx: &Arc<Sender<ObserverValue>>,
     obs: &mut ObserveState,
     block_handler: &mut BlockHandler<SocketAddr>,
+    max_message_size: usize,
     max_observers_per_device: usize,
     reliability: &mut ReliabilityState,
 ) where
@@ -413,6 +421,12 @@ async fn handle_request<O, S>(
         Ok(true) => {
             // Block handler handled it (intermediate Block1 or Block2 cache hit)
             if let Some(ref mut resp) = coap_request.response {
+                // RFC 7959 §2.9.1: Include Size1 in 4.13 to indicate max acceptable size
+                if resp.message.header.code
+                    == MessageClass::Response(ResponseType::RequestEntityTooLarge)
+                {
+                    add_size1_option(&mut resp.message, max_message_size);
+                }
                 // RFC 7252 §5.3.1: Echo request token in block transfer responses
                 resp.message.set_token(request_token.clone());
                 resp.message.header.message_id = msg_id;
@@ -431,6 +445,12 @@ async fn handle_request<O, S>(
         Err(e) => {
             tracing::error!("Block transfer error: {}", e.message);
             if let Some(ref mut resp) = coap_request.response {
+                // RFC 7959 §2.9.1: Include Size1 in 4.13 to indicate max acceptable size
+                if resp.message.header.code
+                    == MessageClass::Response(ResponseType::RequestEntityTooLarge)
+                {
+                    add_size1_option(&mut resp.message, max_message_size);
+                }
                 resp.message.set_token(request_token.clone());
                 resp.message.header.message_id = msg_id;
                 // RFC 7252 §5.2.1: Piggybacked ACK for CON block transfer responses
@@ -654,6 +674,7 @@ where
                         obs_tx,
                         obs,
                         block_handler,
+                        config.max_message_size,
                         max_observers_per_device,
                         reliability,
                     )

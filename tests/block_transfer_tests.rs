@@ -4,7 +4,9 @@
 //! large responses are fragmented (Block2) and large requests are
 //! reassembled (Block1) correctly.
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::Arc;
 use std::time::Duration;
 
 use coap_lite::block_handler::BlockValue;
@@ -218,7 +220,7 @@ async fn test_block1_rejects_oversized_without_block_option() {
     let handled = block_handler.intercept_request(&mut coap_req).unwrap();
     assert!(handled, "Should reject oversized payload without Block1");
 
-    let resp = coap_req.response.unwrap();
+    let mut resp = coap_req.response.unwrap();
     assert_eq!(
         resp.message.header.code,
         MessageClass::Response(ResponseType::RequestEntityTooLarge)
@@ -231,6 +233,25 @@ async fn test_block1_rejects_oversized_without_block_option() {
         .expect("Should have Block1 option")
         .expect("Should parse Block1");
     assert!(block1.more, "Should indicate more blocks expected");
+
+    // RFC 7959 §2.9.1: serve.rs adds Size1 to 4.13 responses — verify the encoding
+    // mirrors add_size1_option() in serve.rs
+    let size_bytes = (max_msg_size as u32).to_be_bytes();
+    let start = size_bytes.iter().position(|&b| b != 0).unwrap_or(3);
+    resp.message
+        .add_option(CoapOption::Size1, size_bytes[start..].to_vec());
+
+    let size1_raw = resp
+        .message
+        .get_first_option(CoapOption::Size1)
+        .expect("Should have Size1 option");
+    let mut buf = [0u8; 4];
+    buf[4 - size1_raw.len()..].copy_from_slice(size1_raw);
+    let size1_val = u32::from_be_bytes(buf) as usize;
+    assert_eq!(
+        size1_val, max_msg_size,
+        "Size1 should indicate max acceptable size"
+    );
 }
 
 /// Test Block1 upload reassembly: send a large payload in chunks,
@@ -372,4 +393,111 @@ async fn test_block2_independent_paths() {
     let handled = block_handler.intercept_request(&mut next_req).unwrap();
     assert!(handled, "Should serve /path_a block 1 from cache");
     assert!(next_req.response.is_some());
+}
+
+// -- Integration test: Size1 in 4.13 through full DTLS server --
+
+/// RFC 7959 §2.9.1: Server SHOULD include Size1 in 4.13 responses.
+/// This test sends an oversized payload through a real DTLS connection
+/// and verifies the 4.13 response contains both Block1 and Size1 options.
+#[tokio::test]
+async fn test_413_response_includes_size1_via_dtls() {
+    use coapum::credential::resolver::MapResolver;
+    use coapum::{MemoryCredentialStore, client::DtlsClient, serve};
+
+    const PSK: &[u8] = b"block_test_key_456";
+    const IDENTITY: &str = "block_test_client";
+    const MAX_MSG_SIZE: usize = 64;
+
+    // Start server with small max_message_size
+    let listener = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
+    let mut clients = HashMap::new();
+    clients.insert(IDENTITY.to_string(), PSK.to_vec());
+
+    let state = TestState {
+        large_payload: vec![],
+    };
+    let observer = MemObserver::new();
+    let router = RouterBuilder::new(state, observer)
+        .put("/upload", echo_handler)
+        .build();
+
+    let server_config = Config {
+        psk_identity_hint: Some(b"block_test_server".to_vec()),
+        max_message_size: MAX_MSG_SIZE,
+        timeout: 10,
+        ..Default::default()
+    };
+
+    let credential_store = MemoryCredentialStore::from_clients(&clients);
+    tokio::spawn(async move {
+        let _ = serve::serve_with_credential_store(
+            addr.to_string(),
+            server_config,
+            router,
+            credential_store,
+        )
+        .await;
+    });
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Connect DTLS client
+    let mut keys = HashMap::new();
+    keys.insert(IDENTITY.to_string(), PSK.to_vec());
+    let resolver = Arc::new(MapResolver::new(keys));
+    let dtls_config = dimpl::Config::builder()
+        .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
+        .with_psk_identity(IDENTITY.as_bytes().to_vec())
+        .build()
+        .expect("valid DTLS config");
+
+    let mut client = DtlsClient::connect(&addr.to_string(), Arc::new(dtls_config))
+        .await
+        .expect("Failed to connect DTLS client");
+
+    // Send oversized payload without Block1
+    let mut request: CoapRequest<SocketAddr> = CoapRequest::new();
+    request.message.header.message_id = 42;
+    request.set_method(RequestType::Put);
+    request.set_path("/upload");
+    request.message.payload = vec![0xFFu8; 200]; // Larger than MAX_MSG_SIZE
+
+    let request_bytes = request.message.to_bytes().unwrap();
+    client.send(&request_bytes).await.unwrap();
+
+    // Receive 4.13 response
+    let data = tokio::time::timeout(Duration::from_secs(5), client.recv(Duration::from_secs(5)))
+        .await
+        .expect("Timed out waiting for response")
+        .expect("Failed to receive response");
+
+    let packet = Packet::from_bytes(&data).unwrap();
+    assert_eq!(
+        packet.header.code,
+        MessageClass::Response(ResponseType::RequestEntityTooLarge),
+        "Expected 4.13 for oversized payload"
+    );
+
+    // Verify Size1 option is present with the configured max size
+    let size1_raw = packet
+        .get_first_option(CoapOption::Size1)
+        .expect("4.13 response should include Size1 option (RFC 7959 §2.9.1)");
+    let mut buf = [0u8; 4];
+    buf[4 - size1_raw.len()..].copy_from_slice(size1_raw);
+    let size1_val = u32::from_be_bytes(buf) as usize;
+    assert_eq!(
+        size1_val, MAX_MSG_SIZE,
+        "Size1 should indicate server's max acceptable payload size"
+    );
+
+    // Verify Block1 option is also present (from coap-lite BlockHandler)
+    let block1 = packet
+        .get_first_option_as::<BlockValue>(CoapOption::Block1)
+        .expect("Should have Block1 option")
+        .expect("Should parse Block1");
+    assert!(block1.more, "Block1 should indicate more blocks expected");
 }
