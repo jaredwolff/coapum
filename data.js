@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773328882193,
+  "lastUpdate": 1773331304059,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -899,6 +899,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1044,
             "range": "± 5",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "e4ba138b9bff282fd2595ed8f850300f2525cd35",
+          "message": "fix: include Size1 option in 4.13 responses (RFC 7959 §2.9.1)\n\nWhen BlockHandler rejects an oversized payload with 4.13 Request Entity\nToo Large, the response now includes a Size1 option indicating the\nserver's max acceptable payload size. This helps clients determine the\nappropriate block size for retransmission.\n\nAdd DTLS integration test verifying Size1 is present end-to-end.",
+          "timestamp": "2026-03-12T12:00:31-04:00",
+          "tree_id": "c9efd230e36e0f82ab97f1cdfe42c2da3cc23bce",
+          "url": "https://github.com/jaredwolff/coapum/commit/e4ba138b9bff282fd2595ed8f850300f2525cd35"
+        },
+        "date": 1773331303686,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1073,
+            "range": "± 9",
             "unit": "ns/iter"
           }
         ]
