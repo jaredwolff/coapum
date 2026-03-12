@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773331429929,
+  "lastUpdate": 1773331545866,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -989,6 +989,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1055,
             "range": "± 16",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "e769de42936f6dc4d0afd3cc1cdbe26986621df6",
+          "message": "chore: downgrade notification log messages from info to trace\n\nPer-notification messages flood logs in production. Connection lifecycle\nevents remain at info level.",
+          "timestamp": "2026-03-12T12:02:52-04:00",
+          "tree_id": "90a1597aa2c3b350ede8807d1d84f0358f3f4d77",
+          "url": "https://github.com/jaredwolff/coapum/commit/e769de42936f6dc4d0afd3cc1cdbe26986621df6"
+        },
+        "date": 1773331545316,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1067,
+            "range": "± 28",
             "unit": "ns/iter"
           }
         ]
