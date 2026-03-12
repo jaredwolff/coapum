@@ -428,7 +428,7 @@ async fn test_observe_deregistration() {
     // Deregister
     let mut deregister_request: CoapRequest<SocketAddr> = CoapRequest::new();
     deregister_request.message.header.message_id = MSG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    deregister_request.set_method(RequestType::Delete);
+    deregister_request.set_method(RequestType::Get);
     deregister_request.set_path("/temperature/sensor3");
     deregister_request.set_observe_flag(ObserveOption::Deregister);
 

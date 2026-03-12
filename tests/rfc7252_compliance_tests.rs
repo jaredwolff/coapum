@@ -158,7 +158,7 @@ mod token_echo {
         pkt.set_token(token.to_vec());
         pkt.header.message_id = msg_id;
         let mut raw = CoapRequest::from_packet(pkt, test_addr());
-        // Route to a path that doesn't exist → router returns BadRequest
+        // Route to a path that doesn't exist → router returns NotFound (4.04)
         raw.set_path("/nonexistent");
 
         let request_token = raw.message.get_token().to_vec();
@@ -170,7 +170,7 @@ mod token_echo {
 
         assert_eq!(resp.message.get_token(), token);
         assert_eq!(resp.message.header.message_id, msg_id);
-        assert_eq!(*resp.get_status(), ResponseType::BadRequest);
+        assert_eq!(*resp.get_status(), ResponseType::NotFound);
     }
 
     /// Token must be echoed for different handler return types.

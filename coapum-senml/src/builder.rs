@@ -132,19 +132,19 @@ impl SenMLBuilder {
             let mut base_record = SenMLRecord::new();
 
             if let Some(bn) = self.base_name {
-                base_record.n = Some(bn);
+                base_record.bn = Some(bn);
             }
             if let Some(bt) = self.base_time {
-                base_record.t = Some(bt);
+                base_record.bt = Some(bt);
             }
             if let Some(bu) = self.base_unit {
-                base_record.u = Some(bu);
+                base_record.bu = Some(bu);
             }
             if let Some(bv) = self.base_value {
-                base_record.v = Some(bv);
+                base_record.bv = Some(bv);
             }
             if let Some(bs) = self.base_sum {
-                base_record.s = Some(bs);
+                base_record.bs = Some(bs);
             }
 
             records.push(base_record);
@@ -329,8 +329,8 @@ mod tests {
         assert_eq!(pack.records.len(), 3); // Base record + 2 measurements
 
         let base = &pack.records[0];
-        assert_eq!(base.n, Some("device1/".to_string()));
-        assert_eq!(base.u, Some("Cel".to_string()));
+        assert_eq!(base.bn, Some("device1/".to_string()));
+        assert_eq!(base.bu, Some("Cel".to_string()));
     }
 
     #[test]
@@ -358,11 +358,11 @@ mod tests {
 
         assert!(pack.records.len() >= 3);
 
-        // Check base values are set
+        // Check base values are set on the first record
         let base = &pack.records[0];
-        assert_eq!(base.n, Some("sensor1/temp".to_string()));
-        assert_eq!(base.t, Some(base_time));
-        assert_eq!(base.u, Some("Cel".to_string()));
+        assert_eq!(base.bn, Some("sensor1/temp".to_string()));
+        assert_eq!(base.bt, Some(base_time));
+        assert_eq!(base.bu, Some("Cel".to_string()));
     }
 
     #[test]
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(pack.records.len(), 4); // Base + 3 params
 
         let base = &pack.records[0];
-        assert_eq!(base.n, Some("device1/config/".to_string()));
+        assert_eq!(base.bn, Some("device1/config/".to_string()));
     }
 
     #[test]

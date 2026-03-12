@@ -20,8 +20,8 @@ use tokio::{
 use tower::Service;
 
 use coap_lite::{
-    BlockHandler, BlockHandlerConfig, CoapRequest, ContentFormat, MessageClass, MessageType,
-    ObserveOption, Packet, RequestType, ResponseType,
+    BlockHandler, BlockHandlerConfig, CoapOption, CoapRequest, ContentFormat, MessageClass,
+    MessageType, ObserveOption, Packet, RequestType, ResponseType,
 };
 
 use crate::{
@@ -209,6 +209,7 @@ async fn handle_notification<O, S>(
     socket: &UdpSocket,
     remote: SocketAddr,
     obs: &mut ObserveState,
+    block_handler: &mut BlockHandler<SocketAddr>,
     reliability: &mut ReliabilityState,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
@@ -241,8 +242,8 @@ async fn handle_notification<O, S>(
                 resp.message.set_token(token.clone());
             }
 
-            // RFC 7641 §3.3: Set observe sequence number
-            obs.sequence = obs.sequence.wrapping_add(1);
+            // RFC 7641 §3.3: Set observe sequence number (24-bit per §3.4)
+            obs.sequence = obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
             resp.message.set_observe_value(obs.sequence);
 
             // Assign unique message ID for RST tracking
@@ -273,11 +274,20 @@ async fn handle_notification<O, S>(
                 confirmable,
                 remote
             );
-            send_response(dtls, out_buf, socket, remote, &resp).await;
 
-            // Track for retransmission if CON
-            if confirmable && let Ok(bytes) = resp.message.to_bytes() {
-                reliability.track_outgoing_con(msg_id, bytes);
+            // RFC 7959: Fragment large notification payloads using Block2
+            let mut block_req = CoapRequest::from_packet(resp.message.clone(), remote);
+            block_req.response = Some(resp);
+            if let Err(e) = block_handler.intercept_response(&mut block_req) {
+                tracing::error!("Block notification error: {}", e.message);
+            }
+            if let Some(ref resp) = block_req.response {
+                send_response(dtls, out_buf, socket, remote, resp).await;
+
+                // Track for retransmission if CON
+                if confirmable && let Ok(bytes) = resp.message.to_bytes() {
+                    reliability.track_outgoing_con(msg_id, bytes);
+                }
             }
         }
         Err(e) => tracing::error!("Error: {}", e),
@@ -362,6 +372,37 @@ async fn handle_request<O, S>(
         }
     }
 
+    // RFC 7252 §5.4.1: Reject requests with unrecognized critical options (4.02 Bad Option).
+    // Critical options have odd option numbers. Options known to coap-lite are accepted;
+    // only truly unknown critical options trigger rejection.
+    for (&option_num, _) in packet.options() {
+        if let CoapOption::Unknown(_) = CoapOption::from(option_num)
+            && option_num % 2 == 1
+        {
+            tracing::warn!(
+                option_num,
+                "Rejecting request with unrecognized critical option"
+            );
+            let mut rst = Packet::new();
+            rst.header.message_id = msg_id;
+            rst.set_token(packet.get_token().to_vec());
+            rst.header.code = MessageClass::Response(ResponseType::BadOption);
+            if is_confirmable {
+                rst.header.set_type(MessageType::Acknowledgement);
+            }
+            if let Ok(bytes) = rst.to_bytes() {
+                if is_confirmable {
+                    reliability.record_response(msg_id, bytes.clone());
+                }
+                if let Err(e) = dtls.send_application_data(&bytes) {
+                    tracing::error!(error = %e, "dtls.send_failed");
+                }
+                drain_packets(dtls, out_buf, socket, socket_addr).await;
+            }
+            return;
+        }
+    }
+
     // RFC 7252 §5.3.1: Save request token for echoing into the response
     let request_token = packet.get_token().to_vec();
 
@@ -375,7 +416,15 @@ async fn handle_request<O, S>(
                 // RFC 7252 §5.3.1: Echo request token in block transfer responses
                 resp.message.set_token(request_token.clone());
                 resp.message.header.message_id = msg_id;
+                // RFC 7252 §5.2.1: Piggybacked ACK for CON block transfer responses
+                if is_confirmable {
+                    resp.message.header.set_type(MessageType::Acknowledgement);
+                }
                 send_response(dtls, out_buf, socket, socket_addr, resp).await;
+                // RFC 7252 §4.5: Cache response for deduplication
+                if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
+                    reliability.record_response(msg_id, bytes);
+                }
             }
             return;
         }
@@ -384,7 +433,15 @@ async fn handle_request<O, S>(
             if let Some(ref mut resp) = coap_request.response {
                 resp.message.set_token(request_token.clone());
                 resp.message.header.message_id = msg_id;
+                // RFC 7252 §5.2.1: Piggybacked ACK for CON block transfer responses
+                if is_confirmable {
+                    resp.message.header.set_type(MessageType::Acknowledgement);
+                }
                 send_response(dtls, out_buf, socket, socket_addr, resp).await;
+                // RFC 7252 §4.5: Cache response for deduplication
+                if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
+                    reliability.record_response(msg_id, bytes);
+                }
             }
             return;
         }
@@ -436,7 +493,7 @@ async fn handle_request<O, S>(
                 return;
             }
         },
-        (Some(ObserveOption::Deregister), RequestType::Delete) => {
+        (Some(ObserveOption::Deregister), RequestType::Get) => {
             match validate_observer_path(path) {
                 Ok(normalized_path) => {
                     obs.observer_tokens.remove(&normalized_path);
@@ -480,7 +537,7 @@ async fn handle_request<O, S>(
                     // RFC 7252 §5.3.1: Store token for future notifications
                     obs.observer_tokens
                         .insert(normalized_path.clone(), request_token);
-                    obs.sequence = obs.sequence.wrapping_add(1);
+                    obs.sequence = obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
                     resp.message.set_observe_value(obs.sequence);
                 }
             }
@@ -695,7 +752,8 @@ async fn connection_task<O, S, C>(
             Some(value) = obs_rx.recv(), if connected => {
                 handle_notification(
                     value, &mut router, &mut dtls, &mut out_buf,
-                    &socket, remote, &mut obs, &mut reliability,
+                    &socket, remote, &mut obs, &mut block_handler,
+                    &mut reliability,
                 ).await;
             }
 

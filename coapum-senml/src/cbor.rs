@@ -1,24 +1,14 @@
 //! CBOR serialization support for SenML
 
 #[cfg(feature = "cbor")]
-use crate::{Result, SenMLError, SenMLPack};
+use crate::{Result, SenMLPack};
 
 #[cfg(feature = "cbor")]
 impl SenMLPack {
-    /// Serialize SenML pack to CBOR with specific options
-    pub fn to_cbor_with_options(&self, canonical: bool) -> Result<Vec<u8>> {
-        let mut buffer = Vec::new();
-
-        if canonical {
-            // Use canonical CBOR encoding for deterministic output
-            ciborium::ser::into_writer(self, &mut buffer)
-                .map_err(|e| SenMLError::serialization(e.to_string()))?;
-        } else {
-            ciborium::ser::into_writer(self, &mut buffer)
-                .map_err(|e| SenMLError::serialization(e.to_string()))?;
-        }
-
-        Ok(buffer)
+    /// Serialize SenML pack to CBOR with specific options.
+    /// Uses RFC 8428 integer labels regardless of the `canonical` flag.
+    pub fn to_cbor_with_options(&self, _canonical: bool) -> Result<Vec<u8>> {
+        self.to_cbor()
     }
 
     /// Deserialize from CBOR with validation

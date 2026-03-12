@@ -17,13 +17,13 @@ impl std::hash::Hash for RequestTypeWrapper {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self.0 {
             RequestType::Get => 0u8.hash(state),
-            RequestType::Post => 0u8.hash(state),
-            RequestType::Put => 0u8.hash(state),
-            RequestType::Delete => 0u8.hash(state),
-            RequestType::Fetch => 0u8.hash(state),
-            RequestType::Patch => 0u8.hash(state),
-            RequestType::IPatch => 0u8.hash(state),
-            RequestType::UnKnown => 0u8.hash(state),
+            RequestType::Post => 1u8.hash(state),
+            RequestType::Put => 2u8.hash(state),
+            RequestType::Delete => 3u8.hash(state),
+            RequestType::Fetch => 4u8.hash(state),
+            RequestType::Patch => 5u8.hash(state),
+            RequestType::IPatch => 6u8.hash(state),
+            RequestType::UnKnown => 7u8.hash(state),
         }
     }
 }
@@ -170,5 +170,36 @@ impl IntoCoapResponse for Vec<u8> {
         let mut response = CoapResponse::new(&pkt).unwrap();
         response.message.payload = self;
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_request_type_wrapper_distinct_hashes() {
+        let variants = [
+            RequestType::Get,
+            RequestType::Post,
+            RequestType::Put,
+            RequestType::Delete,
+            RequestType::Fetch,
+            RequestType::Patch,
+            RequestType::IPatch,
+            RequestType::UnKnown,
+        ];
+
+        // All variants should be independently retrievable from a HashMap
+        let mut map = HashMap::new();
+        for (i, variant) in variants.iter().enumerate() {
+            map.insert(RequestTypeWrapper::from(variant), i);
+        }
+        assert_eq!(map.len(), variants.len());
+
+        for (i, variant) in variants.iter().enumerate() {
+            assert_eq!(map.get(&RequestTypeWrapper::from(variant)), Some(&i));
+        }
     }
 }

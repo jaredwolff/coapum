@@ -47,62 +47,28 @@ impl NormalizedPack {
             };
         }
 
-        // Determine if we have base values by checking the first record
+        // RFC 8428 §4.1: Extract base values from the first record's base fields.
+        // Base fields (bn, bt, bu, bv, bs, bver) are distinct from regular fields.
         let first_record = &pack.records[0];
-        let has_base_name = first_record.n.as_ref().is_some_and(|n| n.ends_with('/'));
-        let has_only_base_values = !first_record.has_value() && first_record.s.is_none();
-        let is_base_record = has_base_name || has_only_base_values;
+        let base_name = first_record.bn.clone().unwrap_or_default();
+        let base_time = first_record.bt.unwrap_or(0.0);
+        let base_unit = first_record.bu.clone();
+        let base_value = first_record.bv.unwrap_or(0.0);
+        let base_sum = first_record.bs.unwrap_or(0.0);
+        let version = first_record.bver;
 
-        let (base_name, base_time, base_unit, base_value, base_sum) = if is_base_record {
-            // Extract base values from the base record
-            (
-                first_record.n.clone().unwrap_or_default(),
-                first_record.t.unwrap_or(0.0),
-                first_record.u.clone(),
-                first_record.v.unwrap_or(0.0),
-                first_record.s.unwrap_or(0.0),
-            )
-        } else {
-            // No base record - use empty base values
-            (String::new(), 0.0, None, 0.0, 0.0)
-        };
-
-        let start_index = if is_base_record { 1 } else { 0 };
-
-        // Process each record (skip first if it's a base record)
-        for record in &pack.records[start_index..] {
+        // Process all records — the first record may also carry regular values
+        // alongside base fields. Skip records that produce no value or sum.
+        for record in &pack.records {
             if let Ok(normalized) = Self::normalize_record(
                 record, &base_name, base_time, &base_unit, base_value, base_sum,
-            ) {
+            ) && (normalized.has_value() || normalized.sum.is_some())
+            {
                 records.push(normalized);
             }
         }
 
-        // Handle the base record itself if it has values beyond just base values
-        // Don't include base records that only contain base values (like base_value=20.0)
-        if is_base_record && first_record.has_value() {
-            // Check if this is a pure base record (name ends with '/') with only base values
-            let is_pure_base = first_record.n.as_ref().is_some_and(|n| n.ends_with('/'));
-
-            // Only include if it's not a pure base record OR if it has sum values
-            if (!is_pure_base || first_record.s.is_some())
-                && let Ok(normalized) = Self::normalize_record(
-                    first_record,
-                    "",    // No base name for base record itself
-                    0.0,   // No base time
-                    &None, // No base unit
-                    0.0,   // No base value
-                    0.0,   // No base sum
-                )
-            {
-                records.insert(0, normalized);
-            }
-        }
-
-        Self {
-            records,
-            version: None, // TODO: Extract from bver if present
-        }
+        Self { records, version }
     }
 
     /// Normalize a single record with given base values
@@ -183,6 +149,7 @@ impl NormalizedPack {
                 s: nr.sum,
                 t: nr.time,
                 ut: nr.update_time,
+                ..Default::default()
             })
             .collect();
 

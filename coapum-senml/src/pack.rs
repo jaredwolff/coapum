@@ -57,15 +57,15 @@ impl SenMLPack {
 
     /// Create a pack with base values
     pub fn with_base_values(base: BaseValues) -> Self {
-        let mut base_record = SenMLRecord::default();
-
-        // Set base values in the first record
-        if let Some(bn) = base.bn {
-            base_record.n = Some(bn);
-        }
-
-        // Note: Base values are typically stored as fields starting with 'b'
-        // but serde flattening will handle this during serialization
+        let base_record = SenMLRecord {
+            bn: base.bn,
+            bt: base.bt,
+            bu: base.bu,
+            bv: base.bv,
+            bs: base.bs,
+            bver: base.bver,
+            ..Default::default()
+        };
 
         Self {
             records: vec![base_record],
@@ -95,14 +95,9 @@ impl SenMLPack {
 
     /// Check if this pack has base values
     pub fn has_base_values(&self) -> bool {
-        if let Some(first) = self.records.first() {
-            // Check if first record has base-like values
-            first.n.as_ref().is_some_and(|n| n.ends_with('/'))
-                || first.t.is_some()
-                || first.u.is_some()
-        } else {
-            false
-        }
+        self.records
+            .first()
+            .is_some_and(|first| first.has_base_fields())
     }
 
     /// Get the number of records in this pack
@@ -169,12 +164,12 @@ impl SenMLPack {
     /// Extract base values from a record (typically the first one)
     fn extract_base_values(&self, record: &SenMLRecord) -> BaseValues {
         BaseValues {
-            bn: record.n.clone(),
-            bt: record.t,
-            bu: record.u.clone(),
-            bv: record.v,
-            bs: record.s,
-            bver: None, // Version not stored in basic record
+            bn: record.bn.clone(),
+            bt: record.bt,
+            bu: record.bu.clone(),
+            bv: record.bv,
+            bs: record.bs,
+            bver: record.bver,
         }
     }
 }
@@ -231,24 +226,174 @@ impl SenMLPack {
         serde_json::from_str(json).map_err(|e| SenMLError::deserialization(e.to_string()))
     }
 
-    /// Serialize to CBOR bytes
+    /// Serialize to CBOR bytes using RFC 8428 integer labels (Table 6).
     #[cfg(feature = "cbor")]
     pub fn to_cbor(&self) -> Result<Vec<u8>> {
+        use ciborium::Value;
+
+        let array: Vec<Value> = self.records.iter().map(record_to_cbor_value).collect();
         let mut buffer = Vec::new();
-        ciborium::ser::into_writer(self, &mut buffer)
+        ciborium::ser::into_writer(&Value::Array(array), &mut buffer)
             .map_err(|e| SenMLError::serialization(e.to_string()))?;
         Ok(buffer)
     }
 
-    /// Deserialize from CBOR bytes
+    /// Deserialize from CBOR bytes using RFC 8428 integer labels (Table 6).
     ///
     /// Uses a recursion depth limit of 32 to prevent stack overflow from
     /// maliciously crafted deeply-nested CBOR payloads.
     #[cfg(feature = "cbor")]
     pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
+        use ciborium::Value;
         const MAX_CBOR_RECURSION_DEPTH: usize = 32;
-        ciborium::de::from_reader_with_recursion_limit(bytes, MAX_CBOR_RECURSION_DEPTH)
-            .map_err(|e| SenMLError::deserialization(e.to_string()))
+
+        let value: Value =
+            ciborium::de::from_reader_with_recursion_limit(bytes, MAX_CBOR_RECURSION_DEPTH)
+                .map_err(|e| SenMLError::deserialization(e.to_string()))?;
+
+        let array = match value {
+            Value::Array(a) => a,
+            _ => return Err(SenMLError::deserialization("expected CBOR array")),
+        };
+
+        let records = array
+            .into_iter()
+            .map(cbor_value_to_record)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self { records })
+    }
+}
+
+/// RFC 8428 Table 6: CBOR integer labels for SenML fields.
+#[cfg(feature = "cbor")]
+mod cbor_labels {
+    pub const BN: i64 = -2;
+    pub const BT: i64 = -3;
+    pub const BU: i64 = -4;
+    pub const BV: i64 = -5;
+    pub const BS: i64 = -6;
+    pub const BVER: i64 = -1;
+    pub const N: i64 = 0;
+    pub const U: i64 = 1;
+    pub const V: i64 = 2;
+    pub const VS: i64 = 3;
+    pub const VB: i64 = 4;
+    pub const VD: i64 = 8;
+    pub const S: i64 = 5;
+    pub const T: i64 = 6;
+    pub const UT: i64 = 7;
+}
+
+/// Convert a SenMLRecord to a CBOR Value map with integer keys.
+#[cfg(feature = "cbor")]
+fn record_to_cbor_value(record: &SenMLRecord) -> ciborium::Value {
+    use cbor_labels::*;
+    use ciborium::Value;
+
+    let mut pairs = Vec::new();
+    macro_rules! push_opt {
+        ($label:expr, $field:expr, $conv:expr) => {
+            if let Some(ref val) = $field {
+                pairs.push((Value::Integer($label.into()), $conv(val)));
+            }
+        };
+    }
+    push_opt!(BN, record.bn, |v: &String| Value::Text(v.clone()));
+    push_opt!(BT, record.bt, |v: &f64| Value::Float(*v));
+    push_opt!(BU, record.bu, |v: &String| Value::Text(v.clone()));
+    push_opt!(BV, record.bv, |v: &f64| Value::Float(*v));
+    push_opt!(BS, record.bs, |v: &f64| Value::Float(*v));
+    push_opt!(BVER, record.bver, |v: &i32| Value::Integer(
+        (*v as i64).into()
+    ));
+    push_opt!(N, record.n, |v: &String| Value::Text(v.clone()));
+    push_opt!(U, record.u, |v: &String| Value::Text(v.clone()));
+    push_opt!(V, record.v, |v: &f64| Value::Float(*v));
+    push_opt!(VS, record.vs, |v: &String| Value::Text(v.clone()));
+    push_opt!(VB, record.vb, |v: &bool| Value::Bool(*v));
+    push_opt!(VD, record.vd, |v: &String| Value::Text(v.clone()));
+    push_opt!(S, record.s, |v: &f64| Value::Float(*v));
+    push_opt!(T, record.t, |v: &f64| Value::Float(*v));
+    push_opt!(UT, record.ut, |v: &f64| Value::Float(*v));
+
+    Value::Map(pairs)
+}
+
+/// Convert a CBOR Value map with integer keys to a SenMLRecord.
+#[cfg(feature = "cbor")]
+fn cbor_value_to_record(value: ciborium::Value) -> Result<SenMLRecord> {
+    use cbor_labels::*;
+    use ciborium::Value;
+
+    let pairs = match value {
+        Value::Map(pairs) => pairs,
+        _ => return Err(SenMLError::deserialization("expected CBOR map for record")),
+    };
+
+    let mut record = SenMLRecord::default();
+
+    for (key, val) in pairs {
+        let label: i64 = match key {
+            Value::Integer(i) => {
+                let v = i128::from(i);
+                if v >= i64::MIN as i128 && v <= i64::MAX as i128 {
+                    v as i64
+                } else {
+                    continue;
+                }
+            }
+            _ => continue, // skip non-integer keys
+        };
+
+        match label {
+            BN => record.bn = val.into_text().ok(),
+            BT => record.bt = as_f64(&val),
+            BU => record.bu = val.into_text().ok(),
+            BV => record.bv = as_f64(&val),
+            BS => record.bs = as_f64(&val),
+            BVER => record.bver = as_i32(&val),
+            N => record.n = val.into_text().ok(),
+            U => record.u = val.into_text().ok(),
+            V => record.v = as_f64(&val),
+            VS => record.vs = val.into_text().ok(),
+            VB => {
+                if let Value::Bool(b) = val {
+                    record.vb = Some(b);
+                }
+            }
+            VD => record.vd = val.into_text().ok(),
+            S => record.s = as_f64(&val),
+            T => record.t = as_f64(&val),
+            UT => record.ut = as_f64(&val),
+            _ => {} // unknown label — ignore
+        }
+    }
+
+    Ok(record)
+}
+
+#[cfg(feature = "cbor")]
+fn as_f64(val: &ciborium::Value) -> Option<f64> {
+    match val {
+        ciborium::Value::Float(f) => Some(*f),
+        ciborium::Value::Integer(i) => Some(i128::from(*i) as f64),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "cbor")]
+fn as_i32(val: &ciborium::Value) -> Option<i32> {
+    match val {
+        ciborium::Value::Integer(i) => {
+            let v = i128::from(*i);
+            if v >= i32::MIN as i128 && v <= i32::MAX as i128 {
+                Some(v as i32)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -323,5 +468,62 @@ mod tests {
         let deserialized = SenMLPack::from_cbor(&cbor).unwrap();
 
         assert_eq!(pack, deserialized);
+    }
+
+    #[cfg(feature = "cbor")]
+    #[test]
+    fn test_cbor_integer_keys_on_wire() {
+        use ciborium::Value;
+
+        let mut pack = SenMLPack::new();
+        pack.add_record(SenMLRecord {
+            bn: Some("device/".to_string()),
+            n: Some("temp".to_string()),
+            v: Some(25.0),
+            ..Default::default()
+        });
+
+        let cbor = pack.to_cbor().unwrap();
+
+        // Decode raw CBOR to inspect keys
+        let raw: Value = ciborium::de::from_reader(&cbor[..]).unwrap();
+        let array = raw.as_array().unwrap();
+        let map = array[0].as_map().unwrap();
+
+        // Verify integer keys: bn=-2, n=0, v=2
+        let keys: Vec<i128> = map
+            .iter()
+            .map(|(k, _)| i128::from(k.as_integer().unwrap()))
+            .collect();
+        assert!(keys.contains(&-2), "missing bn key (-2)");
+        assert!(keys.contains(&0), "missing n key (0)");
+        assert!(keys.contains(&2), "missing v key (2)");
+        // No string keys should be present
+        assert!(
+            map.iter().all(|(k, _)| k.as_integer().is_some()),
+            "all keys should be integers"
+        );
+    }
+
+    #[cfg(feature = "cbor")]
+    #[test]
+    fn test_cbor_roundtrip_with_base_fields() {
+        let mut pack = SenMLPack::new();
+        pack.add_record(SenMLRecord {
+            bn: Some("sensor/".to_string()),
+            bt: Some(1640995200.0),
+            bu: Some("Cel".to_string()),
+            bv: Some(20.0),
+            bs: Some(100.0),
+            bver: Some(10),
+            n: Some("temp".to_string()),
+            v: Some(2.5),
+            t: Some(60.0),
+            ..Default::default()
+        });
+
+        let cbor = pack.to_cbor().unwrap();
+        let restored = SenMLPack::from_cbor(&cbor).unwrap();
+        assert_eq!(pack, restored);
     }
 }

@@ -70,6 +70,11 @@ pub struct Config {
     /// Default: `None` (no limit).
     pub max_session_lifetime: Option<Duration>,
 
+    /// RFC 7252 §4.8.2 MAX_LATENCY: maximum time a datagram is expected to take from the
+    /// start of its transmission to the completion of its reception.
+    /// Default: 100 seconds.
+    pub max_latency: Duration,
+
     /// RFC 7252 §4.8 ACK_TIMEOUT: base retransmission timeout for Confirmable messages.
     /// The actual initial timeout is randomized between `ack_timeout` and
     /// `ack_timeout * ack_random_factor`.
@@ -238,19 +243,23 @@ impl Config {
         self.max_retransmit = max;
     }
 
+    /// Set MAX_LATENCY (RFC 7252 §4.8.2).
+    pub fn set_max_latency(&mut self, latency: Duration) {
+        self.max_latency = latency;
+    }
+
     /// RFC 7252 §4.8.2 EXCHANGE_LIFETIME: time from first transmission of a
     /// CON message to when the message ID can be safely reused.
     pub fn exchange_lifetime(&self) -> Duration {
-        // EXCHANGE_LIFETIME = MAX_TRANSMIT_SPAN + MAX_TRANSMIT_WAIT
+        // RFC 7252 §4.8.2:
         // MAX_TRANSMIT_SPAN = ACK_TIMEOUT * ((2 ** MAX_RETRANSMIT) - 1) * ACK_RANDOM_FACTOR
-        // MAX_TRANSMIT_WAIT = ACK_TIMEOUT * ((2 ** (MAX_RETRANSMIT + 1)) - 1) * ACK_RANDOM_FACTOR
-        // Simplified: EXCHANGE_LIFETIME = ACK_TIMEOUT * ((2 ** (MAX_RETRANSMIT + 1)) - 1) * ACK_RANDOM_FACTOR + PROCESSING_DELAY
-        // With defaults: 2 * 63 * 1.5 + 2 = 191s. RFC says ~247s total.
+        // EXCHANGE_LIFETIME = MAX_TRANSMIT_SPAN + 2 * MAX_LATENCY + PROCESSING_DELAY
+        // PROCESSING_DELAY = ACK_TIMEOUT
+        // With defaults: 2 * 15 * 1.5 + 2 * 100 + 2 = 45 + 200 + 2 = 247s
         let max_transmit_span = self
             .ack_timeout
             .mul_f64(((1u64 << self.max_retransmit) - 1) as f64 * self.ack_random_factor);
-        // PROCESSING_DELAY per RFC 7252 = ACK_TIMEOUT
-        max_transmit_span + self.ack_timeout
+        max_transmit_span + 2 * self.max_latency + self.ack_timeout
     }
 }
 
@@ -271,6 +280,7 @@ impl Default for Config {
             min_reconnect_interval: Duration::from_secs(5),
             max_reconnect_attempts: 10,
             max_session_lifetime: None,
+            max_latency: Duration::from_secs(100),
             ack_timeout: Duration::from_secs(2),
             ack_random_factor: 1.5,
             max_retransmit: 4,
@@ -326,6 +336,16 @@ mod tests {
                 max: 65536
             })
         );
+    }
+
+    #[test]
+    fn test_exchange_lifetime_default() {
+        let config = Config::default();
+        let lifetime = config.exchange_lifetime();
+        // RFC 7252 §4.8.2: with defaults should be ~247s
+        // MAX_TRANSMIT_SPAN = 2 * 15 * 1.5 = 45s
+        // EXCHANGE_LIFETIME = 45 + 2*100 + 2 = 247s
+        assert_eq!(lifetime, Duration::from_secs(247));
     }
 
     #[test]

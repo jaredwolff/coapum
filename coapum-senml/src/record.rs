@@ -13,7 +13,31 @@ use validator::Validate;
 #[cfg_attr(feature = "validation", derive(Validate))]
 #[derive(Default)]
 pub struct SenMLRecord {
-    /// Name - identifies the sensor or parameter  
+    /// Base Name (RFC 8428 §4.1) - prepended to record names
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bn: Option<String>,
+
+    /// Base Time (RFC 8428 §4.1) - added to record timestamps
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bt: Option<f64>,
+
+    /// Base Unit (RFC 8428 §4.1) - default unit for records
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bu: Option<String>,
+
+    /// Base Value (RFC 8428 §4.1) - added to numeric record values
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bv: Option<f64>,
+
+    /// Base Sum (RFC 8428 §4.1) - added to sum values
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bs: Option<f64>,
+
+    /// Base Version (RFC 8428 §4.4) - SenML version number
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bver: Option<i32>,
+
+    /// Name - identifies the sensor or parameter
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n: Option<String>,
 
@@ -30,7 +54,7 @@ pub struct SenMLRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vs: Option<String>,
 
-    /// Boolean Value - true/false measurement value  
+    /// Boolean Value - true/false measurement value
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vb: Option<bool>,
 
@@ -150,6 +174,16 @@ impl SenMLRecord {
         self.v.is_some() || self.vs.is_some() || self.vb.is_some() || self.vd.is_some()
     }
 
+    /// Check if this record has any base fields set
+    pub fn has_base_fields(&self) -> bool {
+        self.bn.is_some()
+            || self.bt.is_some()
+            || self.bu.is_some()
+            || self.bv.is_some()
+            || self.bs.is_some()
+            || self.bver.is_some()
+    }
+
     /// Get the name of this record, resolving with base name if needed
     pub fn resolved_name(&self, base_name: Option<&str>) -> Option<String> {
         match (&self.n, base_name) {
@@ -166,6 +200,22 @@ impl SenMLRecord {
         if !self.has_value() && self.s.is_none() {
             return Err(crate::SenMLError::validation(
                 "Record must have at least one value field (v, vs, vb, vd, or s)",
+            ));
+        }
+
+        // RFC 8428 §4.3: A record must have at most one value field (v, vs, vb, or vd)
+        let value_count = [
+            self.v.is_some(),
+            self.vs.is_some(),
+            self.vb.is_some(),
+            self.vd.is_some(),
+        ]
+        .iter()
+        .filter(|&&x| x)
+        .count();
+        if value_count > 1 {
+            return Err(crate::SenMLError::validation(
+                "Record must have at most one value field (v, vs, vb, or vd)",
             ));
         }
 
@@ -349,6 +399,26 @@ mod tests {
 
         let empty_record = SenMLRecord::new();
         assert!(empty_record.validate().is_err());
+    }
+
+    #[test]
+    fn test_value_mutual_exclusion() {
+        // Record with both v and vs should fail
+        let mut record = SenMLRecord::with_value("temp", 25.0);
+        record.vs = Some("also a string".to_string());
+        assert!(record.validate().is_err());
+
+        // Record with both v and vb should fail
+        let mut record = SenMLRecord::with_value("temp", 25.0);
+        record.vb = Some(true);
+        assert!(record.validate().is_err());
+
+        // Record with a single value should pass
+        let record = SenMLRecord::with_value("temp", 25.0);
+        assert!(record.validate().is_ok());
+
+        let record = SenMLRecord::with_string_value("status", "OK");
+        assert!(record.validate().is_ok());
     }
 
     #[test]

@@ -391,6 +391,17 @@ pub type ClientStore = Arc<RwLock<HashMap<String, ClientEntry>>>;
 /// # Fields
 ///
 /// * `inner`: The `Router` object responsible for matching routes to handlers.
+///
+/// Result of looking up a handler for a request.
+pub(crate) enum LookupResult<S: Send + Sync + 'static> {
+    /// Handler found for the path and method.
+    Found(Box<dyn ErasedHandler<S>>),
+    /// Path does not match any registered route (4.04).
+    NotFound,
+    /// Path matched but the method is not registered (4.05).
+    MethodNotAllowed,
+}
+
 /// * `state`: The shared state object accessible to all handlers. It is wrapped in an Arc and a Mutex for shared and exclusive access.
 /// * `db`: The observer database.
 #[derive(Clone)]
@@ -643,7 +654,9 @@ where
     }
 
     /// Looks up a handler for a given request.
-    pub fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> Option<Box<dyn ErasedHandler<S>>> {
+    /// Returns `Found(handler)` on match, `NotFound` for unknown paths,
+    /// or `MethodNotAllowed` when the path exists but the method doesn't.
+    pub(crate) fn lookup(&self, r: &CoapumRequest<SocketAddr>) -> LookupResult<S> {
         match self.inner.recognize(r.get_path()) {
             Ok(matched) => {
                 let handler = matched.handler();
@@ -654,17 +667,17 @@ where
                 match handler.get(&reqtype) {
                     Some(h) => {
                         tracing::debug!("Matched handler: {:?}", h);
-                        Some(h.handler.clone_erased())
+                        LookupResult::Found(h.handler.clone_erased())
                     }
                     None => {
-                        tracing::debug!("No handler found");
-                        None
+                        tracing::debug!("No handler for method");
+                        LookupResult::MethodNotAllowed
                     }
                 }
             }
             Err(e) => {
                 tracing::warn!("Unable to recognize. Err: {}", e);
-                None
+                LookupResult::NotFound
             }
         }
     }
@@ -963,22 +976,23 @@ where
         let state = self.state.clone(); // Clone the state so it can be moved into the async block
 
         match self.lookup(&request) {
-            Some(handler) => {
+            LookupResult::Found(handler) => {
                 let path = request.get_path();
                 tracing::debug!("Handler found for route: {:?}", &path);
 
-                // Call the new ErasedHandler directly
                 Box::pin(async move { handler.call_erased(request, state).await })
             }
-            None => {
+            LookupResult::NotFound => {
+                tracing::info!("No route for path: {:?}", request.get_path());
+                Box::pin(async move { (ResponseType::NotFound, &request).into_response() })
+            }
+            LookupResult::MethodNotAllowed => {
                 tracing::info!(
-                    "No handler found for method: {:#?} to: {:?}",
+                    "Method not allowed: {:#?} for {:?}",
                     request.get_method(),
                     request.get_path()
                 );
-
-                // If no route handler is found, return a bad request error
-                Box::pin(async move { (ResponseType::BadRequest, &request).into_response() })
+                Box::pin(async move { (ResponseType::MethodNotAllowed, &request).into_response() })
             }
         }
     }
@@ -1114,7 +1128,46 @@ mod tests {
         request.code = RequestType::Get;
 
         let result = router.lookup(&request);
-        assert!(result.is_some());
+        assert!(matches!(result, LookupResult::Found(_)));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_not_found() {
+        let state = TestState { counter: 0 };
+        let router: CoapRouter<(), TestState> = CoapRouter::new(state, ());
+
+        let packet = Packet::new();
+        let raw = CoapRequest::from_packet(packet, "127.0.0.1:5683".parse().unwrap());
+        let mut request: CoapumRequest<SocketAddr> = raw.into();
+        request.path = "/nonexistent".to_string();
+        request.code = RequestType::Get;
+
+        assert!(matches!(router.lookup(&request), LookupResult::NotFound));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_method_not_allowed() {
+        let state = TestState { counter: 0 };
+        let mut router = CoapRouter::new(state, ());
+
+        let handler = RouteHandler {
+            handler: into_erased_handler(into_handler(|| async { StatusCode::Valid })),
+            observe_handler: None,
+            method: RequestType::Get,
+            confirmable_notifications: false,
+        };
+        router.add("/test", handler);
+
+        let packet = Packet::new();
+        let raw = CoapRequest::from_packet(packet, "127.0.0.1:5683".parse().unwrap());
+        let mut request: CoapumRequest<SocketAddr> = raw.into();
+        request.path = "/test".to_string();
+        request.code = RequestType::Post;
+
+        assert!(matches!(
+            router.lookup(&request),
+            LookupResult::MethodNotAllowed
+        ));
     }
 
     #[tokio::test]
