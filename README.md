@@ -140,8 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resolver = Arc::new(MapResolver::new(keys));
 
     let config = dimpl::Config::builder()
-        .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
-        .with_psk_identity(b"device123".to_vec())
+        .with_psk_client(b"device123".to_vec(), resolver as Arc<dyn dimpl::PskResolver>)
         .build()?;
 
     let mut client = DtlsClient::connect("127.0.0.1:5684", Arc::new(config)).await?;

@@ -54,8 +54,10 @@ async fn connect_client(addr: &str, identity: &str) -> DtlsClient {
     keys.insert(identity.to_string(), PSK.to_vec());
     let resolver = Arc::new(MapResolver::new(keys));
     let config = dimpl::Config::builder()
-        .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
-        .with_psk_identity(identity.as_bytes().to_vec())
+        .with_psk_client(
+            identity.as_bytes().to_vec(),
+            resolver as Arc<dyn dimpl::PskResolver>,
+        )
         .build()
         .expect("valid DTLS config");
 

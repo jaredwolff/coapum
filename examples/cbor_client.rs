@@ -213,8 +213,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resolver = Arc::new(coapum::credential::resolver::MapResolver::new(keys));
 
     let config = dimpl::Config::builder()
-        .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
-        .with_psk_identity(IDENTITY.as_bytes().to_vec())
+        .with_psk_client(
+            IDENTITY.as_bytes().to_vec(),
+            resolver as Arc<dyn dimpl::PskResolver>,
+        )
         .build()
         .expect("valid DTLS config");
 

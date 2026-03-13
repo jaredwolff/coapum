@@ -450,8 +450,10 @@ async fn test_413_response_includes_size1_via_dtls() {
     keys.insert(IDENTITY.to_string(), PSK.to_vec());
     let resolver = Arc::new(MapResolver::new(keys));
     let dtls_config = dimpl::Config::builder()
-        .with_psk_resolver(resolver as Arc<dyn dimpl::PskResolver>)
-        .with_psk_identity(IDENTITY.as_bytes().to_vec())
+        .with_psk_client(
+            IDENTITY.as_bytes().to_vec(),
+            resolver as Arc<dyn dimpl::PskResolver>,
+        )
         .build()
         .expect("valid DTLS config");
 

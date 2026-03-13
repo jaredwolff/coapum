@@ -709,12 +709,15 @@ async fn connection_task<O, S, C>(
 {
     // Build per-connection resolver + dimpl config so identity capture is race-free
     let resolver = Arc::new(CapturingResolver::new(credential_store));
-    let mut builder =
-        dimpl::Config::builder().with_psk_resolver(resolver.clone() as Arc<dyn dimpl::PskResolver>);
-    if let Some(ref hint) = psk_identity_hint {
-        builder = builder.with_psk_identity_hint(hint.clone());
-    }
-    let dimpl_config = Arc::new(builder.build().expect("valid DTLS config"));
+    let dimpl_config = Arc::new(
+        dimpl::Config::builder()
+            .with_psk_server(
+                psk_identity_hint.clone(),
+                resolver.clone() as Arc<dyn dimpl::PskResolver>,
+            )
+            .build()
+            .expect("valid DTLS config"),
+    );
 
     let mut dtls = Dtls::new_12_psk(dimpl_config, Instant::now());
     let mut out_buf = vec![0u8; 2048];
