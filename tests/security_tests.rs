@@ -261,11 +261,13 @@ mod connection_security_tests {
             ("normal_client", true),
             ("client-123", true),
             ("client.domain.com", true),
-            ("", false),                         // Empty should be rejected
-            ("client@domain", false),            // @ should be filtered out
-            ("client;DROP TABLE users;", false), // SQL injection attempt
-            ("client\x00null", false),           // Null byte injection
-            ("", false),                         // Empty should be rejected
+            ("client@domain", true),   // @ is valid printable ASCII
+            ("goobie!", true),         // ! is valid printable ASCII
+            ("client;DROP", true),     // ; is valid printable ASCII
+            ("", false),               // Empty should be rejected
+            ("client\x00null", false), // Null byte injection
+            ("has/slash", false),      // Path separator
+            ("has\\backslash", false), // Backslash
         ];
 
         // This test documents expected behavior - actual implementation would need
@@ -280,12 +282,10 @@ mod connection_security_tests {
 
             if should_be_valid {
                 assert!(
-                    identity.chars().all(|c| c.is_ascii_alphanumeric()
-                        || c == '_'
-                        || c == '-'
-                        || c == '.'
-                        || c == ':'),
-                    "Identity should contain only safe characters: {}",
+                    identity
+                        .chars()
+                        .all(|c| c.is_ascii_graphic() && c != '/' && c != '\\'),
+                    "Identity should contain only printable ASCII (no / or \\): {}",
                     identity
                 );
             }

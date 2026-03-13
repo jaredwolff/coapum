@@ -86,9 +86,11 @@ pub(crate) fn extract_identity(identity_hint: &[u8]) -> Option<String> {
                 return None;
             }
 
+            // Allow all printable ASCII (0x21–0x7E) except path separators
+            // that could cause issues if identities appear in paths or logs.
             if !s
                 .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':')
+                .all(|c| c.is_ascii_graphic() && c != '/' && c != '\\')
             {
                 tracing::error!("Identity hint contains invalid characters");
                 return None;

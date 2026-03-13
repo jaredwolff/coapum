@@ -404,7 +404,7 @@ dependencies = [
 [[package]]
 name = "dimpl"
 version = "0.4.3"
-source = "git+https://github.com/circuitdojo/dimpl.git?rev=9ebe961f167d20e25077ad104d38b395e2b351ca#9ebe961f167d20e25077ad104d38b395e2b351ca"
+source = "git+https://github.com/circuitdojo/dimpl.git?rev=fe24c7177af114d4e6b86b7ce163aad8be202356#fe24c7177af114d4e6b86b7ce163aad8be202356"
 dependencies = [
  "aes",
  "arrayvec",
@@ -423,7 +423,6 @@ dependencies = [
  "subtle",
  "time",
  "x509-cert",
- "zeroize",
 ]
 
 [[package]]

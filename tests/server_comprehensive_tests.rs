@@ -265,7 +265,7 @@ mod identity_sanitization_tests {
 
         if !identity
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':')
+            .all(|c| c.is_ascii_graphic() && c != '/' && c != '\\')
         {
             return Err("Identity contains invalid characters".to_string());
         }
@@ -283,6 +283,10 @@ mod identity_sanitization_tests {
             "a",                     // Single character
             "A1_b2-c3.d4",           // Mixed valid characters
             "bootstrap:project-123", // Colon-separated (e.g., bootstrap PSK)
+            "goobie!",               // Exclamation mark
+            "client@domain",         // At sign
+            "device#123",            // Hash
+            "test!@#$%^&*()+=",      // Mixed printable symbols
         ];
 
         for identity in valid_identities {
@@ -299,12 +303,10 @@ mod identity_sanitization_tests {
     #[test]
     fn test_identity_rejects_invalid_characters() {
         let invalid_identities = vec![
-            "client@domain",
-            "device#123",
-            "sensor;DROP",
             "node\x00null",
-            "test!@#$%^&*()+=",
             "spaces in name",
+            "path/separator",
+            "back\\slash",
         ];
 
         for input in invalid_identities {
@@ -329,10 +331,11 @@ mod identity_sanitization_tests {
     #[test]
     fn test_all_invalid_characters_rejected() {
         let invalid_identities = vec![
-            "!@#$%^&*()",         // All invalid characters
-            "\x00\x01\x02",       // All non-printable
-            "   ",                // Only spaces
-            "+=[]{}|\\;\"'<>,?/", // All symbols (except : which is allowed)
+            "\x00\x01\x02",   // All non-printable
+            "   ",            // Only spaces
+            "has/slash",      // Forward slash
+            "has\\backslash", // Backslash
+            "\t\n\r",         // Control characters
         ];
 
         for identity in invalid_identities {
