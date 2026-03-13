@@ -15,6 +15,7 @@ use tokio::{
     sync::{
         Mutex,
         mpsc::{self, Sender, channel},
+        watch,
     },
 };
 use tower::Service;
@@ -102,6 +103,33 @@ pub(crate) fn extract_identity(identity_hint: &[u8]) -> Option<String> {
             tracing::error!("Invalid UTF-8 in identity hint: {}", e);
             None
         }
+    }
+}
+
+/// DTLS 1.2 CID content type (RFC 9146 §3).
+const TLS12_CID_CONTENT_TYPE: u8 = 25;
+
+/// Generate a random Connection ID of the given length.
+fn generate_cid(len: usize) -> Vec<u8> {
+    use rand::Rng;
+    let mut cid = vec![0u8; len];
+    rand::rng().fill_bytes(&mut cid);
+    cid
+}
+
+/// Extract a Connection ID from a raw DTLS record header.
+///
+/// CID records (RFC 9146) use content type 25 with the CID placed at byte
+/// offset 11 (after type + version + epoch + sequence number). Returns
+/// `None` for non-CID records or packets too short to contain a full header.
+fn extract_cid(packet: &[u8], cid_len: usize) -> Option<&[u8]> {
+    // Header layout for CID records:
+    //   type(1) + version(2) + epoch(2) + seq(6) = 11, then CID, then length(2)
+    let min_len = 11 + cid_len + 2;
+    if packet.len() >= min_len && packet[0] == TLS12_CID_CONTENT_TYPE {
+        Some(&packet[11..11 + cid_len])
+    } else {
+        None
     }
 }
 
@@ -683,6 +711,13 @@ where
                     .await;
                 }
             }
+            Output::ConnectionId(cid) => {
+                tracing::debug!(
+                    addr = %remote,
+                    cid_len = cid.len(),
+                    "dtls.connection_id_negotiated"
+                );
+            }
             Output::Timeout(_) => break,
             _ => {} // PeerCert, KeyingMaterial — not used for PSK
         }
@@ -699,11 +734,13 @@ async fn connection_task<O, S, C>(
     socket: Arc<UdpSocket>,
     credential_store: C,
     psk_identity_hint: Option<Vec<u8>>,
+    cid: Option<Vec<u8>>,
+    mut addr_rx: watch::Receiver<SocketAddr>,
     mut router: CoapRouter<O, S>,
     config: Config,
     connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
     conn_count: Arc<AtomicUsize>,
-    cleanup_tx: mpsc::Sender<SocketAddr>,
+    cleanup_tx: mpsc::Sender<(SocketAddr, Option<Vec<u8>>)>,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
@@ -711,20 +748,20 @@ async fn connection_task<O, S, C>(
 {
     // Build per-connection resolver + dimpl config so identity capture is race-free
     let resolver = Arc::new(CapturingResolver::new(credential_store));
-    let dimpl_config = Arc::new(
-        dimpl::Config::builder()
-            .with_psk_server(
-                psk_identity_hint.clone(),
-                resolver.clone() as Arc<dyn dimpl::PskResolver>,
-            )
-            .build()
-            .expect("valid DTLS config"),
+    let mut builder = dimpl::Config::builder().with_psk_server(
+        psk_identity_hint.clone(),
+        resolver.clone() as Arc<dyn dimpl::PskResolver>,
     );
+    if let Some(ref cid) = cid {
+        builder = builder.with_connection_id(cid.clone());
+    }
+    let dimpl_config = Arc::new(builder.build().expect("valid DTLS config"));
 
     let mut dtls = Dtls::new_12_psk(dimpl_config, Instant::now());
     let mut out_buf = vec![0u8; 2048];
     let mut connected = false;
     let mut identity: Option<String> = None;
+    let mut current_remote = remote;
 
     let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
     let obs_tx = Arc::new(obs_tx);
@@ -749,21 +786,37 @@ async fn connection_task<O, S, C>(
         tokio::pin!(dtls_timeout);
 
         tokio::select! {
+            biased;
+
+            // Address migration via CID (RFC 9146).
+            // Biased first so current_remote is up-to-date before any
+            // send_to calls in the arms below.
+            Ok(()) = addr_rx.changed() => {
+                let new_addr = *addr_rx.borrow();
+                tracing::info!(
+                    old_addr = %current_remote,
+                    new_addr = %new_addr,
+                    identity = ?identity,
+                    "connection.address_migrated"
+                );
+                current_remote = new_addr;
+            }
+
             // Incoming DTLS packet from dispatch
             packet = packet_rx.recv() => {
                 let Some(raw) = packet else {
                     // Channel closed — dispatch removed us
-                    tracing::debug!(addr = %remote, "connection.channel_closed");
+                    tracing::debug!(addr = %current_remote, "connection.channel_closed");
                     break;
                 };
 
                 if let Err(e) = dtls.handle_packet(&raw) {
-                    tracing::error!(addr = %remote, error = %e, "dtls.packet_error");
+                    tracing::error!(addr = %current_remote, error = %e, "dtls.packet_error");
                     break;
                 }
 
                 if !process_outputs(
-                    &mut dtls, &mut out_buf, &socket, remote,
+                    &mut dtls, &mut out_buf, &socket, current_remote,
                     &resolver, &mut connected, &mut identity,
                     &mut router, &obs_tx, &mut obs, &mut block_handler,
                     config.max_observers_per_device,
@@ -778,20 +831,20 @@ async fn connection_task<O, S, C>(
             Some(value) = obs_rx.recv(), if connected => {
                 handle_notification(
                     value, &mut router, &mut dtls, &mut out_buf,
-                    &socket, remote, &mut obs, &mut block_handler,
+                    &socket, current_remote, &mut obs, &mut block_handler,
                     &mut reliability,
                 ).await;
             }
 
             // Disconnect signal
             _ = disconnect_rx.recv() => {
-                tracing::info!(addr = %remote, identity = ?identity, "connection.terminating");
+                tracing::info!(addr = %current_remote, identity = ?identity, "connection.terminating");
                 break;
             }
 
             // Idle timeout
             () = &mut dtls_timeout => {
-                tracing::info!(addr = %remote, "connection.timeout");
+                tracing::info!(addr = %current_remote, "connection.timeout");
                 break;
             }
 
@@ -803,7 +856,7 @@ async fn connection_task<O, S, C>(
                 }
             } => {
                 tracing::info!(
-                    addr = %remote,
+                    addr = %current_remote,
                     identity = ?identity,
                     "connection.session_lifetime_exceeded"
                 );
@@ -825,7 +878,7 @@ async fn connection_task<O, S, C>(
                                 tracing::error!(error = %e, "reliability.retransmit.send_failed");
                                 continue;
                             }
-                            drain_packets(&mut dtls, &mut out_buf, &socket, remote).await;
+                            drain_packets(&mut dtls, &mut out_buf, &socket, current_remote).await;
                         }
                         RetransmitAction::GiveUp { msg_id } => {
                             tracing::warn!(msg_id, "reliability.give_up");
@@ -844,20 +897,23 @@ async fn connection_task<O, S, C>(
 
         // Drive DTLS retransmit timers after every event
         if let Err(e) = dtls.handle_timeout(Instant::now()) {
-            tracing::error!(addr = %remote, error = %e, "dtls.timeout_error");
+            tracing::error!(addr = %current_remote, error = %e, "dtls.timeout_error");
             break;
         }
-        drain_packets(&mut dtls, &mut out_buf, &socket, remote).await;
+        drain_packets(&mut dtls, &mut out_buf, &socket, current_remote).await;
     }
 
-    // Cleanup
+    // Cleanup: `current_remote` is always the latest address (updated by
+    // addr_rx on migration). The main loop's migration path already removed
+    // the old addr_dispatch entry and inserted the new one, so sending
+    // `current_remote` here correctly removes the active entry.
     conn_count.fetch_sub(1, Ordering::Relaxed);
     if let Some(ref id) = identity {
         connections.lock().await.remove(id);
         let _ = router.unregister_device(id).await;
-        tracing::info!(identity = %id, addr = %remote, "connection.terminated");
+        tracing::info!(identity = %id, addr = %current_remote, "connection.terminated");
     }
-    let _ = cleanup_tx.send(remote).await;
+    let _ = cleanup_tx.send((current_remote, cid)).await;
 }
 
 /// Start basic CoAP server with quinn-style dispatch + per-connection tasks.
@@ -884,20 +940,32 @@ where
         Arc::new(Mutex::new(HashMap::new()));
     let active_connections = Arc::new(AtomicUsize::new(0));
     let max_connections = config.max_connections;
+    let cid_length = config.cid_length;
     let mut shutdown_rx = config.shutdown.clone();
 
     // Dispatch table: SocketAddr → per-connection packet sender
-    let mut dispatch: HashMap<SocketAddr, mpsc::Sender<Vec<u8>>> = HashMap::new();
+    let mut addr_dispatch: HashMap<SocketAddr, mpsc::Sender<Vec<u8>>> = HashMap::new();
+
+    // CID dispatch tables (RFC 9146): route packets by Connection ID when
+    // the client's address changes. Only populated when cid_length is set.
+    let mut cid_dispatch: HashMap<Vec<u8>, mpsc::Sender<Vec<u8>>> = HashMap::new();
+    let mut cid_to_addr: HashMap<Vec<u8>, SocketAddr> = HashMap::new();
+    let mut cid_addr_tx: HashMap<Vec<u8>, watch::Sender<SocketAddr>> = HashMap::new();
 
     // Cleanup channel: connection tasks notify dispatch when they exit
-    let (cleanup_tx, mut cleanup_rx) = mpsc::channel::<SocketAddr>(64);
+    let (cleanup_tx, mut cleanup_rx) = mpsc::channel::<(SocketAddr, Option<Vec<u8>>)>(64);
 
     let mut recv_buf = vec![0u8; config.buffer_size()];
 
     loop {
         // Drain completed connections
-        while let Ok(remote) = cleanup_rx.try_recv() {
-            dispatch.remove(&remote);
+        while let Ok((addr, maybe_cid)) = cleanup_rx.try_recv() {
+            addr_dispatch.remove(&addr);
+            if let Some(cid) = maybe_cid {
+                cid_dispatch.remove(&cid);
+                cid_to_addr.remove(&cid);
+                cid_addr_tx.remove(&cid);
+            }
         }
 
         // Drain disconnect commands
@@ -926,10 +994,41 @@ where
             // Incoming UDP packet
             result = socket.recv_from(&mut recv_buf) => {
                 let (n, remote) = result?;
+                let raw = &recv_buf[..n];
 
-                if let Some(tx) = dispatch.get(&remote) {
+                // CID dispatch: route by Connection ID when available (RFC 9146)
+                if let Some(cid_len) = cid_length
+                    && let Some(cid) = extract_cid(raw, cid_len)
+                {
+                    if let Some(tx) = cid_dispatch.get(cid) {
+                        if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(raw.to_vec()) {
+                            tracing::trace!(addr = %remote, "dispatch.cid.backpressure");
+                        }
+
+                        // Address migration: update mappings if source changed
+                        if cid_to_addr.get(cid) != Some(&remote) {
+                            if let Some(old_addr) = cid_to_addr.insert(cid.to_vec(), remote) {
+                                addr_dispatch.remove(&old_addr);
+                            }
+                            addr_dispatch.insert(remote, tx.clone());
+                            if let Some(addr_tx) = cid_addr_tx.get(cid) {
+                                let _ = addr_tx.send(remote);
+                            }
+                        }
+
+                        continue;
+                    }
+                    // Unknown CID — drop (stale or spoofed)
+                    tracing::trace!(addr = %remote, "cid.unknown_dropped");
+                    continue;
+                }
+
+                // Address dispatch: standard path for non-CID packets and handshakes
+                if let Some(tx) = addr_dispatch.get(&remote) {
                     // Fast path: known connection
-                    let _ = tx.try_send(recv_buf[..n].to_vec());
+                    if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(raw.to_vec()) {
+                        tracing::trace!(addr = %remote, "dispatch.addr.backpressure");
+                    }
                 } else {
                     // New connection
                     if active_connections.load(Ordering::Relaxed) >= max_connections {
@@ -944,8 +1043,21 @@ where
                     tracing::debug!(addr = %remote, "connection.incoming");
 
                     let (tx, rx) = mpsc::channel(256);
-                    let _ = tx.try_send(recv_buf[..n].to_vec());
-                    dispatch.insert(remote, tx);
+                    let _ = tx.try_send(raw.to_vec());
+                    addr_dispatch.insert(remote, tx.clone());
+
+                    // Generate CID and pre-register in dispatch tables
+                    let cid = cid_length.map(|len| {
+                        let cid = generate_cid(len);
+                        cid_dispatch.insert(cid.clone(), tx);
+                        cid_to_addr.insert(cid.clone(), remote);
+                        cid
+                    });
+
+                    let (addr_tx, addr_rx) = watch::channel(remote);
+                    if let Some(ref cid) = cid {
+                        cid_addr_tx.insert(cid.clone(), addr_tx);
+                    }
 
                     active_connections.fetch_add(1, Ordering::Relaxed);
 
@@ -961,7 +1073,8 @@ where
                     tokio::spawn(async move {
                         connection_task(
                             remote, rx, socket, store,
-                            hint, router, config, connections,
+                            hint, cid, addr_rx,
+                            router, config, connections,
                             conn_count, cleanup_tx,
                         ).await;
                     });

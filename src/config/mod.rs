@@ -91,6 +91,14 @@ pub struct Config {
     /// Default: 4.
     pub max_retransmit: u32,
 
+    /// Connection ID length in bytes for DTLS CID (RFC 9146).
+    /// When set, the server generates a unique random CID of this length for
+    /// each connection and passes it to dimpl via `with_connection_id()`.
+    /// Enables seamless connection migration when a client's IP:port changes
+    /// (NAT rebinding, network handoff). Must be 1..=255.
+    /// Default: `None` (CID disabled).
+    pub cid_length: Option<usize>,
+
     /// Optional shutdown signal. When the sender is dropped or a value is sent,
     /// the server stops accepting new connections and exits gracefully.
     /// Default: `None` (server runs until the process is killed).
@@ -101,6 +109,7 @@ pub struct Config {
 pub enum ConfigError {
     InvalidBufferSize { size: usize, min: usize, max: usize },
     InvalidTimeout(u64),
+    InvalidCidLength(usize),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -115,6 +124,9 @@ impl std::fmt::Display for ConfigError {
             }
             ConfigError::InvalidTimeout(timeout) => {
                 write!(f, "Invalid timeout: {} (must be > 0)", timeout)
+            }
+            ConfigError::InvalidCidLength(len) => {
+                write!(f, "Invalid CID length: {} (must be 1..=255)", len)
             }
         }
     }
@@ -248,6 +260,19 @@ impl Config {
         self.max_latency = latency;
     }
 
+    /// Set the Connection ID length for DTLS CID (RFC 9146).
+    ///
+    /// When set, each new connection gets a random CID of this length.
+    /// CID-bearing records allow the server to route packets to the correct
+    /// DTLS session even after the client's IP:port changes.
+    pub fn set_cid_length(&mut self, len: usize) -> Result<(), ConfigError> {
+        if !(1..=255).contains(&len) {
+            return Err(ConfigError::InvalidCidLength(len));
+        }
+        self.cid_length = Some(len);
+        Ok(())
+    }
+
     /// RFC 7252 §4.8.2 EXCHANGE_LIFETIME: time from first transmission of a
     /// CON message to when the message ID can be safely reused.
     pub fn exchange_lifetime(&self) -> Duration {
@@ -284,6 +309,7 @@ impl Default for Config {
             ack_timeout: Duration::from_secs(2),
             ack_random_factor: 1.5,
             max_retransmit: 4,
+            cid_length: None,
             shutdown: None,
         }
     }
@@ -358,5 +384,26 @@ mod tests {
 
         // Invalid timeout
         assert_eq!(config.set_timeout(0), Err(ConfigError::InvalidTimeout(0)));
+    }
+
+    #[test]
+    fn test_cid_length_validation() {
+        let mut config = Config::default();
+        assert!(config.cid_length.is_none());
+
+        assert!(config.set_cid_length(8).is_ok());
+        assert_eq!(config.cid_length, Some(8));
+
+        assert!(config.set_cid_length(1).is_ok());
+        assert!(config.set_cid_length(255).is_ok());
+
+        assert_eq!(
+            config.set_cid_length(0),
+            Err(ConfigError::InvalidCidLength(0))
+        );
+        assert_eq!(
+            config.set_cid_length(256),
+            Err(ConfigError::InvalidCidLength(256))
+        );
     }
 }

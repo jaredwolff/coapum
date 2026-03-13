@@ -404,7 +404,7 @@ dependencies = [
 [[package]]
 name = "dimpl"
 version = "0.4.3"
-source = "git+https://github.com/circuitdojo/dimpl.git?rev=fe24c7177af114d4e6b86b7ce163aad8be202356#fe24c7177af114d4e6b86b7ce163aad8be202356"
+source = "git+https://github.com/circuitdojo/dimpl.git?branch=dtls-conn-id#f4d546cc73d0e7d389124ced87060751f26ff5a8"
 dependencies = [
  "aes",
  "arrayvec",

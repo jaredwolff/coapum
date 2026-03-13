@@ -57,6 +57,9 @@ impl DtlsClient {
                     Output::Connected => {
                         is_connected = true;
                     }
+                    Output::ConnectionId(cid) => {
+                        tracing::trace!(cid_len = cid.len(), "dtls.cid_negotiated");
+                    }
                     Output::Timeout(t) => {
                         wait_duration = t.saturating_duration_since(Instant::now());
                         break;
@@ -124,6 +127,9 @@ impl DtlsClient {
                             }
                             Output::Packet(p) => {
                                 self.socket.send(p).await?;
+                            }
+                            Output::ConnectionId(cid) => {
+                                tracing::trace!(cid_len = cid.len(), "dtls.cid_negotiated");
                             }
                             Output::Timeout(_) => break,
                             _ => {}
