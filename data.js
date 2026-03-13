@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773331545866,
+  "lastUpdate": 1773375939788,
   "repoUrl": "https://github.com/jaredwolff/coapum",
   "entries": {
     "coapum Criterion": [
@@ -1019,6 +1019,36 @@ window.BENCHMARK_DATA = {
             "name": "coap_router",
             "value": 1067,
             "range": "± 28",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "committer": {
+            "email": "hello@jaredwolff.com",
+            "name": "Jared Wolff",
+            "username": "jaredwolff"
+          },
+          "distinct": true,
+          "id": "9539341e0ee0c9adf24222761623ca86a9c4c0f2",
+          "message": "fix: widen PSK identity allowlist to all printable ASCII\n\nThe previous allowlist [a-zA-Z0-9_\\-\\.\\:] was too restrictive,\nrejecting common characters like ! and @. Allow all ASCII graphic\ncharacters (0x21–0x7E) except path separators / and \\.",
+          "timestamp": "2026-03-13T00:24:36-04:00",
+          "tree_id": "a56934b023d87911812eb60f2b0d8d78c0b6ce77",
+          "url": "https://github.com/jaredwolff/coapum/commit/9539341e0ee0c9adf24222761623ca86a9c4c0f2"
+        },
+        "date": 1773375939546,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "coap_router",
+            "value": 1149,
+            "range": "± 42",
             "unit": "ns/iter"
           }
         ]
