@@ -230,4 +230,22 @@ impl DtlsClient {
     pub fn remote_addr(&self) -> SocketAddr {
         self.remote
     }
+
+    /// Get the local socket address.
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.socket.local_addr()
+    }
+
+    /// Replace the underlying UDP socket with a new one bound to a different
+    /// local port, simulating a NAT rebind or network change.
+    ///
+    /// The DTLS state machine is preserved — only the transport changes.
+    /// When CID is negotiated, the server routes subsequent packets by CID
+    /// rather than source address (RFC 9146), so the session survives.
+    pub async fn rebind(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let socket = UdpSocket::bind("0.0.0.0:0").await?;
+        socket.connect(self.remote).await?;
+        self.socket = socket;
+        Ok(())
+    }
 }
