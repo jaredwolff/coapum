@@ -309,6 +309,18 @@ impl Observer for RedbObserver {
     async fn observer_count(&self, device_id: &str) -> usize {
         self.channels.device_observer_count(device_id).await
     }
+
+    async fn notify(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), Self::Error> {
+        self.channels
+            .notify_unconditional(device_id, path, payload)
+            .await;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

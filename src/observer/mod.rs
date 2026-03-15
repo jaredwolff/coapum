@@ -77,6 +77,17 @@ pub trait Observer: Clone + Debug + Send + Sync + 'static {
     async fn observer_count(&self, _device_id: &str) -> usize {
         0
     }
+
+    /// Send a notification to observers without persisting or diffing.
+    /// Use for ephemeral events (commands) where every call must notify.
+    async fn notify(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), Self::Error> {
+        self.write(device_id, path, payload).await
+    }
 }
 
 #[async_trait]
@@ -112,6 +123,14 @@ impl Observer for () {
         Ok(None)
     }
     async fn clear(&mut self, _device_id: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    async fn notify(
+        &mut self,
+        _device_id: &str,
+        _path: &str,
+        _payload: &Value,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -364,6 +383,50 @@ impl ObserverChannels {
             .await
             .get(device_id)
             .map_or(0, |c| c.len())
+    }
+
+    /// Notify observers unconditionally for a device at a specific path.
+    ///
+    /// Sends the payload to all registered observers for the given path
+    /// without comparing old and new values. Use for ephemeral events
+    /// (commands) where every call must notify.
+    pub async fn notify_unconditional(&self, device_id: &str, path: &str, payload: &Value) {
+        let channels = self.channels.read().await;
+
+        let device_channels = match channels.get(device_id) {
+            Some(dc) => dc,
+            None => {
+                tracing::debug!("No observers found for device '{}'", device_id);
+                return;
+            }
+        };
+
+        if let Some(sender) = device_channels.get(path) {
+            let notification = ObserverValue {
+                path: path.to_string(),
+                value: payload.clone(),
+            };
+
+            match tokio::time::timeout(self.notification_timeout, sender.send(notification)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        "Failed to send observer notification for device {} path {}: {}",
+                        device_id,
+                        path,
+                        e
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Notification timeout for device {} path {} ({}ms)",
+                        device_id,
+                        path,
+                        self.notification_timeout.as_millis()
+                    );
+                }
+            }
+        }
     }
 
     /// Notify observers of value changes for a device.

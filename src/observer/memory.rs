@@ -144,6 +144,18 @@ impl Observer for MemObserver {
     async fn observer_count(&self, device_id: &str) -> usize {
         self.channels.device_observer_count(device_id).await
     }
+
+    async fn notify(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), Self::Error> {
+        self.channels
+            .notify_unconditional(device_id, path, payload)
+            .await;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -266,5 +278,32 @@ mod tests {
         // Unregister all
         observer.unregister_all().await.unwrap();
         assert!(observer.channels.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_sends_duplicate_payloads() {
+        let mut observer = MemObserver::new();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ObserverValue>(10);
+
+        observer
+            .register("dev1", "/cmd", Arc::new(tx))
+            .await
+            .unwrap();
+
+        let payload = json!({"action": "reboot"});
+
+        // First notify
+        observer.notify("dev1", "/cmd", &payload).await.unwrap();
+        // Second notify with identical payload — must still arrive
+        observer.notify("dev1", "/cmd", &payload).await.unwrap();
+
+        let first = rx.recv().await.expect("first notification");
+        assert_eq!(first.value, payload);
+        assert_eq!(first.path, "/cmd");
+
+        let second = rx.recv().await.expect("second notification");
+        assert_eq!(second.value, payload);
+        assert_eq!(second.path, "/cmd");
     }
 }

@@ -64,6 +64,17 @@ where
     ) -> Result<(), O::Error> {
         self.observer.write(device_id, path, payload).await
     }
+
+    /// Trigger an ephemeral notification that always fires, even if the
+    /// payload is identical to the previous value. Does not persist state.
+    pub async fn trigger_notification_ephemeral(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), O::Error> {
+        self.observer.notify(device_id, path, payload).await
+    }
 }
 
 /// A handle that allows external code to update the application state
