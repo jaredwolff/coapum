@@ -1,34 +1,27 @@
-use std::{fmt::Debug, net::SocketAddr, sync::Arc};
+use std::{fmt::Debug, net::SocketAddr};
 
-use dimpl::Dtls;
-use tokio::{net::UdpSocket, sync::mpsc::Sender};
 use tower::Service;
 
 use coap_lite::{
-    BlockHandler, CoapOption, CoapRequest, ContentFormat, MessageClass, MessageType, ObserveOption,
-    Packet, RequestType, ResponseType,
+    CoapOption, CoapRequest, ContentFormat, MessageClass, MessageType, ObserveOption, Packet,
+    RequestType, ResponseType,
 };
 
-use super::ObserveState;
-use super::helpers::{drain_packets, send_block_intercept_response, send_response};
+use super::connection::SessionState;
+use super::helpers::{DtlsIo, drain_packets, send_block_intercept_response, send_response};
 use crate::{
+    config::Config,
     observer::{Observer, ObserverValue, validate_observer_path},
-    reliability::{DedupResult, ReliabilityState},
+    reliability::DedupResult,
     router::{CoapRouter, CoapumRequest},
 };
 
 /// Handle an observer notification: route, set RFC 7641 headers, and send.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_notification<O, S>(
     value: ObserverValue,
     router: &mut CoapRouter<O, S>,
-    dtls: &mut Dtls,
-    out_buf: &mut [u8],
-    socket: &UdpSocket,
-    remote: SocketAddr,
-    obs: &mut ObserveState,
-    block_handler: &mut BlockHandler<SocketAddr>,
-    reliability: &mut ReliabilityState,
+    io: &mut DtlsIo,
+    session: &mut SessionState,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
@@ -37,7 +30,7 @@ pub(super) async fn handle_notification<O, S>(
 
     let notification_path = value.path.clone();
     let notification_value = value.value.clone();
-    let req = value.to_request(remote);
+    let req = value.to_request(io.remote);
 
     match router.call(req).await {
         Ok(mut resp) => {
@@ -56,17 +49,17 @@ pub(super) async fn handle_notification<O, S>(
                 };
 
             // RFC 7252 §5.3.1: Echo the token from the original OBSERVE GET
-            if let Some(token) = obs.observer_tokens.get(&notification_path) {
+            if let Some(token) = session.obs.observer_tokens.get(&notification_path) {
                 resp.message.set_token(token.clone());
             }
 
             // RFC 7641 §3.3: Set observe sequence number (24-bit per §3.4)
-            obs.sequence = obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
-            resp.message.set_observe_value(obs.sequence);
+            session.obs.sequence = session.obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
+            resp.message.set_observe_value(session.obs.sequence);
 
             // Assign unique message ID for RST tracking
-            let msg_id = obs.next_msg_id;
-            obs.next_msg_id = obs.next_msg_id.wrapping_add(1);
+            let msg_id = session.obs.next_msg_id;
+            session.obs.next_msg_id = session.obs.next_msg_id.wrapping_add(1);
             resp.message.header.message_id = msg_id;
 
             // RFC 7252 §4.2 / RFC 7641 §4.5: Use CON or NON based on route config
@@ -77,34 +70,39 @@ pub(super) async fn handle_notification<O, S>(
                 resp.message.header.set_type(MessageType::NonConfirmable);
             }
 
-            obs.notification_msg_ids.insert(msg_id, notification_path);
+            session
+                .obs
+                .notification_msg_ids
+                .insert(msg_id, notification_path);
 
             // Bound tracking map to prevent unbounded growth
-            if obs.notification_msg_ids.len() > 256 {
+            if session.obs.notification_msg_ids.len() > 256 {
                 let cutoff = msg_id.wrapping_sub(128);
-                obs.notification_msg_ids
+                session
+                    .obs
+                    .notification_msg_ids
                     .retain(|&id, _| id.wrapping_sub(cutoff) < 256);
             }
 
             tracing::trace!(
                 "Sending notification (seq={}, con={}) to: {}",
-                obs.sequence,
+                session.obs.sequence,
                 confirmable,
-                remote
+                io.remote
             );
 
             // RFC 7959: Fragment large notification payloads using Block2
-            let mut block_req = CoapRequest::from_packet(resp.message.clone(), remote);
+            let mut block_req = CoapRequest::from_packet(resp.message.clone(), io.remote);
             block_req.response = Some(resp);
-            if let Err(e) = block_handler.intercept_response(&mut block_req) {
+            if let Err(e) = session.block_handler.intercept_response(&mut block_req) {
                 tracing::error!("Block notification error: {}", e.message);
             }
             if let Some(ref resp) = block_req.response {
-                send_response(dtls, out_buf, socket, remote, resp).await;
+                send_response(io, resp).await;
 
                 // Track for retransmission if CON
                 if confirmable && let Ok(bytes) = resp.message.to_bytes() {
-                    reliability.track_outgoing_con(msg_id, bytes);
+                    session.reliability.track_outgoing_con(msg_id, bytes);
                 }
             }
         }
@@ -113,42 +111,38 @@ pub(super) async fn handle_notification<O, S>(
 }
 
 /// Handle an incoming CoAP request: block-wise transfer, observe management, routing, and response.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_request<O, S>(
     packet: Packet,
-    socket_addr: SocketAddr,
-    identity: &str,
+    io: &mut DtlsIo,
+    session: &mut SessionState,
     router: &mut CoapRouter<O, S>,
-    dtls: &mut Dtls,
-    out_buf: &mut [u8],
-    socket: &UdpSocket,
-    obs_tx: &Arc<Sender<ObserverValue>>,
-    obs: &mut ObserveState,
-    block_handler: &mut BlockHandler<SocketAddr>,
-    max_message_size: usize,
-    max_observers_per_device: usize,
-    reliability: &mut ReliabilityState,
+    config: &Config,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
+    let identity = session
+        .identity
+        .as_deref()
+        .expect("identity guaranteed by caller");
+    let socket_addr = io.remote;
     let msg_type = packet.header.get_type();
     let msg_id = packet.header.message_id;
 
     // RFC 7641 §3.2: RST deregisters observer + stops CON retransmission
     if msg_type == MessageType::Reset {
-        if let Some(path) = obs.notification_msg_ids.remove(&msg_id) {
+        if let Some(path) = session.obs.notification_msg_ids.remove(&msg_id) {
             tracing::info!("RST deregistration for '{}' path '{}'", identity, path);
-            obs.observer_tokens.remove(&path);
+            session.obs.observer_tokens.remove(&path);
             let _ = router.unregister_observer(identity, &path).await;
         }
-        reliability.handle_rst(msg_id);
+        session.reliability.handle_rst(msg_id);
         return;
     }
 
     // RFC 7252 §4.2: ACK for a CON we sent — stop retransmitting
     if msg_type == MessageType::Acknowledgement {
-        if reliability.handle_ack(msg_id) {
+        if session.reliability.handle_ack(msg_id) {
             tracing::debug!(msg_id, "reliability.ack_received");
         }
         return;
@@ -164,10 +158,10 @@ pub(super) async fn handle_request<O, S>(
             rst.header.code = MessageClass::Empty;
             rst.header.message_id = msg_id;
             if let Ok(bytes) = rst.to_bytes() {
-                if let Err(e) = dtls.send_application_data(&bytes) {
+                if let Err(e) = io.dtls.send_application_data(&bytes) {
                     tracing::error!(error = %e, "dtls.send_failed");
                 }
-                drain_packets(dtls, out_buf, socket, socket_addr).await;
+                drain_packets(io).await;
             }
         } else {
             tracing::debug!(msg_id, "ignoring NON empty message");
@@ -178,13 +172,13 @@ pub(super) async fn handle_request<O, S>(
     // RFC 7252 §4.5: Deduplication for incoming CON requests
     let is_confirmable = msg_type == MessageType::Confirmable;
     if is_confirmable {
-        match reliability.check_dedup(msg_id) {
+        match session.reliability.check_dedup(msg_id) {
             DedupResult::Duplicate(cached_bytes) => {
                 tracing::debug!(msg_id, "reliability.dedup_hit");
-                if let Err(e) = dtls.send_application_data(&cached_bytes) {
+                if let Err(e) = io.dtls.send_application_data(&cached_bytes) {
                     tracing::error!(error = %e, "dtls.send_failed");
                 }
-                drain_packets(dtls, out_buf, socket, socket_addr).await;
+                drain_packets(io).await;
                 return;
             }
             DedupResult::NewMessage => {}
@@ -211,12 +205,12 @@ pub(super) async fn handle_request<O, S>(
             }
             if let Ok(bytes) = rst.to_bytes() {
                 if is_confirmable {
-                    reliability.record_response(msg_id, bytes.clone());
+                    session.reliability.record_response(msg_id, bytes.clone());
                 }
-                if let Err(e) = dtls.send_application_data(&bytes) {
+                if let Err(e) = io.dtls.send_application_data(&bytes) {
                     tracing::error!(error = %e, "dtls.send_failed");
                 }
-                drain_packets(dtls, out_buf, socket, socket_addr).await;
+                drain_packets(io).await;
             }
             return;
         }
@@ -228,7 +222,7 @@ pub(super) async fn handle_request<O, S>(
     let mut coap_request = CoapRequest::from_packet(packet, socket_addr);
 
     // RFC 7959: Block1 reassembly / Block2 cache serving
-    match block_handler.intercept_request(&mut coap_request) {
+    match session.block_handler.intercept_request(&mut coap_request) {
         Ok(true) => {
             // Block handler handled it (intermediate Block1 or Block2 cache hit)
             if let Some(ref mut resp) = coap_request.response {
@@ -237,12 +231,9 @@ pub(super) async fn handle_request<O, S>(
                     &request_token,
                     msg_id,
                     is_confirmable,
-                    max_message_size,
-                    dtls,
-                    out_buf,
-                    socket,
-                    socket_addr,
-                    reliability,
+                    config.max_message_size,
+                    io,
+                    &mut session.reliability,
                 )
                 .await;
             }
@@ -256,12 +247,9 @@ pub(super) async fn handle_request<O, S>(
                     &request_token,
                     msg_id,
                     is_confirmable,
-                    max_message_size,
-                    dtls,
-                    out_buf,
-                    socket,
-                    socket_addr,
-                    reliability,
+                    config.max_message_size,
+                    io,
+                    &mut session.reliability,
                 )
                 .await;
             }
@@ -293,12 +281,12 @@ pub(super) async fn handle_request<O, S>(
                         normalized_path
                     );
                     None
-                } else if router.observer_count(identity).await >= max_observers_per_device {
+                } else if router.observer_count(identity).await >= config.max_observers_per_device {
                     tracing::warn!(
                         "Observer registration rejected for '{}' on '{}': limit of {} exceeded",
                         identity,
                         normalized_path,
-                        max_observers_per_device
+                        config.max_observers_per_device
                     );
                     None
                 } else {
@@ -318,7 +306,7 @@ pub(super) async fn handle_request<O, S>(
         (Some(ObserveOption::Deregister), RequestType::Get) => {
             match validate_observer_path(path) {
                 Ok(normalized_path) => {
-                    obs.observer_tokens.remove(&normalized_path);
+                    session.obs.observer_tokens.remove(&normalized_path);
                     if let Err(e) = router.unregister_observer(identity, &normalized_path).await {
                         tracing::error!("Failed to unregister observer: {:?}", e);
                     }
@@ -350,24 +338,26 @@ pub(super) async fn handle_request<O, S>(
                 && !resp.get_status().is_error()
             {
                 if let Err(e) = router
-                    .register_observer(identity, normalized_path, obs_tx.clone())
+                    .register_observer(identity, normalized_path, session.obs_tx.clone())
                     .await
                 {
                     tracing::error!(identity = %identity, path = %normalized_path, error = ?e, "observer.register.failed");
                 } else {
                     tracing::info!(identity = %identity, path = %normalized_path, "observer.registered");
                     // RFC 7252 §5.3.1: Store token for future notifications
-                    obs.observer_tokens
+                    session
+                        .obs
+                        .observer_tokens
                         .insert(normalized_path.clone(), request_token);
-                    obs.sequence = obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
-                    resp.message.set_observe_value(obs.sequence);
+                    session.obs.sequence = session.obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
+                    resp.message.set_observe_value(session.obs.sequence);
                 }
             }
 
             // RFC 7959: Fragment large responses using Block2
             let mut block_req = CoapRequest::from_packet(packet_for_block2, socket_addr);
             block_req.response = Some(resp);
-            if let Err(e) = block_handler.intercept_response(&mut block_req) {
+            if let Err(e) = session.block_handler.intercept_response(&mut block_req) {
                 tracing::error!("Block transfer response error: {}", e.message);
             }
 
@@ -378,11 +368,11 @@ pub(super) async fn handle_request<O, S>(
                 }
 
                 tracing::debug!("Got response: {:?}", resp.message);
-                send_response(dtls, out_buf, socket, socket_addr, resp).await;
+                send_response(io, resp).await;
 
                 // Cache serialized response for deduplication
                 if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
-                    reliability.record_response(msg_id, bytes);
+                    session.reliability.record_response(msg_id, bytes);
                 }
             }
         }

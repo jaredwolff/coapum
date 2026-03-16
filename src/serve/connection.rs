@@ -22,7 +22,7 @@ use tokio::{
 use coap_lite::{BlockHandler, BlockHandlerConfig, Packet};
 
 use super::handlers::{handle_notification, handle_request};
-use super::helpers::{drain_packets, extract_identity};
+use super::helpers::{DtlsIo, drain_packets, extract_identity};
 use super::{ConnectionInfo, ObserveState};
 use crate::{
     config::Config,
@@ -31,6 +31,16 @@ use crate::{
     reliability::{ReliabilityState, RetransmitAction, RetransmitParams},
     router::CoapRouter,
 };
+
+/// Per-connection mutable state that evolves during the session lifetime.
+pub(super) struct SessionState {
+    pub connected: bool,
+    pub identity: Option<String>,
+    pub obs: ObserveState,
+    pub obs_tx: Arc<Sender<ObserverValue>>,
+    pub block_handler: BlockHandler<SocketAddr>,
+    pub reliability: ReliabilityState,
+}
 
 /// Validate connection and implement rate limiting for reconnections.
 ///
@@ -91,43 +101,33 @@ pub(super) async fn manage_connection(
 /// Process DTLS outputs after handle_packet(), handling Connected and ApplicationData events.
 ///
 /// Returns `false` if the connection should be terminated.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn process_outputs<O, S>(
-    dtls: &mut Dtls,
-    out_buf: &mut [u8],
-    socket: &UdpSocket,
-    remote: SocketAddr,
+    io: &mut DtlsIo,
+    session: &mut SessionState,
     resolver: &CapturingResolver<impl CredentialStore>,
-    connected: &mut bool,
-    identity: &mut Option<String>,
     router: &mut CoapRouter<O, S>,
-    obs_tx: &Arc<Sender<ObserverValue>>,
-    obs: &mut ObserveState,
-    block_handler: &mut BlockHandler<SocketAddr>,
-    max_observers_per_device: usize,
     connections: &Mutex<HashMap<String, ConnectionInfo>>,
     disconnect_tx: Sender<()>,
     config: &Config,
-    reliability: &mut ReliabilityState,
 ) -> bool
 where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
     loop {
-        match dtls.poll_output(out_buf) {
+        match io.dtls.poll_output(&mut io.out_buf) {
             Output::Packet(p) => {
-                if let Err(e) = socket.send_to(p, remote).await {
-                    tracing::error!(addr = %remote, error = %e, "udp.send_failed");
+                if let Err(e) = io.socket.send_to(p, io.remote).await {
+                    tracing::error!(addr = %io.remote, error = %e, "udp.send_failed");
                 }
             }
             Output::Connected => {
-                tracing::debug!(addr = %remote, "dtls.connected");
+                tracing::debug!(addr = %io.remote, "dtls.connected");
 
                 let raw_identity = match resolver.take_last_identity() {
                     Some(id) => id,
                     None => {
-                        tracing::error!(addr = %remote, "dtls.no_identity");
+                        tracing::error!(addr = %io.remote, "dtls.no_identity");
                         return false;
                     }
                 };
@@ -139,7 +139,7 @@ where
 
                 if !manage_connection(
                     &validated,
-                    remote,
+                    io.remote,
                     disconnect_tx.clone(),
                     connections,
                     config.min_reconnect_interval,
@@ -150,12 +150,12 @@ where
                     return false;
                 }
 
-                tracing::info!(identity = %validated, addr = %remote, "connection.accepted");
-                *identity = Some(validated);
-                *connected = true;
+                tracing::info!(identity = %validated, addr = %io.remote, "connection.accepted");
+                session.identity = Some(validated);
+                session.connected = true;
             }
             Output::ApplicationData(data) => {
-                if let Some(id) = identity.as_ref() {
+                if session.identity.is_some() {
                     let packet = match Packet::from_bytes(data) {
                         Ok(p) => p,
                         Err(e) => {
@@ -163,27 +163,12 @@ where
                             continue;
                         }
                     };
-                    handle_request(
-                        packet,
-                        remote,
-                        id,
-                        router,
-                        dtls,
-                        out_buf,
-                        socket,
-                        obs_tx,
-                        obs,
-                        block_handler,
-                        config.max_message_size,
-                        max_observers_per_device,
-                        reliability,
-                    )
-                    .await;
+                    handle_request(packet, io, session, router, config).await;
                 }
             }
             Output::ConnectionId(cid) => {
                 tracing::debug!(
-                    addr = %remote,
+                    addr = %io.remote,
                     cid_len = cid.len(),
                     "dtls.connection_id_negotiated"
                 );
@@ -227,20 +212,26 @@ pub(super) async fn connection_task<O, S, C>(
     }
     let dimpl_config = Arc::new(builder.build().expect("valid DTLS config"));
 
-    let mut dtls = Dtls::new_12_psk(dimpl_config, Instant::now());
-    let mut out_buf = vec![0u8; 2048];
-    let mut connected = false;
-    let mut identity: Option<String> = None;
-    let mut current_remote = remote;
+    let mut io = DtlsIo {
+        dtls: Dtls::new_12_psk(dimpl_config, Instant::now()),
+        out_buf: vec![0u8; 2048],
+        socket,
+        remote,
+    };
 
     let (obs_tx, mut obs_rx) = channel::<ObserverValue>(10);
-    let obs_tx = Arc::new(obs_tx);
-    let mut obs = ObserveState::new();
-    let mut reliability = ReliabilityState::new(RetransmitParams::from_config(&config));
-    let mut block_handler = BlockHandler::new(BlockHandlerConfig {
-        max_total_message_size: config.max_message_size,
-        cache_expiry_duration: config.block_cache_expiry,
-    });
+
+    let mut session = SessionState {
+        connected: false,
+        identity: None,
+        obs: ObserveState::new(),
+        obs_tx: Arc::new(obs_tx),
+        block_handler: BlockHandler::new(BlockHandlerConfig {
+            max_total_message_size: config.max_message_size,
+            cache_expiry_duration: config.block_cache_expiry,
+        }),
+        reliability: ReliabilityState::new(RetransmitParams::from_config(&config)),
+    };
 
     let (disconnect_tx, mut disconnect_rx) = channel::<()>(1);
     let timeout_duration = Duration::from_secs(config.timeout);
@@ -264,57 +255,52 @@ pub(super) async fn connection_task<O, S, C>(
             Ok(()) = addr_rx.changed() => {
                 let new_addr = *addr_rx.borrow();
                 tracing::info!(
-                    old_addr = %current_remote,
+                    old_addr = %io.remote,
                     new_addr = %new_addr,
-                    identity = ?identity,
+                    identity = ?session.identity,
                     "connection.address_migrated"
                 );
-                current_remote = new_addr;
+                io.remote = new_addr;
             }
 
             // Incoming DTLS packet from dispatch
             packet = packet_rx.recv() => {
                 let Some(raw) = packet else {
                     // Channel closed — dispatch removed us
-                    tracing::debug!(addr = %current_remote, "connection.channel_closed");
+                    tracing::debug!(addr = %io.remote, "connection.channel_closed");
                     break;
                 };
 
-                if let Err(e) = dtls.handle_packet(&raw) {
-                    tracing::error!(addr = %current_remote, error = %e, "dtls.packet_error");
+                if let Err(e) = io.dtls.handle_packet(&raw) {
+                    tracing::error!(addr = %io.remote, error = %e, "dtls.packet_error");
                     break;
                 }
 
                 if !process_outputs(
-                    &mut dtls, &mut out_buf, &socket, current_remote,
-                    &resolver, &mut connected, &mut identity,
-                    &mut router, &obs_tx, &mut obs, &mut block_handler,
-                    config.max_observers_per_device,
+                    &mut io, &mut session,
+                    &resolver, &mut router,
                     &connections, disconnect_tx.clone(), &config,
-                    &mut reliability,
                 ).await {
                     break;
                 }
             }
 
             // Observer notification
-            Some(value) = obs_rx.recv(), if connected => {
+            Some(value) = obs_rx.recv(), if session.connected => {
                 handle_notification(
-                    value, &mut router, &mut dtls, &mut out_buf,
-                    &socket, current_remote, &mut obs, &mut block_handler,
-                    &mut reliability,
+                    value, &mut router, &mut io, &mut session,
                 ).await;
             }
 
             // Disconnect signal
             _ = disconnect_rx.recv() => {
-                tracing::info!(addr = %current_remote, identity = ?identity, "connection.terminating");
+                tracing::info!(addr = %io.remote, identity = ?session.identity, "connection.terminating");
                 break;
             }
 
             // Idle timeout
             () = &mut dtls_timeout => {
-                tracing::info!(addr = %current_remote, "connection.timeout");
+                tracing::info!(addr = %io.remote, "connection.timeout");
                 break;
             }
 
@@ -326,8 +312,8 @@ pub(super) async fn connection_task<O, S, C>(
                 }
             } => {
                 tracing::info!(
-                    addr = %current_remote,
-                    identity = ?identity,
+                    addr = %io.remote,
+                    identity = ?session.identity,
                     "connection.session_lifetime_exceeded"
                 );
                 break;
@@ -335,27 +321,27 @@ pub(super) async fn connection_task<O, S, C>(
 
             // RFC 7252 §4.2: CON retransmission timer
             () = async {
-                match reliability.next_retransmit_deadline() {
+                match session.reliability.next_retransmit_deadline() {
                     Some(d) => tokio::time::sleep_until(d).await,
                     None => std::future::pending::<()>().await,
                 }
             } => {
-                for action in reliability.process_retransmits() {
+                for action in session.reliability.process_retransmits() {
                     match action {
                         RetransmitAction::Resend { msg_id, ref bytes } => {
                             tracing::debug!(msg_id, "reliability.retransmit");
-                            if let Err(e) = dtls.send_application_data(bytes) {
+                            if let Err(e) = io.dtls.send_application_data(bytes) {
                                 tracing::error!(error = %e, "reliability.retransmit.send_failed");
                                 continue;
                             }
-                            drain_packets(&mut dtls, &mut out_buf, &socket, current_remote).await;
+                            drain_packets(&mut io).await;
                         }
                         RetransmitAction::GiveUp { msg_id } => {
                             tracing::warn!(msg_id, "reliability.give_up");
-                            if let Some(path) = obs.notification_msg_ids.remove(&msg_id)
-                                && let Some(ref id) = identity
+                            if let Some(path) = session.obs.notification_msg_ids.remove(&msg_id)
+                                && let Some(ref id) = session.identity
                             {
-                                obs.observer_tokens.remove(&path);
+                                session.obs.observer_tokens.remove(&path);
                                 let _ = router.unregister_observer(id, &path).await;
                                 tracing::info!(identity = %id, path = %path, "reliability.observer_deregistered");
                             }
@@ -366,22 +352,22 @@ pub(super) async fn connection_task<O, S, C>(
         }
 
         // Drive DTLS retransmit timers after every event
-        if let Err(e) = dtls.handle_timeout(Instant::now()) {
-            tracing::error!(addr = %current_remote, error = %e, "dtls.timeout_error");
+        if let Err(e) = io.dtls.handle_timeout(Instant::now()) {
+            tracing::error!(addr = %io.remote, error = %e, "dtls.timeout_error");
             break;
         }
-        drain_packets(&mut dtls, &mut out_buf, &socket, current_remote).await;
+        drain_packets(&mut io).await;
     }
 
-    // Cleanup: `current_remote` is always the latest address (updated by
+    // Cleanup: `io.remote` is always the latest address (updated by
     // addr_rx on migration). The main loop's migration path already removed
     // the old addr_dispatch entry and inserted the new one, so sending
-    // `current_remote` here correctly removes the active entry.
+    // `io.remote` here correctly removes the active entry.
     conn_count.fetch_sub(1, Ordering::Relaxed);
-    if let Some(ref id) = identity {
+    if let Some(ref id) = session.identity {
         connections.lock().await.remove(id);
         let _ = router.unregister_device(id).await;
-        tracing::info!(identity = %id, addr = %current_remote, "connection.terminated");
+        tracing::info!(identity = %id, addr = %io.remote, "connection.terminated");
     }
-    let _ = cleanup_tx.send((current_remote, cid)).await;
+    let _ = cleanup_tx.send((io.remote, cid)).await;
 }

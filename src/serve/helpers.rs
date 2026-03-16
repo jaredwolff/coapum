@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use dimpl::{Dtls, Output};
 use tokio::net::UdpSocket;
@@ -6,6 +7,14 @@ use tokio::net::UdpSocket;
 use coap_lite::{CoapOption, MessageClass, Packet, ResponseType};
 
 use crate::reliability::ReliabilityState;
+
+/// DTLS engine and the I/O resources needed to send packets.
+pub(super) struct DtlsIo {
+    pub dtls: Dtls,
+    pub out_buf: Vec<u8>,
+    pub socket: Arc<UdpSocket>,
+    pub remote: SocketAddr,
+}
 
 /// Extract and validate PSK identity from raw bytes.
 ///
@@ -76,17 +85,12 @@ pub(super) fn extract_cid(packet: &[u8], cid_len: usize) -> Option<&[u8]> {
 }
 
 /// Drain all pending DTLS output packets and send them over the socket.
-pub(super) async fn drain_packets(
-    dtls: &mut Dtls,
-    out_buf: &mut [u8],
-    socket: &UdpSocket,
-    remote: SocketAddr,
-) {
+pub(super) async fn drain_packets(io: &mut DtlsIo) {
     loop {
-        match dtls.poll_output(out_buf) {
+        match io.dtls.poll_output(&mut io.out_buf) {
             Output::Packet(p) => {
-                if let Err(e) = socket.send_to(p, remote).await {
-                    tracing::error!(addr = %remote, error = %e, "udp.send_failed");
+                if let Err(e) = io.socket.send_to(p, io.remote).await {
+                    tracing::error!(addr = %io.remote, error = %e, "udp.send_failed");
                 }
             }
             Output::Timeout(_) => break,
@@ -96,20 +100,14 @@ pub(super) async fn drain_packets(
 }
 
 /// Send a CoAP response over a DTLS connection.
-pub(super) async fn send_response(
-    dtls: &mut Dtls,
-    out_buf: &mut [u8],
-    socket: &UdpSocket,
-    remote: SocketAddr,
-    resp: &crate::CoapResponse,
-) {
+pub(super) async fn send_response(io: &mut DtlsIo, resp: &crate::CoapResponse) {
     match resp.message.to_bytes() {
         Ok(bytes) => {
-            if let Err(e) = dtls.send_application_data(&bytes) {
+            if let Err(e) = io.dtls.send_application_data(&bytes) {
                 tracing::error!(error = %e, "dtls.send_failed");
                 return;
             }
-            drain_packets(dtls, out_buf, socket, remote).await;
+            drain_packets(io).await;
         }
         Err(e) => tracing::error!("Failed to serialize response: {}", e),
     }
@@ -125,17 +123,13 @@ pub(super) fn add_size1_option(message: &mut Packet, max_message_size: usize) {
 /// Send a block-transfer intercept response: add Size1 for 4.13, echo the
 /// request token, set message ID, piggybacked ACK for CON, send, and cache
 /// for deduplication.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn send_block_intercept_response(
     resp: &mut crate::CoapResponse,
     request_token: &[u8],
     msg_id: u16,
     is_confirmable: bool,
     max_message_size: usize,
-    dtls: &mut Dtls,
-    out_buf: &mut [u8],
-    socket: &UdpSocket,
-    socket_addr: SocketAddr,
+    io: &mut DtlsIo,
     reliability: &mut ReliabilityState,
 ) {
     // RFC 7959 §2.9.1: Include Size1 in 4.13 to indicate max acceptable size
@@ -151,7 +145,7 @@ pub(super) async fn send_block_intercept_response(
             .header
             .set_type(coap_lite::MessageType::Acknowledgement);
     }
-    send_response(dtls, out_buf, socket, socket_addr, resp).await;
+    send_response(io, resp).await;
     // RFC 7252 §4.5: Cache response for deduplication
     if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
         reliability.record_response(msg_id, bytes);

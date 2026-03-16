@@ -45,18 +45,18 @@ struct ConnectionInfo {
 }
 
 /// Per-connection RFC 7641 observe state.
-struct ObserveState {
-    sequence: u32,
-    next_msg_id: u16,
+pub(super) struct ObserveState {
+    pub(super) sequence: u32,
+    pub(super) next_msg_id: u16,
     /// Maps message IDs to observer paths for RST-based deregistration.
-    notification_msg_ids: HashMap<u16, String>,
+    pub(super) notification_msg_ids: HashMap<u16, String>,
     /// RFC 7252 §5.3.1: Maps observer paths to the token from the original
     /// OBSERVE GET so notifications echo the correct token.
-    observer_tokens: HashMap<String, Vec<u8>>,
+    pub(super) observer_tokens: HashMap<String, Vec<u8>>,
 }
 
 impl ObserveState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             sequence: 0,
             next_msg_id: 1,
