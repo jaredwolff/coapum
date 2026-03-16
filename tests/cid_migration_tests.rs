@@ -6,6 +6,11 @@
 //!
 //! **Must run with `--test-threads=1`** to avoid port conflicts from the
 //! bind-drop-rebind pattern used to discover free ports.
+//!
+//! **Firewall note**: These tests use loopback UDP sockets. If your firewall
+//! blocks loopback UDP traffic (common with restrictive iptables/nftables
+//! or corporate endpoint protection), tests will fail with
+//! "DTLS handshake timed out". Ensure 127.0.0.1 UDP is allowed.
 
 use std::{
     collections::HashMap,
