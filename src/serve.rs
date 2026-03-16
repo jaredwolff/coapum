@@ -236,6 +236,40 @@ fn add_size1_option(message: &mut Packet, max_message_size: usize) {
     message.add_option(CoapOption::Size1, bytes[start..].to_vec());
 }
 
+/// Send a block-transfer intercept response: add Size1 for 4.13, echo the
+/// request token, set message ID, piggybacked ACK for CON, send, and cache
+/// for deduplication.
+#[allow(clippy::too_many_arguments)]
+async fn send_block_intercept_response(
+    resp: &mut crate::CoapResponse,
+    request_token: &[u8],
+    msg_id: u16,
+    is_confirmable: bool,
+    max_message_size: usize,
+    dtls: &mut Dtls,
+    out_buf: &mut [u8],
+    socket: &UdpSocket,
+    socket_addr: SocketAddr,
+    reliability: &mut ReliabilityState,
+) {
+    // RFC 7959 §2.9.1: Include Size1 in 4.13 to indicate max acceptable size
+    if resp.message.header.code == MessageClass::Response(ResponseType::RequestEntityTooLarge) {
+        add_size1_option(&mut resp.message, max_message_size);
+    }
+    // RFC 7252 §5.3.1: Echo request token in block transfer responses
+    resp.message.set_token(request_token.to_vec());
+    resp.message.header.message_id = msg_id;
+    // RFC 7252 §5.2.1: Piggybacked ACK for CON block transfer responses
+    if is_confirmable {
+        resp.message.header.set_type(MessageType::Acknowledgement);
+    }
+    send_response(dtls, out_buf, socket, socket_addr, resp).await;
+    // RFC 7252 §4.5: Cache response for deduplication
+    if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
+        reliability.record_response(msg_id, bytes);
+    }
+}
+
 /// Handle an observer notification: route, set RFC 7641 headers, and send.
 #[allow(clippy::too_many_arguments)]
 async fn handle_notification<O, S>(
@@ -451,47 +485,38 @@ async fn handle_request<O, S>(
         Ok(true) => {
             // Block handler handled it (intermediate Block1 or Block2 cache hit)
             if let Some(ref mut resp) = coap_request.response {
-                // RFC 7959 §2.9.1: Include Size1 in 4.13 to indicate max acceptable size
-                if resp.message.header.code
-                    == MessageClass::Response(ResponseType::RequestEntityTooLarge)
-                {
-                    add_size1_option(&mut resp.message, max_message_size);
-                }
-                // RFC 7252 §5.3.1: Echo request token in block transfer responses
-                resp.message.set_token(request_token.clone());
-                resp.message.header.message_id = msg_id;
-                // RFC 7252 §5.2.1: Piggybacked ACK for CON block transfer responses
-                if is_confirmable {
-                    resp.message.header.set_type(MessageType::Acknowledgement);
-                }
-                send_response(dtls, out_buf, socket, socket_addr, resp).await;
-                // RFC 7252 §4.5: Cache response for deduplication
-                if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
-                    reliability.record_response(msg_id, bytes);
-                }
+                send_block_intercept_response(
+                    resp,
+                    &request_token,
+                    msg_id,
+                    is_confirmable,
+                    max_message_size,
+                    dtls,
+                    out_buf,
+                    socket,
+                    socket_addr,
+                    reliability,
+                )
+                .await;
             }
             return;
         }
         Err(e) => {
             tracing::error!("Block transfer error: {}", e.message);
             if let Some(ref mut resp) = coap_request.response {
-                // RFC 7959 §2.9.1: Include Size1 in 4.13 to indicate max acceptable size
-                if resp.message.header.code
-                    == MessageClass::Response(ResponseType::RequestEntityTooLarge)
-                {
-                    add_size1_option(&mut resp.message, max_message_size);
-                }
-                resp.message.set_token(request_token.clone());
-                resp.message.header.message_id = msg_id;
-                // RFC 7252 §5.2.1: Piggybacked ACK for CON block transfer responses
-                if is_confirmable {
-                    resp.message.header.set_type(MessageType::Acknowledgement);
-                }
-                send_response(dtls, out_buf, socket, socket_addr, resp).await;
-                // RFC 7252 §4.5: Cache response for deduplication
-                if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
-                    reliability.record_response(msg_id, bytes);
-                }
+                send_block_intercept_response(
+                    resp,
+                    &request_token,
+                    msg_id,
+                    is_confirmable,
+                    max_message_size,
+                    dtls,
+                    out_buf,
+                    socket,
+                    socket_addr,
+                    reliability,
+                )
+                .await;
             }
             return;
         }
