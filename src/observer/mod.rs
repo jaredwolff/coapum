@@ -9,8 +9,6 @@ pub mod memory;
 pub mod redb;
 #[cfg(feature = "sled-observer")]
 pub mod sled;
-pub mod subscriber;
-
 /// A struct representing an observer value.
 #[derive(Debug, Clone)]
 pub struct ObserverValue {
