@@ -92,6 +92,17 @@ impl Observer for MemObserver {
         Ok(())
     }
 
+    async fn unregister_device_if_owned(
+        &mut self,
+        device_id: &str,
+        owner: &Arc<Sender<ObserverValue>>,
+    ) -> Result<(), Self::Error> {
+        self.channels
+            .unregister_device_if_owned(device_id, owner)
+            .await;
+        Ok(())
+    }
+
     async fn write(
         &mut self,
         device_id: &str,

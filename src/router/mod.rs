@@ -484,6 +484,15 @@ where
         self.db.unregister_device(device_id).await
     }
 
+    /// Unregisters only observers for a device that are owned by the given sender.
+    pub async fn unregister_device_if_owned(
+        &mut self,
+        device_id: &str,
+        owner: &Arc<Sender<ObserverValue>>,
+    ) -> Result<(), O::Error> {
+        self.db.unregister_device_if_owned(device_id, owner).await
+    }
+
     /// Returns the number of observer registrations for a device.
     pub async fn observer_count(&self, device_id: &str) -> usize {
         self.db.observer_count(device_id).await

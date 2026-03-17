@@ -57,6 +57,16 @@ pub trait Observer: Clone + Debug + Send + Sync + 'static {
     async fn unregister_all(&mut self) -> Result<(), Self::Error>;
     /// Unregisters all paths for a specific device.
     async fn unregister_device(&mut self, device_id: &str) -> Result<(), Self::Error>;
+    /// Unregisters only paths for a device that are owned by the given sender.
+    /// Defaults to `unregister_device` for backends that don't track ownership.
+    async fn unregister_device_if_owned(
+        &mut self,
+        device_id: &str,
+        owner: &Arc<Sender<ObserverValue>>,
+    ) -> Result<(), Self::Error> {
+        let _ = owner;
+        self.unregister_device(device_id).await
+    }
     /// Writes a value to a path.
     async fn write(
         &mut self,
@@ -369,6 +379,23 @@ impl ObserverChannels {
         channels.is_empty()
     }
 
+    /// Unregister only observers for a device that are owned by the given sender.
+    /// Returns `true` if all observers for all devices are now empty.
+    pub async fn unregister_device_if_owned(
+        &self,
+        device_id: &str,
+        owner: &Arc<Sender<ObserverValue>>,
+    ) -> bool {
+        let mut channels = self.channels.write().await;
+        if let Some(device_channels) = channels.get_mut(device_id) {
+            device_channels.retain(|_path, sender| !Arc::ptr_eq(sender, owner));
+            if device_channels.is_empty() {
+                channels.remove(device_id);
+            }
+        }
+        channels.is_empty()
+    }
+
     /// Check if there are any registered observers.
     pub async fn is_empty(&self) -> bool {
         self.channels.read().await.is_empty()
@@ -590,5 +617,51 @@ mod tests {
         merge_json(&mut a, &b);
         let expected = serde_json::json!({"test_key": "test_value", "test_key_2": "test_value_2"});
         assert_eq!(a, expected);
+    }
+
+    #[tokio::test]
+    async fn test_unregister_device_if_owned_only_removes_owned() {
+        let channels = ObserverChannels::new();
+
+        let (tx_old, _rx_old) = tokio::sync::mpsc::channel::<ObserverValue>(1);
+        let (tx_new, _rx_new) = tokio::sync::mpsc::channel::<ObserverValue>(1);
+        let old_sender = Arc::new(tx_old);
+        let new_sender = Arc::new(tx_new);
+
+        // Old connection registers on /a
+        channels.register("dev1", "/a", old_sender.clone()).await;
+        // New connection registers on /b
+        channels.register("dev1", "/b", new_sender.clone()).await;
+
+        assert_eq!(channels.device_observer_count("dev1").await, 2);
+
+        // Old connection cleans up — should only remove /a
+        channels
+            .unregister_device_if_owned("dev1", &old_sender)
+            .await;
+
+        assert_eq!(channels.device_observer_count("dev1").await, 1);
+
+        // New connection's registration on /b survives
+        let guard = channels.channels.read().await;
+        let dev = guard.get("dev1").expect("device entry should exist");
+        assert!(dev.contains_key("/b"));
+        assert!(!dev.contains_key("/a"));
+    }
+
+    #[tokio::test]
+    async fn test_unregister_device_if_owned_removes_device_when_all_owned() {
+        let channels = ObserverChannels::new();
+
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ObserverValue>(1);
+        let sender = Arc::new(tx);
+
+        channels.register("dev1", "/a", sender.clone()).await;
+        channels.register("dev1", "/b", sender.clone()).await;
+
+        let all_empty = channels.unregister_device_if_owned("dev1", &sender).await;
+
+        assert!(all_empty);
+        assert_eq!(channels.device_observer_count("dev1").await, 0);
     }
 }
