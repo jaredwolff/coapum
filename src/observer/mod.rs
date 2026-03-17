@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use serde_json::{Value, map::Entry};
+use serde_json::Value;
 use tokio::sync::{RwLock, mpsc::Sender};
 
 pub mod memory;
@@ -272,25 +272,28 @@ pub fn path_to_json(path: &str, value: &Value) -> Value {
     current_value
 }
 
-/// Merges two JSON objects.
+/// Merges two JSON values using RFC 7396 (JSON Merge Patch) semantics.
 ///
-/// # Arguments
-///
-/// * `a` - A mutable reference to a `serde_json::Value` object representing the first JSON object to be merged.
-/// * `b` - A reference to a `serde_json::Value` object representing the second JSON object to be merged.
+/// When the patch is an object, each key is applied recursively.
+/// A `null` value in the patch **removes** the corresponding key from the target.
+/// When the patch is not an object, it replaces the target entirely.
 pub fn merge_json(a: &mut Value, b: &Value) {
-    match (a, b) {
-        (&mut Value::Object(ref mut a), Value::Object(b)) => {
-            for (k, v) in b {
-                match a.entry(k.clone()) {
-                    Entry::Vacant(e) => {
-                        e.insert(v.clone());
-                    }
-                    Entry::Occupied(mut e) => merge_json(e.get_mut(), v),
+    if let Value::Object(patch) = b {
+        if !a.is_object() {
+            *a = Value::Object(serde_json::Map::new());
+        }
+        if let Value::Object(target) = a {
+            for (k, v) in patch {
+                if v.is_null() {
+                    target.remove(k);
+                } else {
+                    let entry = target.entry(k.clone()).or_insert(Value::Null);
+                    merge_json(entry, v);
                 }
             }
         }
-        (a, b) => *a = b.clone(),
+    } else {
+        *a = b.clone();
     }
 }
 
@@ -632,6 +635,38 @@ mod tests {
         merge_json(&mut a, &b);
         let expected = serde_json::json!({"test_key": "test_value", "test_key_2": "test_value_2"});
         assert_eq!(a, expected);
+    }
+
+    #[test]
+    fn test_merge_json_null_deletes_key() {
+        let mut a = serde_json::json!({"a": 1, "b": 2});
+        let b = serde_json::json!({"a": null});
+        merge_json(&mut a, &b);
+        assert_eq!(a, serde_json::json!({"b": 2}));
+    }
+
+    #[test]
+    fn test_merge_json_nested_null_deletes() {
+        let mut a = serde_json::json!({"outer": {"keep": 1, "remove": 2}});
+        let b = serde_json::json!({"outer": {"remove": null}});
+        merge_json(&mut a, &b);
+        assert_eq!(a, serde_json::json!({"outer": {"keep": 1}}));
+    }
+
+    #[test]
+    fn test_merge_json_non_object_target() {
+        let mut a = serde_json::json!("string_value");
+        let b = serde_json::json!({"key": "val"});
+        merge_json(&mut a, &b);
+        assert_eq!(a, serde_json::json!({"key": "val"}));
+    }
+
+    #[test]
+    fn test_merge_json_null_patch_replaces() {
+        let mut a = serde_json::json!({"a": 1});
+        let b = Value::Null;
+        merge_json(&mut a, &b);
+        assert_eq!(a, Value::Null);
     }
 
     #[tokio::test]
