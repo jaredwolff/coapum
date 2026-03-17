@@ -286,6 +286,52 @@ impl Observer for RedbObserver {
         Ok(())
     }
 
+    async fn write_replace(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), Self::Error> {
+        let new_value = super::path_to_json(path, payload);
+
+        // Phase 1: Read existing value for diffing (blocking DB read)
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        let current_value =
+            tokio::task::spawn_blocking(move || -> Result<Value, RedbObserverError> {
+                let read_txn = db.begin_read()?;
+                let table = read_txn.open_table(DATA_TABLE)?;
+                if let Some(stored_value) = table.get(did.as_str())? {
+                    Ok(serde_json::from_str::<Value>(stored_value.value()).unwrap_or(Value::Null))
+                } else {
+                    Ok(Value::Null)
+                }
+            })
+            .await??;
+
+        // Notify observers of changes
+        self.channels
+            .notify(device_id, &current_value, &new_value)
+            .await;
+
+        // Phase 2: Write new value (blocking DB write)
+        let db = self.db.clone();
+        let did = device_id.to_string();
+        let value_str = serde_json::to_string(&new_value)?;
+        tokio::task::spawn_blocking(move || -> Result<(), RedbObserverError> {
+            let write_txn = db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(DATA_TABLE)?;
+                table.insert(did.as_str(), value_str.as_str())?;
+            }
+            write_txn.commit()?;
+            Ok(())
+        })
+        .await??;
+
+        Ok(())
+    }
+
     async fn read(&mut self, device_id: &str, path: &str) -> Result<Option<Value>, Self::Error> {
         let db = self.db.clone();
         let did = device_id.to_string();

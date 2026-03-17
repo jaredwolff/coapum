@@ -135,6 +135,24 @@ impl Observer for MemObserver {
         Ok(())
     }
 
+    async fn write_replace(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), Self::Error> {
+        let new_value = super::path_to_json(path, payload);
+        let current_value = self.db.get(device_id).cloned().unwrap_or(Value::Null);
+
+        self.channels
+            .notify(device_id, &current_value, &new_value)
+            .await;
+
+        self.db.insert(device_id.to_string(), new_value);
+
+        Ok(())
+    }
+
     async fn read(&mut self, device_id: &str, path: &str) -> Result<Option<Value>, Self::Error> {
         match self.db.get(device_id) {
             Some(value) => {

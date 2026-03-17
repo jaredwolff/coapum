@@ -67,8 +67,15 @@ pub trait Observer: Clone + Debug + Send + Sync + 'static {
         let _ = owner;
         self.unregister_device(device_id).await
     }
-    /// Writes a value to a path.
+    /// Writes a value to a path, merging with any existing value.
     async fn write(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+    ) -> Result<(), Self::Error>;
+    /// Writes a value to a path, fully replacing any existing value (no merge).
+    async fn write_replace(
         &mut self,
         device_id: &str,
         path: &str,
@@ -120,6 +127,14 @@ impl Observer for () {
         Ok(())
     }
     async fn write(
+        &mut self,
+        _device_id: &str,
+        _path: &str,
+        _payload: &Value,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    async fn write_replace(
         &mut self,
         _device_id: &str,
         _path: &str,

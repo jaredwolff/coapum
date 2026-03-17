@@ -65,6 +65,17 @@ where
         self.observer.write(device_id, path, payload).await
     }
 
+    /// Trigger a notification that fully replaces the stored value (no merge).
+    /// Use when the payload represents the complete state, not a partial update.
+    pub async fn trigger_notification_replace(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), O::Error> {
+        self.observer.write_replace(device_id, path, payload).await
+    }
+
     /// Trigger an ephemeral notification that always fires, even if the
     /// payload is identical to the previous value. Does not persist state.
     pub async fn trigger_notification_ephemeral(
