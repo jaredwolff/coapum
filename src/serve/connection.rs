@@ -29,7 +29,7 @@ use crate::{
     credential::{CredentialStore, resolver::CapturingResolver},
     observer::{Observer, ObserverValue},
     reliability::{ReliabilityState, RetransmitAction, RetransmitParams},
-    router::CoapRouter,
+    router::{CoapRouter, DeviceEvent},
 };
 
 /// Per-connection mutable state that evolves during the session lifetime.
@@ -151,6 +151,10 @@ where
                 }
 
                 tracing::info!(identity = %validated, addr = %io.remote, "connection.accepted");
+                router.emit_device_event(DeviceEvent::Connected {
+                    device_id: validated.clone(),
+                    addr: io.remote,
+                });
                 session.identity = Some(validated);
                 session.connected = true;
             }
@@ -365,6 +369,10 @@ pub(super) async fn connection_task<O, S, C>(
     // `io.remote` here correctly removes the active entry.
     conn_count.fetch_sub(1, Ordering::Relaxed);
     if let Some(ref id) = session.identity {
+        router.emit_device_event(DeviceEvent::Disconnected {
+            device_id: id.clone(),
+            addr: io.remote,
+        });
         connections.lock().await.remove(id);
         let _ = router.unregister_device_if_owned(id, &session.obs_tx).await;
         tracing::info!(identity = %id, addr = %io.remote, "connection.terminated");

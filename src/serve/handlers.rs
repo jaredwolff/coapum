@@ -13,7 +13,7 @@ use crate::{
     config::Config,
     observer::{Observer, ObserverValue, validate_observer_path},
     reliability::DedupResult,
-    router::{CoapRouter, CoapumRequest},
+    router::{CoapRouter, CoapumRequest, DeviceEvent},
 };
 
 /// Handle an observer notification: route, set RFC 7641 headers, and send.
@@ -163,6 +163,10 @@ pub(super) async fn handle_request<O, S>(
                 }
                 drain_packets(io).await;
             }
+            router.emit_device_event(DeviceEvent::Ping {
+                device_id: identity.to_string(),
+                addr: socket_addr,
+            });
         } else {
             tracing::debug!(msg_id, "ignoring NON empty message");
         }

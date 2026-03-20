@@ -27,6 +27,29 @@ pub mod wrapper;
 
 pub type RouterError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+/// Events emitted when devices interact with the server.
+///
+/// Subscribe via [`RouterBuilder::enable_device_events`] or
+/// [`CoapRouter::enable_device_events`].
+///
+/// Events are only emitted for successfully authenticated sessions.
+/// Every `Connected` event will eventually be followed by exactly one
+/// `Disconnected` for the same `device_id`. No events are emitted for
+/// connections that fail before identity validation completes.
+#[derive(Debug, Clone)]
+pub enum DeviceEvent {
+    /// CoAP ping (empty CON) received from a device.
+    Ping { device_id: String, addr: SocketAddr },
+    /// DTLS handshake completed and identity validated.
+    Connected { device_id: String, addr: SocketAddr },
+    /// Connection terminated (timeout, disconnect, or error).
+    ///
+    /// Note: `addr` reflects the device's address at disconnect time, which
+    /// may differ from the `Connected` address if CID-based address migration
+    /// (RFC 9146) occurred during the session.
+    Disconnected { device_id: String, addr: SocketAddr },
+}
+
 /// Type alias for complex state update function type
 type StateUpdateFn<S> = Box<dyn FnOnce(&mut S) + Send + 'static>;
 
@@ -437,6 +460,8 @@ where
     db: O,
     // Channel for external state updates
     state_update_sender: Option<StateUpdateSender<S>>,
+    // Channel for device lifecycle events (ping, connect, disconnect)
+    device_event_sender: Option<mpsc::Sender<DeviceEvent>>,
 }
 
 /// Provides methods for creating a new CoapRouter, registering and unregistering observers,
@@ -458,6 +483,7 @@ where
             state: Arc::new(RwLock::new(state)),
             db,
             state_update_sender: None,
+            device_event_sender: None,
         }
     }
 
@@ -608,6 +634,24 @@ where
         self.state_update_sender
             .as_ref()
             .map(|sender| StateUpdateHandle::new(sender.clone()))
+    }
+
+    /// Enable device lifecycle events (ping, connect, disconnect).
+    ///
+    /// Returns a receiver that the application can consume. Events are sent
+    /// via `try_send` so a slow consumer never blocks the server — events are
+    /// silently dropped when the channel buffer is full.
+    pub fn enable_device_events(&mut self, buffer_size: usize) -> mpsc::Receiver<DeviceEvent> {
+        let (sender, receiver) = mpsc::channel(buffer_size.max(1));
+        self.device_event_sender = Some(sender);
+        receiver
+    }
+
+    /// Emit a device event if the channel is enabled.
+    pub(crate) fn emit_device_event(&self, event: DeviceEvent) {
+        if let Some(ref sender) = self.device_event_sender {
+            let _ = sender.try_send(event);
+        }
     }
 
     /// Adds a route handler for a given route.
@@ -914,6 +958,13 @@ where
     /// Returns None if enable_state_updates() has not been called.
     pub fn state_update_handle(&self) -> Option<StateUpdateHandle<S>> {
         self.router.state_update_handle()
+    }
+
+    /// Enable device lifecycle events (ping, connect, disconnect).
+    ///
+    /// See [`CoapRouter::enable_device_events`] for details.
+    pub fn enable_device_events(&mut self, buffer_size: usize) -> mpsc::Receiver<DeviceEvent> {
+        self.router.enable_device_events(buffer_size)
     }
 
     /// Get a mutable reference to the underlying router for advanced usage
