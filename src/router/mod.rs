@@ -50,6 +50,27 @@ pub enum DeviceEvent {
     Disconnected { device_id: String, addr: SocketAddr },
 }
 
+/// Events emitted during Block2 (blockwise) transfers.
+///
+/// Subscribe via [`RouterBuilder::enable_block_transfer_events`] or
+/// [`CoapRouter::enable_block_transfer_events`].
+///
+/// `total_bytes` is `Some` only on the first block (num=0) since subsequent
+/// blocks are served from an opaque cache. Consumers should stash the total
+/// from the first event.
+#[derive(Debug, Clone)]
+pub enum BlockTransferEvent {
+    /// A Block2 response fragment was sent to the client.
+    BlockSent {
+        identity: String,
+        path: String,
+        block_num: u16,
+        block_size: usize,
+        total_bytes: Option<usize>,
+        more: bool,
+    },
+}
+
 /// Type alias for complex state update function type
 type StateUpdateFn<S> = Box<dyn FnOnce(&mut S) + Send + 'static>;
 
@@ -462,6 +483,8 @@ where
     state_update_sender: Option<StateUpdateSender<S>>,
     // Channel for device lifecycle events (ping, connect, disconnect)
     device_event_sender: Option<mpsc::Sender<DeviceEvent>>,
+    // Channel for Block2 transfer progress events
+    block_transfer_event_sender: Option<mpsc::Sender<BlockTransferEvent>>,
 }
 
 /// Provides methods for creating a new CoapRouter, registering and unregistering observers,
@@ -484,6 +507,7 @@ where
             db,
             state_update_sender: None,
             device_event_sender: None,
+            block_transfer_event_sender: None,
         }
     }
 
@@ -649,8 +673,33 @@ where
 
     /// Emit a device event if the channel is enabled.
     pub(crate) fn emit_device_event(&self, event: DeviceEvent) {
-        if let Some(ref sender) = self.device_event_sender {
-            let _ = sender.try_send(event);
+        if let Some(ref sender) = self.device_event_sender
+            && let Err(e) = sender.try_send(event)
+        {
+            tracing::warn!("device_event.send_failed: {}", e);
+        }
+    }
+
+    /// Enable Block2 transfer progress events.
+    ///
+    /// Returns a receiver that the application can consume. Events are sent
+    /// via `try_send` so a slow consumer never blocks the server — events are
+    /// silently dropped when the channel buffer is full.
+    pub fn enable_block_transfer_events(
+        &mut self,
+        buffer_size: usize,
+    ) -> mpsc::Receiver<BlockTransferEvent> {
+        let (sender, receiver) = mpsc::channel(buffer_size.max(1));
+        self.block_transfer_event_sender = Some(sender);
+        receiver
+    }
+
+    /// Emit a block transfer event if the channel is enabled.
+    pub(crate) fn emit_block_transfer_event(&self, event: BlockTransferEvent) {
+        if let Some(ref sender) = self.block_transfer_event_sender
+            && let Err(e) = sender.try_send(event)
+        {
+            tracing::warn!("block_transfer_event.send_failed: {}", e);
         }
     }
 
@@ -965,6 +1014,16 @@ where
     /// See [`CoapRouter::enable_device_events`] for details.
     pub fn enable_device_events(&mut self, buffer_size: usize) -> mpsc::Receiver<DeviceEvent> {
         self.router.enable_device_events(buffer_size)
+    }
+
+    /// Enable Block2 transfer progress events on the router.
+    ///
+    /// See [`CoapRouter::enable_block_transfer_events`] for details.
+    pub fn enable_block_transfer_events(
+        &mut self,
+        buffer_size: usize,
+    ) -> mpsc::Receiver<BlockTransferEvent> {
+        self.router.enable_block_transfer_events(buffer_size)
     }
 
     /// Get a mutable reference to the underlying router for advanced usage

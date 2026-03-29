@@ -29,8 +29,8 @@ pub use observer::{
     path_to_json, validate_observer_path,
 };
 pub use router::{
-    ClientManager, ClientManagerError, ClientMetadata, DeviceEvent, NotificationTrigger,
-    RouterBuilder, StateUpdateError, StateUpdateHandle,
+    BlockTransferEvent, ClientManager, ClientManagerError, ClientMetadata, DeviceEvent,
+    NotificationTrigger, RouterBuilder, StateUpdateError, StateUpdateHandle,
 };
 
 // Re-export CoAP types

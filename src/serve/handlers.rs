@@ -4,7 +4,7 @@ use tower::Service;
 
 use coap_lite::{
     CoapOption, CoapRequest, ContentFormat, MessageClass, MessageType, ObserveOption, Packet,
-    RequestType, ResponseType,
+    RequestType, ResponseType, block_handler::BlockValue,
 };
 
 use super::connection::SessionState;
@@ -13,7 +13,7 @@ use crate::{
     config::Config,
     observer::{Observer, ObserverValue, validate_observer_path},
     reliability::DedupResult,
-    router::{CoapRouter, CoapumRequest, DeviceEvent},
+    router::{BlockTransferEvent, CoapRouter, CoapumRequest, DeviceEvent},
 };
 
 /// Handle an observer notification: route, set RFC 7641 headers, and send.
@@ -73,7 +73,7 @@ pub(super) async fn handle_notification<O, S>(
             session
                 .obs
                 .notification_msg_ids
-                .insert(msg_id, notification_path);
+                .insert(msg_id, notification_path.clone());
 
             // Bound tracking map to prevent unbounded growth
             if session.obs.notification_msg_ids.len() > 256 {
@@ -94,6 +94,7 @@ pub(super) async fn handle_notification<O, S>(
             // RFC 7959: Fragment large notification payloads using Block2
             let mut block_req = CoapRequest::from_packet(resp.message.clone(), io.remote);
             block_req.response = Some(resp);
+            let total_payload_bytes = block_req.response.as_ref().map(|r| r.message.payload.len());
             if let Err(e) = session.block_handler.intercept_response(&mut block_req) {
                 tracing::error!("Block notification error: {}", e.message);
             }
@@ -103,6 +104,22 @@ pub(super) async fn handle_notification<O, S>(
                 // Track for retransmission if CON
                 if confirmable && let Ok(bytes) = resp.message.to_bytes() {
                     session.reliability.track_outgoing_con(msg_id, bytes);
+                }
+
+                // Emit Block2 event for block 0 if notification was fragmented
+                if let Some(Ok(block_val)) = resp
+                    .message
+                    .get_first_option_as::<BlockValue>(CoapOption::Block2)
+                    && let Some(ref id) = session.identity
+                {
+                    router.emit_block_transfer_event(BlockTransferEvent::BlockSent {
+                        identity: id.clone(),
+                        path: notification_path.clone(),
+                        block_num: block_val.num,
+                        block_size: block_val.size(),
+                        total_bytes: total_payload_bytes,
+                        more: block_val.more,
+                    });
                 }
             }
         }
@@ -240,6 +257,21 @@ pub(super) async fn handle_request<O, S>(
                     &mut session.reliability,
                 )
                 .await;
+
+                // Emit Block2 progress event for cache-served blocks
+                if let Some(Ok(block_val)) = resp
+                    .message
+                    .get_first_option_as::<BlockValue>(CoapOption::Block2)
+                {
+                    router.emit_block_transfer_event(BlockTransferEvent::BlockSent {
+                        identity: identity.to_string(),
+                        path: coap_request.get_path(),
+                        block_num: block_val.num,
+                        block_size: block_val.size(),
+                        total_bytes: None,
+                        more: block_val.more,
+                    });
+                }
             }
             return;
         }
@@ -268,7 +300,7 @@ pub(super) async fn handle_request<O, S>(
     let mut request: CoapumRequest<SocketAddr> = coap_request.into();
     request.identity = identity.to_string();
 
-    let path = request.get_path();
+    let path = request.get_path().clone();
     let observe_flag = *request.get_observe_flag();
     let method = *request.get_method();
 
@@ -276,7 +308,7 @@ pub(super) async fn handle_request<O, S>(
     // Registration is deferred until after handler succeeds (RFC 7641 §3.1:
     // the observe option in the response confirms registration).
     let pending_observe = match (observe_flag, method) {
-        (Some(ObserveOption::Register), RequestType::Get) => match validate_observer_path(path) {
+        (Some(ObserveOption::Register), RequestType::Get) => match validate_observer_path(&path) {
             Ok(normalized_path) => {
                 if !router.has_observe_route(&normalized_path) {
                     tracing::warn!(
@@ -308,7 +340,7 @@ pub(super) async fn handle_request<O, S>(
             }
         },
         (Some(ObserveOption::Deregister), RequestType::Get) => {
-            match validate_observer_path(path) {
+            match validate_observer_path(&path) {
                 Ok(normalized_path) => {
                     session.obs.observer_tokens.remove(&normalized_path);
                     if let Err(e) = router.unregister_observer(identity, &normalized_path).await {
@@ -361,6 +393,8 @@ pub(super) async fn handle_request<O, S>(
             // RFC 7959: Fragment large responses using Block2
             let mut block_req = CoapRequest::from_packet(packet_for_block2, socket_addr);
             block_req.response = Some(resp);
+            // Capture total payload size before fragmentation
+            let total_payload_bytes = block_req.response.as_ref().map(|r| r.message.payload.len());
             if let Err(e) = session.block_handler.intercept_response(&mut block_req) {
                 tracing::error!("Block transfer response error: {}", e.message);
             }
@@ -377,6 +411,21 @@ pub(super) async fn handle_request<O, S>(
                 // Cache serialized response for deduplication
                 if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
                     session.reliability.record_response(msg_id, bytes);
+                }
+
+                // Emit Block2 event for block 0 if fragmentation occurred
+                if let Some(Ok(block_val)) = resp
+                    .message
+                    .get_first_option_as::<BlockValue>(CoapOption::Block2)
+                {
+                    router.emit_block_transfer_event(BlockTransferEvent::BlockSent {
+                        identity: identity.to_string(),
+                        path: path.clone(),
+                        block_num: block_val.num,
+                        block_size: block_val.size(),
+                        total_bytes: total_payload_bytes,
+                        more: block_val.more,
+                    });
                 }
             }
         }
