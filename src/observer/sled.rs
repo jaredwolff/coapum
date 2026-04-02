@@ -1,7 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use async_trait::async_trait;
-use serde_json::Value;
+use ciborium::value::Value;
 use tokio::sync::mpsc::{Sender, channel};
 
 use super::{Observer, ObserverChannels, ObserverValue};
@@ -27,7 +27,7 @@ impl SledObserver {
 #[derive(Debug)]
 pub enum SledObserverError {
     SledError(sled::Error),
-    JsonError(serde_json::Error),
+    CborError(String),
     IdNotSet,
     TaskJoinError(String),
 }
@@ -36,7 +36,7 @@ impl fmt::Display for SledObserverError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             SledObserverError::SledError(err) => write!(f, "Sled error: {}", err),
-            SledObserverError::JsonError(err) => write!(f, "JSON error: {}", err),
+            SledObserverError::CborError(err) => write!(f, "CBOR error: {}", err),
             SledObserverError::IdNotSet => write!(f, "Device ID must be set before use!"),
             SledObserverError::TaskJoinError(msg) => write!(f, "Task join error: {}", msg),
         }
@@ -47,7 +47,7 @@ impl std::error::Error for SledObserverError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             SledObserverError::SledError(err) => Some(err),
-            SledObserverError::JsonError(err) => Some(err),
+            SledObserverError::CborError(_) => None,
             SledObserverError::IdNotSet => None,
             SledObserverError::TaskJoinError(_) => None,
         }
@@ -66,10 +66,15 @@ impl From<sled::Error> for SledObserverError {
     }
 }
 
-impl From<serde_json::Error> for SledObserverError {
-    fn from(err: serde_json::Error) -> SledObserverError {
-        SledObserverError::JsonError(err)
-    }
+fn cbor_serialize(value: &Value) -> Result<Vec<u8>, SledObserverError> {
+    let mut buf = Vec::new();
+    ciborium::into_writer(value, &mut buf)
+        .map_err(|e| SledObserverError::CborError(e.to_string()))?;
+    Ok(buf)
+}
+
+fn cbor_deserialize(bytes: &[u8]) -> Result<Value, SledObserverError> {
+    ciborium::de::from_reader(bytes).map_err(|e| SledObserverError::CborError(e.to_string()))
 }
 
 #[async_trait]
@@ -171,7 +176,7 @@ impl Observer for SledObserver {
         path: &str,
         payload: &Value,
     ) -> Result<(), Self::Error> {
-        let new_value = super::path_to_json(path, payload);
+        let new_value = super::path_to_cbor(path, payload);
 
         tracing::debug!("New value: {:?} for path: {}", new_value, path);
 
@@ -182,16 +187,16 @@ impl Observer for SledObserver {
         let (value, current_value) = tokio::task::spawn_blocking(move || {
             let mut current_value = Value::Null;
             let value = if let Ok(Some(stored_value)) = db.get(did.as_bytes()) {
-                match serde_json::from_slice::<Value>(&stored_value) {
+                match cbor_deserialize(&stored_value) {
                     Ok(stored_value) => {
                         current_value = stored_value.clone();
                         let mut merged_value = stored_value;
-                        super::merge_json(&mut merged_value, &nv);
+                        super::merge_cbor(&mut merged_value, &nv);
                         tracing::debug!("Merged value: {:?}", merged_value);
                         merged_value
                     }
                     Err(e) => {
-                        tracing::warn!("Unable to serialize. Err: {}", e);
+                        tracing::warn!("Unable to deserialize. Err: {}", e);
                         nv
                     }
                 }
@@ -212,7 +217,7 @@ impl Observer for SledObserver {
         let did = device_id.to_string();
         let val = value.clone();
         tokio::task::spawn_blocking(move || -> Result<(), SledObserverError> {
-            let v = serde_json::to_vec(&val)?;
+            let v = cbor_serialize(&val)?;
             db.insert(did.as_bytes(), v)?;
             tracing::debug!("Value successfully written to sled");
             Ok(())
@@ -228,14 +233,14 @@ impl Observer for SledObserver {
         path: &str,
         payload: &Value,
     ) -> Result<(), Self::Error> {
-        let new_value = super::path_to_json(path, payload);
+        let new_value = super::path_to_cbor(path, payload);
 
         // Phase 1: Read existing value for diffing (blocking DB read)
         let db = self.db.clone();
         let did = device_id.to_string();
         let current_value = tokio::task::spawn_blocking(move || {
             if let Ok(Some(stored_value)) = db.get(did.as_bytes()) {
-                serde_json::from_slice::<Value>(&stored_value).unwrap_or(Value::Null)
+                cbor_deserialize(&stored_value).unwrap_or(Value::Null)
             } else {
                 Value::Null
             }
@@ -252,7 +257,7 @@ impl Observer for SledObserver {
         let did = device_id.to_string();
         let val = new_value;
         tokio::task::spawn_blocking(move || -> Result<(), SledObserverError> {
-            let v = serde_json::to_vec(&val)?;
+            let v = cbor_serialize(&val)?;
             db.insert(did.as_bytes(), v)?;
             Ok(())
         })
@@ -268,9 +273,9 @@ impl Observer for SledObserver {
         tokio::task::spawn_blocking(move || -> Result<Option<Value>, SledObserverError> {
             match db.get(did.as_bytes()) {
                 Ok(Some(value)) => {
-                    let value: Value = serde_json::from_slice(&value)?;
+                    let value: Value = cbor_deserialize(&value)?;
                     tracing::debug!("Got value: {:?}", value);
-                    let pointer_value = value.pointer(&p).cloned();
+                    let pointer_value = super::cbor_pointer(&value, &p).cloned();
                     tracing::debug!("Pointer value: {:?}", pointer_value);
                     Ok(pointer_value)
                 }
@@ -317,10 +322,18 @@ impl Observer for SledObserver {
 mod tests {
     use std::time::Duration;
 
-    use serde_json::json;
     use tokio::time::sleep;
 
     use super::*;
+
+    fn cbor_map(pairs: &[(&str, Value)]) -> Value {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
+                .collect(),
+        )
+    }
 
     #[tokio::test]
     async fn test_sled_observer_write_and_read() {
@@ -334,20 +347,18 @@ mod tests {
 
         observer.clear("123").await.unwrap();
 
+        let test_val = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
+
         observer
-            .write("123", "/test_path", &json!({"test_key": "test_value"}))
+            .write("123", "/test_path", &test_val)
             .await
             .unwrap();
 
         let result = observer.read("123", "/test_path").await.unwrap();
-        assert_eq!(result, Some(json!({"test_key": "test_value"})));
+        assert_eq!(result, Some(test_val.clone()));
 
         observer
-            .write(
-                "123",
-                "/test_path/second_level",
-                &json!({"test_key": "test_value"}),
-            )
+            .write("123", "/test_path/second_level", &test_val)
             .await
             .unwrap();
 
@@ -355,12 +366,15 @@ mod tests {
             .read("123", "/test_path/second_level")
             .await
             .unwrap();
-        assert_eq!(result, Some(json!({"test_key": "test_value"})));
+        assert_eq!(result, Some(test_val.clone()));
 
         let result = observer.read("123", "/test_path").await.unwrap();
         assert_eq!(
             result,
-            Some(json!({"test_key": "test_value", "second_level": {"test_key": "test_value"}}))
+            Some(cbor_map(&[
+                ("test_key", Value::Text("test_value".into())),
+                ("second_level", test_val.clone()),
+            ]))
         );
     }
 
@@ -378,9 +392,10 @@ mod tests {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<ObserverValue>(10);
 
+        let expected = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
         let fut = tokio::spawn(async move {
             if let Some(r) = rx.recv().await {
-                assert_eq!(r.value, json!({"test_key": "test_value"}));
+                assert_eq!(r.value, expected);
                 assert_eq!(r.path, "/observe_and_write".to_string());
             }
         });
@@ -392,23 +407,23 @@ mod tests {
             .await
             .unwrap();
 
+        let test_val = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
         observer
-            .write(
-                "123",
-                "/observe_and_write",
-                &json!({"test_key": "test_value"}),
-            )
+            .write("123", "/observe_and_write", &test_val)
             .await
             .unwrap();
 
         observer
-            .write("123", "/observe", &json!({"test": "mest"}))
+            .write(
+                "123",
+                "/observe",
+                &cbor_map(&[("test", Value::Text("mest".into()))]),
+            )
             .await
             .unwrap();
 
         fut.await.unwrap();
 
-        // Unregister
         observer
             .unregister("123", "/observe_and_write")
             .await
@@ -421,7 +436,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Unregister all
         observer.unregister_all().await.unwrap();
         assert!(observer.channels.is_empty().await);
         assert!(observer.channel.is_none());

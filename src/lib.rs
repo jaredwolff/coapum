@@ -25,8 +25,8 @@ pub use extract::{
 };
 pub use handler::{Handler, HandlerFn, into_handler};
 pub use observer::{
-    Observer, ObserverChannels, ObserverRequest, ObserverValue, PathValidationError, merge_json,
-    path_to_json, validate_observer_path,
+    Observer, ObserverChannels, ObserverRequest, ObserverValue, PathValidationError, cbor_pointer,
+    merge_cbor, path_to_cbor, validate_observer_path,
 };
 pub use router::{
     BlockTransferEvent, ClientManager, ClientManagerError, ClientMetadata, DeviceEvent,

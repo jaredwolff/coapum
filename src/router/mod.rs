@@ -3,9 +3,9 @@
 //! This module provides both the core router functionality and an improved routing API
 //! that allows for more ergonomic registration of handlers with automatic parameter extraction.
 
+use ciborium::value::Value;
 use coap_lite::{CoapRequest, CoapResponse, ObserveOption, Packet, RequestType, ResponseType};
 use route_recognizer::Router;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Debug;
@@ -104,7 +104,7 @@ where
         &mut self,
         device_id: &str,
         path: &str,
-        payload: &serde_json::Value,
+        payload: &Value,
     ) -> Result<(), O::Error> {
         self.observer.write(device_id, path, payload).await
     }
@@ -115,7 +115,7 @@ where
         &mut self,
         device_id: &str,
         path: &str,
-        payload: &serde_json::Value,
+        payload: &Value,
     ) -> Result<(), O::Error> {
         self.observer.write_replace(device_id, path, payload).await
     }
@@ -126,7 +126,7 @@ where
         &mut self,
         device_id: &str,
         path: &str,
-        payload: &serde_json::Value,
+        payload: &Value,
     ) -> Result<(), O::Error> {
         self.observer.notify(device_id, path, payload).await
     }
@@ -1239,7 +1239,10 @@ mod tests {
         let state = TestState { counter: 0 };
         let mut router = CoapRouter::new(state, ());
 
-        let payload = serde_json::json!({"value": 25});
+        let payload = Value::Map(vec![(
+            Value::Text("value".into()),
+            Value::Integer(25.into()),
+        )]);
         let write_result = router
             .backend_write("device123", "/temperature", &payload)
             .await;

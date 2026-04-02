@@ -3,12 +3,21 @@ mod redb_integration_tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use serde_json::json;
+    use ciborium::value::Value;
     use tempfile::NamedTempFile;
     use tokio::sync::mpsc;
     use tokio::time::sleep;
 
     use coapum::observer::{Observer, ObserverValue, redb::RedbObserver};
+
+    fn cbor_map(pairs: &[(&str, Value)]) -> Value {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
+                .collect(),
+        )
+    }
 
     // Named constants for test timing
     const REGISTRATION_DELAY: Duration = Duration::from_millis(100);
@@ -23,26 +32,26 @@ mod redb_integration_tests {
         let temp_file = NamedTempFile::new().unwrap();
         let db_path = temp_file.path().to_str().unwrap();
 
+        let temp_val = cbor_map(&[
+            ("value", Value::Float(25.5)),
+            ("unit", Value::Text("C".into())),
+        ]);
+        let settings_val = cbor_map(&[
+            ("enabled", Value::Bool(true)),
+            ("mode", Value::Text("auto".into())),
+        ]);
+
         // First, write some data
         {
             let mut observer = RedbObserver::new(db_path).unwrap();
 
-            // Write data
             observer
-                .write(
-                    "device_1",
-                    "/sensor/temperature",
-                    &json!({"value": 25.5, "unit": "C"}),
-                )
+                .write("device_1", "/sensor/temperature", &temp_val)
                 .await
                 .unwrap();
 
             observer
-                .write(
-                    "device_2",
-                    "/config/settings",
-                    &json!({"enabled": true, "mode": "auto"}),
-                )
+                .write("device_2", "/config/settings", &settings_val)
                 .await
                 .unwrap();
         }
@@ -51,15 +60,14 @@ mod redb_integration_tests {
         {
             let mut observer = RedbObserver::new(db_path).unwrap();
 
-            // Read back the data
             let temp = observer
                 .read("device_1", "/sensor/temperature")
                 .await
                 .unwrap();
-            assert_eq!(temp, Some(json!({"value": 25.5, "unit": "C"})));
+            assert_eq!(temp, Some(temp_val));
 
             let settings = observer.read("device_2", "/config/settings").await.unwrap();
-            assert_eq!(settings, Some(json!({"enabled": true, "mode": "auto"})));
+            assert_eq!(settings, Some(settings_val));
         }
 
         // temp_file is automatically cleaned up when dropped
@@ -102,31 +110,35 @@ mod redb_integration_tests {
         // Wait a bit for registrations to take effect
         sleep(REGISTRATION_DELAY).await;
 
+        let status_val = cbor_map(&[("online", Value::Bool(true))]);
+        let data_val = cbor_map(&[("value", Value::Integer(42.into()))]);
+        let config_val = cbor_map(&[("mode", Value::Text("test".into()))]);
+
         // Write to each device
         observer
-            .write("device_1", "/status", &json!({"online": true}))
+            .write("device_1", "/status", &status_val)
             .await
             .unwrap();
         observer
-            .write("device_2", "/data", &json!({"value": 42}))
+            .write("device_2", "/data", &data_val)
             .await
             .unwrap();
         observer
-            .write("device_3", "/config", &json!({"mode": "test"}))
+            .write("device_3", "/config", &config_val)
             .await
             .unwrap();
 
         // Verify each observer received its notification
         let msg1 = rx1.recv().await.unwrap();
-        assert_eq!(msg1.value, json!({"online": true}));
+        assert_eq!(msg1.value, status_val);
         assert_eq!(msg1.path, "/status");
 
         let msg2 = rx2.recv().await.unwrap();
-        assert_eq!(msg2.value, json!({"value": 42}));
+        assert_eq!(msg2.value, data_val);
         assert_eq!(msg2.path, "/data");
 
         let msg3 = rx3.recv().await.unwrap();
-        assert_eq!(msg3.value, json!({"mode": "test"}));
+        assert_eq!(msg3.value, config_val);
         assert_eq!(msg3.path, "/config");
 
         // Clean up
@@ -152,21 +164,31 @@ mod redb_integration_tests {
             .write(
                 "device_1",
                 "/",
-                &json!({
-                    "sensors": {
-                        "temperature": {
-                            "value": 25.0,
-                            "unit": "C"
-                        },
-                        "humidity": {
-                            "value": 60,
-                            "unit": "%"
-                        }
-                    },
-                    "config": {
-                        "interval": 1000
-                    }
-                }),
+                &cbor_map(&[
+                    (
+                        "sensors",
+                        cbor_map(&[
+                            (
+                                "temperature",
+                                cbor_map(&[
+                                    ("value", Value::Float(25.0)),
+                                    ("unit", Value::Text("C".into())),
+                                ]),
+                            ),
+                            (
+                                "humidity",
+                                cbor_map(&[
+                                    ("value", Value::Integer(60.into())),
+                                    ("unit", Value::Text("%".into())),
+                                ]),
+                            ),
+                        ]),
+                    ),
+                    (
+                        "config",
+                        cbor_map(&[("interval", Value::Integer(1000.into()))]),
+                    ),
+                ]),
             )
             .await
             .unwrap();
@@ -176,20 +198,30 @@ mod redb_integration_tests {
             .read("device_1", "/sensors/temperature")
             .await
             .unwrap();
-        assert_eq!(temp, Some(json!({"value": 25.0, "unit": "C"})));
+        assert_eq!(
+            temp,
+            Some(cbor_map(&[
+                ("value", Value::Float(25.0)),
+                ("unit", Value::Text("C".into())),
+            ]))
+        );
 
         let humidity = observer
             .read("device_1", "/sensors/humidity/value")
             .await
             .unwrap();
-        assert_eq!(humidity, Some(json!(60)));
+        assert_eq!(humidity, Some(Value::Integer(60.into())));
 
         let interval = observer.read("device_1", "/config/interval").await.unwrap();
-        assert_eq!(interval, Some(json!(1000)));
+        assert_eq!(interval, Some(Value::Integer(1000.into())));
 
         // Update a nested value
         observer
-            .write("device_1", "/sensors/temperature/value", &json!(26.5))
+            .write(
+                "device_1",
+                "/sensors/temperature/value",
+                &Value::Float(26.5),
+            )
             .await
             .unwrap();
 
@@ -198,14 +230,17 @@ mod redb_integration_tests {
             .read("device_1", "/sensors/temperature/value")
             .await
             .unwrap();
-        assert_eq!(new_temp, Some(json!(26.5)));
+        assert_eq!(new_temp, Some(Value::Float(26.5)));
 
         // Verify the structure is preserved
         let all_sensors = observer.read("device_1", "/sensors").await.unwrap();
         assert!(all_sensors.is_some());
         let sensors = all_sensors.unwrap();
-        assert_eq!(sensors["temperature"]["value"], json!(26.5));
-        assert_eq!(sensors["humidity"]["value"], json!(60));
+        // Navigate with cbor_pointer
+        let temp_val = coapum::cbor_pointer(&sensors, "/temperature/value");
+        assert_eq!(temp_val, Some(&Value::Float(26.5)));
+        let hum_val = coapum::cbor_pointer(&sensors, "/humidity/value");
+        assert_eq!(hum_val, Some(&Value::Integer(60.into())));
 
         // temp_file is automatically cleaned up when dropped
     }
@@ -228,17 +263,15 @@ mod redb_integration_tests {
             let handle = tokio::spawn(async move {
                 // Each task writes to its own device
                 let device_id = format!("device_{}", i);
-                obs.write(
-                    &device_id,
-                    "/value",
-                    &json!({"task_id": i, "timestamp": i * 100}),
-                )
-                .await
-                .unwrap();
+                let val = cbor_map(&[
+                    ("task_id", Value::Integer(i.into())),
+                    ("timestamp", Value::Integer((i * 100).into())),
+                ]);
+                obs.write(&device_id, "/value", &val).await.unwrap();
 
                 // Read back to verify
                 let value = obs.read(&device_id, "/value").await.unwrap();
-                assert_eq!(value, Some(json!({"task_id": i, "timestamp": i * 100})));
+                assert_eq!(value, Some(val));
             });
             handles.push(handle);
         }
@@ -250,10 +283,14 @@ mod redb_integration_tests {
 
         // Verify all data is present via fresh clone
         let mut observer = observer.clone();
-        for i in 0..5 {
+        for i in 0..5i64 {
             let device_id = format!("device_{}", i);
             let value = observer.read(&device_id, "/value").await.unwrap();
-            assert_eq!(value, Some(json!({"task_id": i, "timestamp": i * 100})));
+            let expected = cbor_map(&[
+                ("task_id", Value::Integer(i.into())),
+                ("timestamp", Value::Integer((i * 100).into())),
+            ]);
+            assert_eq!(value, Some(expected));
         }
 
         // temp_file is automatically cleaned up when dropped

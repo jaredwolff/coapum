@@ -313,7 +313,7 @@ async fn test_observe_push_notification_via_database_write() {
     }
 
     // Write to observer database - this should trigger a push notification
-    let temp_json = serde_json::to_value(&new_temp).unwrap();
+    let temp_json = coapum::helper::to_cbor_value(&new_temp);
     println!("Writing to observer database with path: temperature/sensor2");
     println!("Device ID: {}", IDENTITY);
     println!("Writing value: {:?}", temp_json);
@@ -465,7 +465,7 @@ async fn test_observe_deregistration() {
         temps.insert("sensor3".to_string(), new_temp.clone());
     }
 
-    let temp_json = serde_json::to_value(&new_temp).unwrap();
+    let temp_json = coapum::helper::to_cbor_value(&new_temp);
     println!("Attempting write after deregistration to path: /temperature/sensor3");
     println!("Using device ID: {}", IDENTITY);
 
@@ -510,7 +510,16 @@ async fn test_debug_path_format() {
         .unwrap();
 
     // Write to the same path
-    let test_data = serde_json::json!({"value": 25.0, "unit": "C"});
+    let test_data = ciborium::value::Value::Map(vec![
+        (
+            ciborium::value::Value::Text("value".into()),
+            ciborium::value::Value::Float(25.0),
+        ),
+        (
+            ciborium::value::Value::Text("unit".into()),
+            ciborium::value::Value::Text("C".into()),
+        ),
+    ]);
     println!("Writing to path: {} with data: {:?}", test_path, test_data);
 
     observer

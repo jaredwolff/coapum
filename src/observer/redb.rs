@@ -1,15 +1,15 @@
 use std::{fmt, sync::Arc};
 
 use async_trait::async_trait;
+use ciborium::value::Value;
 use futures::future;
 use redb::ReadableDatabase;
-use serde_json::Value;
 use tokio::sync::mpsc::{Sender, channel};
 
 use super::{Observer, ObserverChannels, ObserverValue};
 
-// Table definition for storing device data
-const DATA_TABLE: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("device_data");
+// Table definition for storing device data as CBOR bytes
+const DATA_TABLE: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("device_data");
 
 #[derive(Clone, Debug)]
 pub struct RedbObserver {
@@ -47,7 +47,7 @@ pub enum RedbObserverError {
     TableError(redb::TableError),
     StorageError(redb::StorageError),
     CommitError(redb::CommitError),
-    JsonError(serde_json::Error),
+    CborError(String),
     IdNotSet,
     TaskJoinError(String),
 }
@@ -60,7 +60,7 @@ impl fmt::Display for RedbObserverError {
             RedbObserverError::TableError(err) => write!(f, "Table error: {}", err),
             RedbObserverError::StorageError(err) => write!(f, "Storage error: {}", err),
             RedbObserverError::CommitError(err) => write!(f, "Commit error: {}", err),
-            RedbObserverError::JsonError(err) => write!(f, "JSON error: {}", err),
+            RedbObserverError::CborError(err) => write!(f, "CBOR error: {}", err),
             RedbObserverError::IdNotSet => write!(f, "Device ID must be set before use"),
             RedbObserverError::TaskJoinError(msg) => write!(f, "Task join error: {}", msg),
         }
@@ -75,7 +75,7 @@ impl std::error::Error for RedbObserverError {
             RedbObserverError::TableError(err) => Some(err),
             RedbObserverError::StorageError(err) => Some(err),
             RedbObserverError::CommitError(err) => Some(err),
-            RedbObserverError::JsonError(err) => Some(err),
+            RedbObserverError::CborError(_) => None,
             RedbObserverError::IdNotSet => None,
             RedbObserverError::TaskJoinError(_) => None,
         }
@@ -118,10 +118,15 @@ impl From<redb::CommitError> for RedbObserverError {
     }
 }
 
-impl From<serde_json::Error> for RedbObserverError {
-    fn from(err: serde_json::Error) -> RedbObserverError {
-        RedbObserverError::JsonError(err)
-    }
+fn cbor_serialize(value: &Value) -> Result<Vec<u8>, RedbObserverError> {
+    let mut buf = Vec::new();
+    ciborium::into_writer(value, &mut buf)
+        .map_err(|e| RedbObserverError::CborError(e.to_string()))?;
+    Ok(buf)
+}
+
+fn cbor_deserialize(bytes: &[u8]) -> Result<Value, RedbObserverError> {
+    ciborium::de::from_reader(bytes).map_err(|e| RedbObserverError::CborError(e.to_string()))
 }
 
 #[async_trait]
@@ -224,7 +229,7 @@ impl Observer for RedbObserver {
         path: &str,
         payload: &Value,
     ) -> Result<(), Self::Error> {
-        let new_value = super::path_to_json(path, payload);
+        let new_value = super::path_to_cbor(path, payload);
 
         tracing::debug!("New value: {:?} for path: {}", new_value, path);
 
@@ -240,12 +245,12 @@ impl Observer for RedbObserver {
                     let table = read_txn.open_table(DATA_TABLE)?;
 
                     if let Some(stored_value) = table.get(did.as_str())? {
-                        let stored_str = stored_value.value();
-                        match serde_json::from_str::<Value>(stored_str) {
+                        let stored_bytes = stored_value.value();
+                        match cbor_deserialize(stored_bytes) {
                             Ok(stored_value) => {
                                 current_value = stored_value.clone();
                                 let mut merged_value = stored_value;
-                                super::merge_json(&mut merged_value, &nv);
+                                super::merge_cbor(&mut merged_value, &nv);
                                 tracing::debug!("Merged value: {:?}", merged_value);
                                 merged_value
                             }
@@ -270,12 +275,12 @@ impl Observer for RedbObserver {
         // Phase 3: Write merged value back (blocking DB write)
         let db = self.db.clone();
         let did = device_id.to_string();
-        let value_str = serde_json::to_string(&value)?;
+        let cbor_bytes = cbor_serialize(&value)?;
         tokio::task::spawn_blocking(move || -> Result<(), RedbObserverError> {
             let write_txn = db.begin_write()?;
             {
                 let mut table = write_txn.open_table(DATA_TABLE)?;
-                table.insert(did.as_str(), value_str.as_str())?;
+                table.insert(did.as_str(), cbor_bytes.as_slice())?;
             }
             write_txn.commit()?;
             tracing::debug!("Value successfully written to redb");
@@ -292,7 +297,7 @@ impl Observer for RedbObserver {
         path: &str,
         payload: &Value,
     ) -> Result<(), Self::Error> {
-        let new_value = super::path_to_json(path, payload);
+        let new_value = super::path_to_cbor(path, payload);
 
         // Phase 1: Read existing value for diffing (blocking DB read)
         let db = self.db.clone();
@@ -302,7 +307,7 @@ impl Observer for RedbObserver {
                 let read_txn = db.begin_read()?;
                 let table = read_txn.open_table(DATA_TABLE)?;
                 if let Some(stored_value) = table.get(did.as_str())? {
-                    Ok(serde_json::from_str::<Value>(stored_value.value()).unwrap_or(Value::Null))
+                    Ok(cbor_deserialize(stored_value.value()).unwrap_or(Value::Null))
                 } else {
                     Ok(Value::Null)
                 }
@@ -317,12 +322,12 @@ impl Observer for RedbObserver {
         // Phase 2: Write new value (blocking DB write)
         let db = self.db.clone();
         let did = device_id.to_string();
-        let value_str = serde_json::to_string(&new_value)?;
+        let cbor_bytes = cbor_serialize(&new_value)?;
         tokio::task::spawn_blocking(move || -> Result<(), RedbObserverError> {
             let write_txn = db.begin_write()?;
             {
                 let mut table = write_txn.open_table(DATA_TABLE)?;
-                table.insert(did.as_str(), value_str.as_str())?;
+                table.insert(did.as_str(), cbor_bytes.as_slice())?;
             }
             write_txn.commit()?;
             Ok(())
@@ -342,10 +347,9 @@ impl Observer for RedbObserver {
 
             match table.get(did.as_str())? {
                 Some(value) => {
-                    let value_str = value.value();
-                    let value: Value = serde_json::from_str(value_str)?;
+                    let value: Value = cbor_deserialize(value.value())?;
                     tracing::debug!("Got value for path");
-                    let pointer_value = value.pointer(&p).cloned();
+                    let pointer_value = super::cbor_pointer(&value, &p).cloned();
                     tracing::debug!("Pointer value: {:?}", pointer_value);
                     Ok(pointer_value)
                 }
@@ -393,10 +397,18 @@ impl Observer for RedbObserver {
 mod tests {
     use std::time::Duration;
 
-    use serde_json::json;
     use tokio::time::sleep;
 
     use super::*;
+
+    fn cbor_map(pairs: &[(&str, Value)]) -> Value {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
+                .collect(),
+        )
+    }
 
     #[tokio::test]
     async fn test_redb_observer_write_and_read() {
@@ -410,20 +422,18 @@ mod tests {
 
         observer.clear("123").await.unwrap();
 
+        let test_val = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
+
         observer
-            .write("123", "/test_path", &json!({"test_key": "test_value"}))
+            .write("123", "/test_path", &test_val)
             .await
             .unwrap();
 
         let result = observer.read("123", "/test_path").await.unwrap();
-        assert_eq!(result, Some(json!({"test_key": "test_value"})));
+        assert_eq!(result, Some(test_val.clone()));
 
         observer
-            .write(
-                "123",
-                "/test_path/second_level",
-                &json!({"test_key": "test_value"}),
-            )
+            .write("123", "/test_path/second_level", &test_val)
             .await
             .unwrap();
 
@@ -431,12 +441,15 @@ mod tests {
             .read("123", "/test_path/second_level")
             .await
             .unwrap();
-        assert_eq!(result, Some(json!({"test_key": "test_value"})));
+        assert_eq!(result, Some(test_val.clone()));
 
         let result = observer.read("123", "/test_path").await.unwrap();
         assert_eq!(
             result,
-            Some(json!({"test_key": "test_value", "second_level": {"test_key": "test_value"}}))
+            Some(cbor_map(&[
+                ("test_key", Value::Text("test_value".into())),
+                ("second_level", test_val.clone()),
+            ]))
         );
     }
 
@@ -454,9 +467,10 @@ mod tests {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<ObserverValue>(10);
 
+        let expected = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
         let fut = tokio::spawn(async move {
             if let Some(r) = rx.recv().await {
-                assert_eq!(r.value, json!({"test_key": "test_value"}));
+                assert_eq!(r.value, expected);
                 assert_eq!(r.path, "/observe_and_write".to_string());
             }
         });
@@ -468,23 +482,23 @@ mod tests {
             .await
             .unwrap();
 
+        let test_val = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
         observer
-            .write(
-                "123",
-                "/observe_and_write",
-                &json!({"test_key": "test_value"}),
-            )
+            .write("123", "/observe_and_write", &test_val)
             .await
             .unwrap();
 
         observer
-            .write("123", "/observe", &json!({"test": "mest"}))
+            .write(
+                "123",
+                "/observe",
+                &cbor_map(&[("test", Value::Text("mest".into()))]),
+            )
             .await
             .unwrap();
 
         fut.await.unwrap();
 
-        // Unregister
         observer
             .unregister("123", "/observe_and_write")
             .await
@@ -497,7 +511,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Unregister all
         observer.unregister_all().await.unwrap();
         assert!(observer.channels.is_empty().await);
         assert!(observer.channel.is_none());

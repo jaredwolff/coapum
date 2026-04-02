@@ -94,6 +94,16 @@ pub fn convert_json_to_cbor(json: &str) -> Result<Vec<u8>, Box<dyn std::error::E
     Ok(buffer)
 }
 
+/// Converts a serializable value into a `ciborium::Value` via a CBOR round-trip.
+///
+/// Useful for callers who have a `Serialize` type (e.g. a struct) and need to pass
+/// it to the observer system which operates on `ciborium::Value`.
+pub fn to_cbor_value<T: serde::Serialize>(val: &T) -> CborValue {
+    let mut buf = Vec::new();
+    ciborium::into_writer(val, &mut buf).expect("CBOR serialization failed");
+    ciborium::de::from_reader(&buf[..]).expect("CBOR deserialization failed")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

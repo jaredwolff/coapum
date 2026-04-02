@@ -11,9 +11,9 @@ use coapum::{
     serve,
 };
 
+use ciborium::value::Value;
 use coap_lite::ObserveOption;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use serde_json::json;
 use tokio::sync::Mutex;
 
 const PSK: &[u8] = b"bench_push_notification_key";
@@ -139,7 +139,10 @@ fn push_notification_latency(c: &mut Criterion) {
     c.bench_function("push_notification_e2e", |b| {
         b.iter(|| {
             counter += 1;
-            let payload = json!({"value": counter as f64});
+            let payload = Value::Map(vec![(
+                Value::Text("value".into()),
+                Value::Float(counter as f64),
+            )]);
 
             rt.block_on(async {
                 fixture
@@ -250,7 +253,10 @@ fn push_throughput(c: &mut Criterion) {
             |b, &_n| {
                 b.iter(|| {
                     counter += 1;
-                    let payload = json!({"value": counter as f64});
+                    let payload = Value::Map(vec![(
+                        Value::Text("value".into()),
+                        Value::Float(counter as f64),
+                    )]);
 
                     rt.block_on(async {
                         // Fire all notifications

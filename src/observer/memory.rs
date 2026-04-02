@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use serde_json::Value;
+use ciborium::value::Value;
 use tokio::sync::mpsc::Sender;
 
 use super::{Observer, ObserverChannels, ObserverValue};
@@ -109,7 +109,7 @@ impl Observer for MemObserver {
         path: &str,
         payload: &Value,
     ) -> Result<(), Self::Error> {
-        let new_value = super::path_to_json(path, payload);
+        let new_value = super::path_to_cbor(path, payload);
 
         tracing::debug!("New value: {:?} for path: {}", new_value, path);
 
@@ -117,7 +117,7 @@ impl Observer for MemObserver {
 
         let value = if current_value != Value::Null {
             let mut merged_value = current_value.clone();
-            super::merge_json(&mut merged_value, &new_value);
+            super::merge_cbor(&mut merged_value, &new_value);
             tracing::debug!("Merged value: {:?}", merged_value);
             merged_value
         } else {
@@ -141,7 +141,7 @@ impl Observer for MemObserver {
         path: &str,
         payload: &Value,
     ) -> Result<(), Self::Error> {
-        let new_value = super::path_to_json(path, payload);
+        let new_value = super::path_to_cbor(path, payload);
         let current_value = self.db.get(device_id).cloned().unwrap_or(Value::Null);
 
         self.channels
@@ -157,7 +157,7 @@ impl Observer for MemObserver {
         match self.db.get(device_id) {
             Some(value) => {
                 tracing::debug!("Got value: {:?}", value);
-                let pointer_value = value.pointer(path).cloned();
+                let pointer_value = super::cbor_pointer(value, path).cloned();
                 tracing::debug!("Pointer value: {:?}", pointer_value);
                 Ok(pointer_value)
             }
@@ -191,10 +191,18 @@ impl Observer for MemObserver {
 mod tests {
     use std::time::Duration;
 
-    use serde_json::json;
     use tokio::time::sleep;
 
     use super::*;
+
+    fn cbor_map(pairs: &[(&str, Value)]) -> Value {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
+                .collect(),
+        )
+    }
 
     lazy_static! {
         // Create test DB
@@ -202,7 +210,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sled_observer_write_and_read() {
+    async fn test_mem_observer_write_and_read() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
@@ -212,58 +220,56 @@ mod tests {
         // Clear
         observer.clear("123").await.unwrap();
 
+        let test_val = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
+
         // Write data to path
         observer
-            .write("123", "/test_path", &json!({"test_key": "test_value"}))
+            .write("123", "/test_path", &test_val)
             .await
             .unwrap();
 
         // Read the path
         let result = observer.read("123", "/test_path").await.unwrap();
-        assert_eq!(result, Some(json!({"test_key": "test_value"})));
+        assert_eq!(result, Some(test_val.clone()));
 
-        // Write data to path
+        // Write data to nested path
         observer
-            .write(
-                "123",
-                "/test_path/second_level",
-                &json!({"test_key": "test_value"}),
-            )
+            .write("123", "/test_path/second_level", &test_val)
             .await
             .unwrap();
 
-        // Read the path
+        // Read the nested path
         let result = observer
             .read("123", "/test_path/second_level")
             .await
             .unwrap();
-        assert_eq!(result, Some(json!({"test_key": "test_value"})));
+        assert_eq!(result, Some(test_val.clone()));
 
         let result = observer.read("123", "/test_path").await.unwrap();
         assert_eq!(
             result,
-            Some(json!({"test_key": "test_value", "second_level": {"test_key": "test_value"}}))
+            Some(cbor_map(&[
+                ("test_key", Value::Text("test_value".into())),
+                ("second_level", test_val.clone()),
+            ]))
         );
     }
 
     #[tokio::test]
-    async fn test_sled_observer_observe_and_write() {
+    async fn test_mem_observer_observe_and_write() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        // Create test DB
         let mut observer = OBSERVER.clone();
-
-        // Clear before work
         observer.clear("123").await.unwrap();
 
-        // Channel and register
         let (tx, mut rx) = tokio::sync::mpsc::channel::<ObserverValue>(10);
 
+        let expected = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
         let fut = tokio::spawn(async move {
             if let Some(r) = rx.recv().await {
-                assert_eq!(r.value, json!({"test_key": "test_value"}));
+                assert_eq!(r.value, expected);
                 assert_eq!(r.path, "/observe_and_write".to_string());
             }
         });
@@ -275,24 +281,23 @@ mod tests {
             .await
             .unwrap();
 
-        // Write data to path
+        let test_val = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
         observer
-            .write(
-                "123",
-                "/observe_and_write",
-                &json!({"test_key": "test_value"}),
-            )
+            .write("123", "/observe_and_write", &test_val)
             .await
             .unwrap();
 
         observer
-            .write("123", "/observe", &json!({"test": "mest"}))
+            .write(
+                "123",
+                "/observe",
+                &cbor_map(&[("test", Value::Text("mest".into()))]),
+            )
             .await
             .unwrap();
 
         fut.await.unwrap();
 
-        // Unregister
         observer
             .unregister("123", "/observe_and_write")
             .await
@@ -304,7 +309,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Unregister all
         observer.unregister_all().await.unwrap();
         assert!(observer.channels.is_empty().await);
     }
@@ -320,11 +324,9 @@ mod tests {
             .await
             .unwrap();
 
-        let payload = json!({"action": "reboot"});
+        let payload = cbor_map(&[("action", Value::Text("reboot".into()))]);
 
-        // First notify
         observer.notify("dev1", "/cmd", &payload).await.unwrap();
-        // Second notify with identical payload — must still arrive
         observer.notify("dev1", "/cmd", &payload).await.unwrap();
 
         let first = rx.recv().await.expect("first notification");

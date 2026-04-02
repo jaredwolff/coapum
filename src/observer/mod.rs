@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use serde_json::Value;
+use ciborium::value::Value;
 use tokio::sync::{RwLock, mpsc::Sender};
 
 pub mod memory;
@@ -248,53 +248,73 @@ pub fn validate_observer_path(path: &str) -> Result<String, PathValidationError>
     }
 }
 
-/// Converts a path and value to a JSON object.
+/// Wraps a value in nested CBOR maps according to the given path.
 ///
-/// # Arguments
-///
-/// * `path` - A string slice representing the path to be converted.
-/// * `value` - A reference to a `serde_json::Value` object representing the value to be converted.
-///
-/// # Returns
-///
-/// A `serde_json::Value` object representing the JSON object created from the path and value.
-pub fn path_to_json(path: &str, value: &Value) -> Value {
+/// For example, `path_to_cbor("a/b", val)` produces `{"a": {"b": val}}`.
+pub fn path_to_cbor(path: &str, value: &Value) -> Value {
     let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     let mut current_value = value.clone();
 
     for component in components.into_iter().rev() {
-        let mut obj = HashMap::new();
-        obj.insert(component.to_string(), current_value);
-        current_value = serde_json::json!(obj);
+        current_value = Value::Map(vec![(Value::Text(component.to_string()), current_value)]);
     }
 
     current_value
 }
 
-/// Merges two JSON values using RFC 7396 (JSON Merge Patch) semantics.
+/// Merges two CBOR values using RFC 7396 (JSON Merge Patch) semantics.
 ///
-/// When the patch is an object, each key is applied recursively.
-/// A `null` value in the patch **removes** the corresponding key from the target.
-/// When the patch is not an object, it replaces the target entirely.
-pub fn merge_json(a: &mut Value, b: &Value) {
-    if let Value::Object(patch) = b {
-        if !a.is_object() {
-            *a = Value::Object(serde_json::Map::new());
+/// When the patch is a map, each key is applied recursively.
+/// A `Null` value in the patch **removes** the corresponding key from the target.
+/// When the patch is not a map, it replaces the target entirely.
+pub fn merge_cbor(a: &mut Value, b: &Value) {
+    if let Value::Map(patch) = b {
+        if !matches!(a, Value::Map(_)) {
+            *a = Value::Map(Vec::new());
         }
-        if let Value::Object(target) = a {
-            for (k, v) in patch {
-                if v.is_null() {
-                    target.remove(k);
+        if let Value::Map(target) = a {
+            for (pk, pv) in patch {
+                let key_text = match pk {
+                    Value::Text(s) => s,
+                    _ => continue, // skip non-text keys
+                };
+                if matches!(pv, Value::Null) {
+                    target.retain(|(k, _)| k != pk);
+                } else if let Some((_, existing)) = target
+                    .iter_mut()
+                    .find(|(k, _)| matches!(k, Value::Text(s) if s == key_text))
+                {
+                    merge_cbor(existing, pv);
                 } else {
-                    let entry = target.entry(k.clone()).or_insert(Value::Null);
-                    merge_json(entry, v);
+                    target.push((pk.clone(), pv.clone()));
                 }
             }
         }
     } else {
         *a = b.clone();
     }
+}
+
+/// Traverses a CBOR value using a JSON Pointer (RFC 6901) path.
+///
+/// Returns a reference to the value at the given path, or `None` if the path
+/// does not exist. Only `Value::Map` with `Value::Text` keys are traversed.
+pub fn cbor_pointer<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut current = value;
+    for segment in segments {
+        match current {
+            Value::Map(entries) => {
+                current = entries
+                    .iter()
+                    .find(|(k, _)| matches!(k, Value::Text(s) if s == segment))
+                    .map(|(_, v)| v)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(current)
 }
 
 // Type aliases for observer channel management.
@@ -496,9 +516,9 @@ impl ObserverChannels {
         );
 
         for (obs_path, sender) in device_channels.iter() {
-            let json_pointer = normalize_json_pointer(obs_path);
-            let current_at_path = current_value.pointer(&json_pointer);
-            let incoming_at_path = new_value.pointer(&json_pointer);
+            let pointer = normalize_pointer(obs_path);
+            let current_at_path = cbor_pointer(current_value, &pointer);
+            let incoming_at_path = cbor_pointer(new_value, &pointer);
 
             if current_at_path != incoming_at_path {
                 tracing::debug!(
@@ -507,7 +527,7 @@ impl ObserverChannels {
                     device_id
                 );
 
-                let notification_value = match incoming_at_path {
+                let notification_value: Value = match incoming_at_path {
                     Some(value) => value.clone(),
                     None => Value::Null,
                 };
@@ -544,7 +564,7 @@ impl ObserverChannels {
 }
 
 /// Normalizes a path to JSON pointer format by ensuring it starts with '/'.
-fn normalize_json_pointer(path: &str) -> String {
+fn normalize_pointer(path: &str) -> String {
     if path.starts_with('/') {
         path.to_string()
     } else if path.is_empty() {
@@ -620,53 +640,95 @@ mod tests {
         );
     }
 
+    /// Helper to build a CBOR map from string-keyed pairs.
+    fn cbor_map(pairs: &[(&str, Value)]) -> Value {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
+                .collect(),
+        )
+    }
+
     #[test]
-    fn test_path_to_json() {
-        let value = serde_json::json!({"test_key": "test_value"});
-        let result = path_to_json("test/path", &value);
-        let expected = serde_json::json!({"test": {"path": {"test_key": "test_value"}}});
+    fn test_path_to_cbor() {
+        let value = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
+        let result = path_to_cbor("test/path", &value);
+        let expected = cbor_map(&[(
+            "test",
+            cbor_map(&[(
+                "path",
+                cbor_map(&[("test_key", Value::Text("test_value".into()))]),
+            )]),
+        )]);
         assert_eq!(result, expected);
     }
 
     #[test]
-    fn test_merge_json() {
-        let mut a = serde_json::json!({"test_key": "test_value"});
-        let b = serde_json::json!({"test_key_2": "test_value_2"});
-        merge_json(&mut a, &b);
-        let expected = serde_json::json!({"test_key": "test_value", "test_key_2": "test_value_2"});
+    fn test_merge_cbor() {
+        let mut a = cbor_map(&[("test_key", Value::Text("test_value".into()))]);
+        let b = cbor_map(&[("test_key_2", Value::Text("test_value_2".into()))]);
+        merge_cbor(&mut a, &b);
+        let expected = cbor_map(&[
+            ("test_key", Value::Text("test_value".into())),
+            ("test_key_2", Value::Text("test_value_2".into())),
+        ]);
         assert_eq!(a, expected);
     }
 
     #[test]
-    fn test_merge_json_null_deletes_key() {
-        let mut a = serde_json::json!({"a": 1, "b": 2});
-        let b = serde_json::json!({"a": null});
-        merge_json(&mut a, &b);
-        assert_eq!(a, serde_json::json!({"b": 2}));
+    fn test_merge_cbor_null_deletes_key() {
+        let mut a = cbor_map(&[
+            ("a", Value::Integer(1.into())),
+            ("b", Value::Integer(2.into())),
+        ]);
+        let b = cbor_map(&[("a", Value::Null)]);
+        merge_cbor(&mut a, &b);
+        assert_eq!(a, cbor_map(&[("b", Value::Integer(2.into()))]));
     }
 
     #[test]
-    fn test_merge_json_nested_null_deletes() {
-        let mut a = serde_json::json!({"outer": {"keep": 1, "remove": 2}});
-        let b = serde_json::json!({"outer": {"remove": null}});
-        merge_json(&mut a, &b);
-        assert_eq!(a, serde_json::json!({"outer": {"keep": 1}}));
+    fn test_merge_cbor_nested_null_deletes() {
+        let mut a = cbor_map(&[(
+            "outer",
+            cbor_map(&[
+                ("keep", Value::Integer(1.into())),
+                ("remove", Value::Integer(2.into())),
+            ]),
+        )]);
+        let b = cbor_map(&[("outer", cbor_map(&[("remove", Value::Null)]))]);
+        merge_cbor(&mut a, &b);
+        assert_eq!(
+            a,
+            cbor_map(&[("outer", cbor_map(&[("keep", Value::Integer(1.into()))]))])
+        );
     }
 
     #[test]
-    fn test_merge_json_non_object_target() {
-        let mut a = serde_json::json!("string_value");
-        let b = serde_json::json!({"key": "val"});
-        merge_json(&mut a, &b);
-        assert_eq!(a, serde_json::json!({"key": "val"}));
+    fn test_merge_cbor_non_map_target() {
+        let mut a = Value::Text("string_value".into());
+        let b = cbor_map(&[("key", Value::Text("val".into()))]);
+        merge_cbor(&mut a, &b);
+        assert_eq!(a, cbor_map(&[("key", Value::Text("val".into()))]));
     }
 
     #[test]
-    fn test_merge_json_null_patch_replaces() {
-        let mut a = serde_json::json!({"a": 1});
+    fn test_merge_cbor_null_patch_replaces() {
+        let mut a = cbor_map(&[("a", Value::Integer(1.into()))]);
         let b = Value::Null;
-        merge_json(&mut a, &b);
+        merge_cbor(&mut a, &b);
         assert_eq!(a, Value::Null);
+    }
+
+    #[test]
+    fn test_cbor_pointer() {
+        let value = cbor_map(&[("sensors", cbor_map(&[("temp", Value::Integer(23.into()))]))]);
+        assert_eq!(
+            cbor_pointer(&value, "/sensors/temp"),
+            Some(&Value::Integer(23.into()))
+        );
+        assert_eq!(cbor_pointer(&value, "/sensors/missing"), None);
+        assert_eq!(cbor_pointer(&value, "/missing"), None);
     }
 
     #[tokio::test]
