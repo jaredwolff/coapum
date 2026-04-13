@@ -254,7 +254,7 @@ jobs:
           echo "- Consider announcing on social media or Rust forums"
 
       - name: Create tracking issue for next release
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const version = '${{ needs.validate.outputs.version_number }}';
