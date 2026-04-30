@@ -1,9 +1,11 @@
 mod client_mgmt;
 mod connection;
+mod handle;
 mod handlers;
 mod helpers;
 
 pub use client_mgmt::create_client_manager;
+pub use handle::{ServerHandle, SessionId};
 pub(crate) use helpers::extract_identity;
 use helpers::{extract_cid, generate_cid};
 
@@ -21,11 +23,12 @@ use std::{
 use tokio::{
     net::UdpSocket,
     sync::{
-        Mutex,
+        Mutex, Notify,
         mpsc::{self, Sender},
         watch,
     },
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     Error,
@@ -97,9 +100,17 @@ where
     disconnect_rx: Option<mpsc::Receiver<String>>,
     connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
     active_connections: Arc<AtomicUsize>,
+    cancel_token: CancellationToken,
+    accept_done: Arc<Notify>,
+    #[allow(dead_code)] // Wired into connection_task in commit 6.
+    cleanup_notify: Arc<Notify>,
 }
 
 /// Start basic CoAP server with quinn-style dispatch + per-connection tasks.
+///
+/// Back-compat wrapper around [`bind_and_spawn_internal`]: binds, spawns the
+/// accept loop, and awaits it inline. New code should prefer
+/// [`bind_and_spawn`] so it can drive shutdown explicitly.
 ///
 /// Each connection gets its own `CapturingResolver` wrapping the shared
 /// `credential_store`, so PSK identity capture is race-free under concurrency.
@@ -116,25 +127,107 @@ where
     O: Observer + Send + Sync + 'static,
     C: CredentialStore,
 {
-    let socket = Arc::new(UdpSocket::bind(&addr).await?);
-    tracing::info!(addr = %addr, "server.started");
-
-    let connections: Arc<Mutex<HashMap<String, ConnectionInfo>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let active_connections = Arc::new(AtomicUsize::new(0));
-
-    let state = AcceptLoopState {
-        socket,
+    let handle = bind_and_spawn_internal(
+        addr,
         config,
         router,
         credential_store,
         psk_identity_hint,
         disconnect_rx,
-        connections,
-        active_connections,
+    )
+    .await?;
+    handle.join().await
+}
+
+/// Bind the UDP socket and spawn the accept loop, returning a
+/// [`ServerHandle`] for shutdown coordination.
+///
+/// The handle's cancellation token only stops new handshakes from being
+/// accepted; existing sessions continue serving traffic. To drain them, use
+/// the per-session API on [`SessionHandle`] (commit 6) or
+/// [`ServerHandle::close_all_graceful`] (commit 7).
+///
+/// If `config.shutdown` is set, the watch channel is relayed into the
+/// handle's [`CancellationToken`](tokio_util::sync::CancellationToken) for
+/// back-compat with callers that haven't migrated yet.
+pub async fn bind_and_spawn<O, S, C>(
+    addr: String,
+    config: Config,
+    router: CoapRouter<O, S>,
+    credential_store: C,
+) -> Result<ServerHandle, Error>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
+{
+    let hint = config.psk_identity_hint.clone();
+    bind_and_spawn_internal(addr, config, router, credential_store, hint, None).await
+}
+
+/// Internal entry point that all the public `serve_*` shims funnel through.
+///
+/// Distinct from the public [`bind_and_spawn`] only in that it threads the
+/// optional `disconnect_rx` (used by the client-management variants).
+async fn bind_and_spawn_internal<O, S, C>(
+    addr: String,
+    config: Config,
+    router: CoapRouter<O, S>,
+    credential_store: C,
+    psk_identity_hint: Option<Vec<u8>>,
+    disconnect_rx: Option<mpsc::Receiver<String>>,
+) -> Result<ServerHandle, Error>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
+{
+    let socket = Arc::new(UdpSocket::bind(&addr).await?);
+    let bound_addr = socket.local_addr().map_err(Error::Bind)?;
+    tracing::info!(addr = %bound_addr, "server.started");
+
+    let connections: Arc<Mutex<HashMap<String, ConnectionInfo>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let active_connections = Arc::new(AtomicUsize::new(0));
+    let cancel_token = CancellationToken::new();
+    let accept_done = Arc::new(Notify::new());
+    let cleanup_notify = Arc::new(Notify::new());
+
+    // Back-compat: relay legacy watch-based shutdown into the new token.
+    if let Some(mut watch_rx) = config.shutdown.clone() {
+        let token = cancel_token.clone();
+        tokio::spawn(async move {
+            if watch_rx.changed().await.is_ok() {
+                token.cancel();
+            }
+        });
+    }
+
+    let state = AcceptLoopState {
+        socket: socket.clone(),
+        config,
+        router,
+        credential_store,
+        psk_identity_hint,
+        disconnect_rx,
+        connections: connections.clone(),
+        active_connections: active_connections.clone(),
+        cancel_token: cancel_token.clone(),
+        accept_done: accept_done.clone(),
+        cleanup_notify: cleanup_notify.clone(),
     };
 
-    run_accept_loop(state).await
+    let join = tokio::spawn(run_accept_loop(state));
+
+    Ok(ServerHandle {
+        shutdown: cancel_token,
+        accept_done,
+        cleanup_notify,
+        connections,
+        active_count: active_connections,
+        bound_addr,
+        join: std::sync::Mutex::new(Some(join)),
+    })
 }
 
 async fn run_accept_loop<O, S, C>(mut state: AcceptLoopState<O, S, C>) -> Result<(), Error>
@@ -145,9 +238,36 @@ where
 {
     let max_connections = state.config.max_connections;
     let cid_length = state.config.cid_length;
-    let mut shutdown_rx = state.config.shutdown.clone();
     let buffer_size = state.config.buffer_size();
+    let cancel_token = state.cancel_token.clone();
+    let accept_done = state.accept_done.clone();
 
+    // Loop body runs to completion or until cancellation; either way we
+    // notify accept_done so ServerHandle::drained can proceed.
+    let result = run_accept_loop_inner(
+        &mut state,
+        max_connections,
+        cid_length,
+        buffer_size,
+        cancel_token,
+    )
+    .await;
+    accept_done.notify_waiters();
+    result
+}
+
+async fn run_accept_loop_inner<O, S, C>(
+    state: &mut AcceptLoopState<O, S, C>,
+    max_connections: usize,
+    cid_length: Option<usize>,
+    buffer_size: usize,
+    cancel_token: CancellationToken,
+) -> Result<(), Error>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
+{
     // Dispatch table: SocketAddr → per-connection packet sender
     let mut addr_dispatch: HashMap<SocketAddr, mpsc::Sender<Vec<u8>>> = HashMap::new();
 
@@ -185,14 +305,10 @@ where
         }
 
         tokio::select! {
-            // Shutdown signal
-            _ = async {
-                match &mut shutdown_rx {
-                    Some(rx) => { let _ = rx.changed().await; }
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
-                tracing::info!("Shutdown signal received, stopping server");
+            // Cancellation: stop accepting new handshakes. Existing
+            // connection tasks are unaffected and continue to serve traffic.
+            _ = cancel_token.cancelled() => {
+                tracing::info!("server.cancel_received");
                 return Ok(());
             }
 
