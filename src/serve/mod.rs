@@ -67,6 +67,24 @@ impl ObserveState {
     }
 }
 
+/// State threaded into the accept loop. Bundled to keep the spawn
+/// signature small; not part of the public API.
+struct AcceptLoopState<O, S, C>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
+{
+    socket: Arc<UdpSocket>,
+    config: Config,
+    router: CoapRouter<O, S>,
+    credential_store: C,
+    psk_identity_hint: Option<Vec<u8>>,
+    disconnect_rx: Option<mpsc::Receiver<String>>,
+    connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
+    active_connections: Arc<AtomicUsize>,
+}
+
 /// Start basic CoAP server with quinn-style dispatch + per-connection tasks.
 ///
 /// Each connection gets its own `CapturingResolver` wrapping the shared
@@ -77,7 +95,7 @@ pub async fn serve_basic<O, S, C>(
     router: CoapRouter<O, S>,
     credential_store: C,
     psk_identity_hint: Option<Vec<u8>>,
-    mut disconnect_rx: Option<mpsc::Receiver<String>>,
+    disconnect_rx: Option<mpsc::Receiver<String>>,
 ) -> Result<(), Error>
 where
     S: Debug + Clone + Send + Sync + 'static,
@@ -90,9 +108,31 @@ where
     let connections: Arc<Mutex<HashMap<String, ConnectionInfo>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let active_connections = Arc::new(AtomicUsize::new(0));
-    let max_connections = config.max_connections;
-    let cid_length = config.cid_length;
-    let mut shutdown_rx = config.shutdown.clone();
+
+    let state = AcceptLoopState {
+        socket,
+        config,
+        router,
+        credential_store,
+        psk_identity_hint,
+        disconnect_rx,
+        connections,
+        active_connections,
+    };
+
+    run_accept_loop(state).await
+}
+
+async fn run_accept_loop<O, S, C>(mut state: AcceptLoopState<O, S, C>) -> Result<(), Error>
+where
+    S: Debug + Clone + Send + Sync + 'static,
+    O: Observer + Send + Sync + 'static,
+    C: CredentialStore,
+{
+    let max_connections = state.config.max_connections;
+    let cid_length = state.config.cid_length;
+    let mut shutdown_rx = state.config.shutdown.clone();
+    let buffer_size = state.config.buffer_size();
 
     // Dispatch table: SocketAddr → per-connection packet sender
     let mut addr_dispatch: HashMap<SocketAddr, mpsc::Sender<Vec<u8>>> = HashMap::new();
@@ -106,7 +146,7 @@ where
     // Cleanup channel: connection tasks notify dispatch when they exit
     let (cleanup_tx, mut cleanup_rx) = mpsc::channel::<(SocketAddr, Option<Vec<u8>>)>(64);
 
-    let mut recv_buf = vec![0u8; config.buffer_size()];
+    let mut recv_buf = vec![0u8; buffer_size];
 
     loop {
         // Drain completed connections
@@ -120,9 +160,9 @@ where
         }
 
         // Drain disconnect commands
-        if let Some(ref mut rx) = disconnect_rx {
+        if let Some(ref mut rx) = state.disconnect_rx {
             while let Ok(identity) = rx.try_recv() {
-                let cons = connections.lock().await;
+                let cons = state.connections.lock().await;
                 if let Some(info) = cons.get(&identity) {
                     let _ = info.sender.send(()).await;
                     tracing::info!(identity = %identity, "client.disconnected");
@@ -143,7 +183,7 @@ where
             }
 
             // Incoming UDP packet
-            result = socket.recv_from(&mut recv_buf) => {
+            result = state.socket.recv_from(&mut recv_buf) => {
                 let (n, remote) = result.map_err(Error::Bind)?;
                 let raw = &recv_buf[..n];
 
@@ -182,7 +222,7 @@ where
                     }
                 } else {
                     // New connection
-                    if active_connections.load(Ordering::Relaxed) >= max_connections {
+                    if state.active_connections.load(Ordering::Relaxed) >= max_connections {
                         tracing::warn!(
                             addr = %remote,
                             limit = max_connections,
@@ -210,15 +250,15 @@ where
                         cid_addr_tx.insert(cid.clone(), addr_tx);
                     }
 
-                    active_connections.fetch_add(1, Ordering::Relaxed);
+                    state.active_connections.fetch_add(1, Ordering::Relaxed);
 
-                    let socket = socket.clone();
-                    let store = credential_store.clone();
-                    let hint = psk_identity_hint.clone();
-                    let router = router.clone();
-                    let config = config.clone();
-                    let connections = connections.clone();
-                    let conn_count = active_connections.clone();
+                    let socket = state.socket.clone();
+                    let store = state.credential_store.clone();
+                    let hint = state.psk_identity_hint.clone();
+                    let router = state.router.clone();
+                    let config = state.config.clone();
+                    let connections = state.connections.clone();
+                    let conn_count = state.active_connections.clone();
                     let cleanup_tx = cleanup_tx.clone();
 
                     tokio::spawn(async move {
