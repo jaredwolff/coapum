@@ -44,14 +44,13 @@
 //! for the identity "goobie!" with the key "63ef2024b1de6417f856fab7005d38f6".
 //! In production, use strong, randomly generated keys.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use coapum::{
-    MemoryCredentialStore,
+    MemoryCredentialStore, bind_and_spawn,
     extract::{Cbor, Identity, Path, State, StatusCode},
     observer::memory::MemObserver,
     router::RouterBuilder,
-    serve,
 };
 use serde::{Deserialize, Serialize};
 
@@ -251,10 +250,34 @@ async fn main() {
     tracing::info!("  GET    hello          - Echo payload");
     tracing::info!("  ANY    /              - Ping");
 
-    // Start the server
-    if let Err(e) =
-        serve::serve_with_credential_store(addr.to_string(), cfg, router, credential_store).await
-    {
-        tracing::error!("Server error: {}", e);
+    // Spawn the server and obtain a handle for graceful shutdown.
+    let handle = match bind_and_spawn(addr.to_string(), cfg, router, credential_store).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Failed to start server: {}", e);
+            return;
+        }
+    };
+
+    // Wait for SIGINT, then drive a graceful shutdown:
+    //   1. Stop accepting new handshakes (cancel the shutdown token).
+    //   2. Send DTLS close_notify to every active session, with 2s of
+    //      jitter to avoid synchronized client reconnects.
+    //   3. Wait up to 10s for in-flight tasks to finish cleanup.
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        tracing::error!("Failed to install SIGINT handler: {}", e);
     }
+    tracing::info!("SIGINT received — beginning graceful shutdown");
+    handle.shutdown_token().cancel();
+    handle.close_all_graceful(Duration::from_secs(2)).await;
+    if tokio::time::timeout(Duration::from_secs(10), handle.drained())
+        .await
+        .is_err()
+    {
+        tracing::warn!("drain timed out — connections may have been left mid-stream");
+    }
+    if let Err(e) = handle.join().await {
+        tracing::error!("Server task error: {}", e);
+    }
+    tracing::info!("Server stopped cleanly");
 }
