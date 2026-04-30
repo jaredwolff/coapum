@@ -35,10 +35,24 @@ use crate::{
     router::{ClientManager, CoapRouter},
 };
 
+/// How a connection should be torn down.
+///
+/// `Hard` drops the session immediately. `Graceful` queues a DTLS
+/// `close_notify` Alert before the task exits so the peer learns the
+/// session is intentionally ending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DisconnectMode {
+    /// Stop the connection task without notifying the peer.
+    Hard,
+    /// Send a DTLS `close_notify` Alert before exiting.
+    #[allow(dead_code)] // Used by SessionHandle::close_graceful in commit 6.
+    Graceful,
+}
+
 /// Connection information for security tracking and rate limiting
 #[derive(Debug, Clone)]
 struct ConnectionInfo {
-    sender: Sender<()>,
+    sender: Sender<DisconnectMode>,
     established_at: Instant,
     #[allow(dead_code)] // Reserved for future security features
     source_addr: SocketAddr,
@@ -164,7 +178,7 @@ where
             while let Ok(identity) = rx.try_recv() {
                 let cons = state.connections.lock().await;
                 if let Some(info) = cons.get(&identity) {
-                    let _ = info.sender.send(()).await;
+                    let _ = info.sender.send(DisconnectMode::Hard).await;
                     tracing::info!(identity = %identity, "client.disconnected");
                 }
             }

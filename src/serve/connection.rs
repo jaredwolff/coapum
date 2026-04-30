@@ -23,7 +23,7 @@ use coap_lite::{BlockHandler, BlockHandlerConfig, Packet};
 
 use super::handlers::{handle_notification, handle_request};
 use super::helpers::{DtlsIo, drain_packets, extract_identity};
-use super::{ConnectionInfo, ObserveState};
+use super::{ConnectionInfo, DisconnectMode, ObserveState};
 use crate::{
     config::Config,
     credential::{CredentialStore, resolver::CapturingResolver},
@@ -48,7 +48,7 @@ pub(super) struct SessionState {
 pub(super) async fn manage_connection(
     identity: &str,
     socket_addr: SocketAddr,
-    tx: Sender<()>,
+    tx: Sender<DisconnectMode>,
     connections: &Mutex<HashMap<String, ConnectionInfo>>,
     min_reconnect_interval: Duration,
     max_reconnect_attempts: usize,
@@ -76,7 +76,7 @@ pub(super) async fn manage_connection(
             return false;
         }
 
-        let _ = old_conn.sender.send(()).await;
+        let _ = old_conn.sender.send(DisconnectMode::Hard).await;
     }
 
     let conn_info = ConnectionInfo {
@@ -107,7 +107,7 @@ pub(super) async fn process_outputs<O, S>(
     resolver: &CapturingResolver<impl CredentialStore>,
     router: &mut CoapRouter<O, S>,
     connections: &Mutex<HashMap<String, ConnectionInfo>>,
-    disconnect_tx: Sender<()>,
+    disconnect_tx: Sender<DisconnectMode>,
     config: &Config,
 ) -> bool
 where
@@ -237,7 +237,7 @@ pub(super) async fn connection_task<O, S, C>(
         reliability: ReliabilityState::new(RetransmitParams::from_config(&config)),
     };
 
-    let (disconnect_tx, mut disconnect_rx) = channel::<()>(1);
+    let (disconnect_tx, mut disconnect_rx) = channel::<DisconnectMode>(1);
     let timeout_duration = Duration::from_secs(config.timeout);
 
     // One-shot session lifetime timer (DTLS 1.2 key wear-out mitigation).
@@ -297,8 +297,17 @@ pub(super) async fn connection_task<O, S, C>(
             }
 
             // Disconnect signal
-            _ = disconnect_rx.recv() => {
-                tracing::info!(addr = %io.remote, identity = ?session.identity, "connection.terminating");
+            mode = disconnect_rx.recv() => {
+                let mode = mode.unwrap_or(DisconnectMode::Hard);
+                tracing::info!(
+                    addr = %io.remote,
+                    identity = ?session.identity,
+                    ?mode,
+                    "connection.terminating"
+                );
+                // Commit 4 fills in the close_notify emission for the
+                // Graceful arm; for now the two modes are equivalent.
+                let _ = mode;
                 break;
             }
 
