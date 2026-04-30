@@ -35,7 +35,7 @@ pub use router::{
     BlockTransferEvent, ClientManager, ClientManagerError, ClientMetadata, DeviceEvent,
     NotificationTrigger, RouterBuilder, StateUpdateError, StateUpdateHandle,
 };
-pub use serve::{ServerHandle, SessionId, bind_and_spawn};
+pub use serve::{ServerHandle, SessionHandle, SessionId, bind_and_spawn};
 
 // Re-export CoAP types
 pub use coap_lite::{

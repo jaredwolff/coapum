@@ -5,7 +5,7 @@ mod handlers;
 mod helpers;
 
 pub use client_mgmt::create_client_manager;
-pub use handle::{ServerHandle, SessionId};
+pub use handle::{ServerHandle, SessionHandle, SessionId};
 pub(crate) use helpers::extract_identity;
 use helpers::{extract_cid, generate_cid};
 
@@ -48,7 +48,6 @@ pub(crate) enum DisconnectMode {
     /// Stop the connection task without notifying the peer.
     Hard,
     /// Send a DTLS `close_notify` Alert before exiting.
-    #[allow(dead_code)] // Used by SessionHandle::close_graceful in commit 6.
     Graceful,
 }
 
@@ -102,7 +101,6 @@ where
     active_connections: Arc<AtomicUsize>,
     cancel_token: CancellationToken,
     accept_done: Arc<Notify>,
-    #[allow(dead_code)] // Wired into connection_task in commit 6.
     cleanup_notify: Arc<Notify>,
 }
 
@@ -390,13 +388,14 @@ where
                     let connections = state.connections.clone();
                     let conn_count = state.active_connections.clone();
                     let cleanup_tx = cleanup_tx.clone();
+                    let cleanup_notify = state.cleanup_notify.clone();
 
                     tokio::spawn(async move {
                         connection::connection_task(
                             remote, rx, socket, store,
                             hint, cid, addr_rx,
                             router, config, connections,
-                            conn_count, cleanup_tx,
+                            conn_count, cleanup_tx, cleanup_notify,
                         ).await;
                     });
                 }

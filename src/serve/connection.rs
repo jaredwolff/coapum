@@ -13,7 +13,7 @@ use dimpl::{Dtls, Output};
 use tokio::{
     net::UdpSocket,
     sync::{
-        Mutex,
+        Mutex, Notify,
         mpsc::{self, Sender, channel},
         watch,
     },
@@ -208,6 +208,7 @@ pub(super) async fn connection_task<O, S, C>(
     connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
     conn_count: Arc<AtomicUsize>,
     cleanup_tx: mpsc::Sender<(SocketAddr, Option<Vec<u8>>)>,
+    cleanup_notify: Arc<Notify>,
 ) where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
@@ -403,5 +404,7 @@ pub(super) async fn connection_task<O, S, C>(
         let _ = router.unregister_device_if_owned(id, &session.obs_tx).await;
         tracing::info!(identity = %id, addr = %io.remote, "connection.terminated");
     }
+    // Wake any SessionHandle::close_graceful or ServerHandle::drained waiters.
+    cleanup_notify.notify_waiters();
     let _ = cleanup_tx.send((io.remote, cid)).await;
 }

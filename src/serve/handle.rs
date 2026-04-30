@@ -18,14 +18,14 @@ use std::{
 };
 
 use tokio::{
-    sync::{Mutex, Notify},
+    sync::{Mutex, Notify, mpsc},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::Error;
 
-use super::ConnectionInfo;
+use super::{ConnectionInfo, DisconnectMode};
 
 /// Stable identifier for a DTLS session, cloned from the PSK identity.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -60,7 +60,7 @@ impl std::fmt::Display for SessionId {
 /// Dropping a `ServerHandle` cancels the accept loop and aborts the
 /// background task, so callers that want to await graceful drain must call
 /// [`join`](Self::join) before drop.
-#[allow(dead_code)] // Some fields are consumed by SessionHandle/drained in commits 6-7.
+#[allow(dead_code)] // accept_count is consumed by drained() in commit 7.
 pub struct ServerHandle {
     pub(super) shutdown: CancellationToken,
     pub(super) accept_done: Arc<Notify>,
@@ -100,6 +100,25 @@ impl ServerHandle {
             None => Ok(()),
         }
     }
+
+    /// Snapshot of currently-tracked sessions as [`SessionHandle`]s.
+    ///
+    /// Each handle owns a clone of the per-session disconnect channel, so
+    /// holding one keeps the underlying mpsc::Sender alive but does not
+    /// extend the connection task's lifetime.
+    pub async fn sessions(&self) -> Vec<SessionHandle> {
+        let guard = self.connections.lock().await;
+        guard
+            .iter()
+            .map(|(id, info)| SessionHandle {
+                id: SessionId(id.clone()),
+                peer_addr: info.source_addr,
+                disconnect_tx: info.sender.clone(),
+                cleanup_notify: self.cleanup_notify.clone(),
+                connections: self.connections.clone(),
+            })
+            .collect()
+    }
 }
 
 impl Drop for ServerHandle {
@@ -107,6 +126,58 @@ impl Drop for ServerHandle {
         self.shutdown.cancel();
         if let Some(h) = self.join.lock().unwrap().take() {
             h.abort();
+        }
+    }
+}
+
+/// Handle to a single live DTLS session.
+///
+/// Returned by [`ServerHandle::sessions`]. Use [`close_graceful`] to send a
+/// DTLS `close_notify` Alert and wait for the connection task to fully
+/// unwind (observer unregistration, `DeviceEvent::Disconnected`, etc.).
+///
+/// The handle is a snapshot: if the underlying session ends before
+/// `close_graceful` is called, the call returns immediately on the first
+/// connections-map check.
+///
+/// [`close_graceful`]: SessionHandle::close_graceful
+pub struct SessionHandle {
+    pub(super) id: SessionId,
+    pub(super) peer_addr: SocketAddr,
+    pub(super) disconnect_tx: mpsc::Sender<DisconnectMode>,
+    pub(super) cleanup_notify: Arc<Notify>,
+    pub(super) connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
+}
+
+impl SessionHandle {
+    /// Stable identifier (PSK identity) for this session.
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    /// Snapshot of the peer address taken at session establishment. With
+    /// RFC 9146 Connection IDs the live remote may differ.
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer_addr
+    }
+
+    /// Send a graceful close (DTLS `close_notify` Alert) and wait for the
+    /// connection task to fully unwind.
+    ///
+    /// Idempotent: returns immediately if the session is already gone. Uses
+    /// the standard `Notify` double-check pattern to avoid lost wakeups
+    /// between the disconnect signal and the cleanup notification.
+    pub async fn close_graceful(&self) {
+        let _ = self.disconnect_tx.send(DisconnectMode::Graceful).await;
+        loop {
+            if !self.connections.lock().await.contains_key(self.id.as_str()) {
+                return;
+            }
+            let notified = self.cleanup_notify.notified();
+            if !self.connections.lock().await.contains_key(self.id.as_str()) {
+                return;
+            }
+            notified.await;
         }
     }
 }
