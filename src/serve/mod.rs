@@ -28,6 +28,7 @@ use tokio::{
 };
 
 use crate::{
+    Error,
     config::Config,
     credential::{CredentialStore, memory::MemoryCredentialStore},
     observer::Observer,
@@ -77,7 +78,7 @@ pub async fn serve_basic<O, S, C>(
     credential_store: C,
     psk_identity_hint: Option<Vec<u8>>,
     mut disconnect_rx: Option<mpsc::Receiver<String>>,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), Error>
 where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
@@ -143,7 +144,7 @@ where
 
             // Incoming UDP packet
             result = socket.recv_from(&mut recv_buf) => {
-                let (n, remote) = result?;
+                let (n, remote) = result.map_err(Error::Bind)?;
                 let raw = &recv_buf[..n];
 
                 // CID dispatch: route by Connection ID when available (RFC 9146)
@@ -260,16 +261,13 @@ pub async fn serve<O, S>(
     addr: String,
     config: Config,
     router: CoapRouter<O, S>,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), Error>
 where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
 {
     if config.dimpl_cfg.is_none() {
-        return Err(
-            "DTLS config not set. Set config.dimpl_cfg or use serve_with_credential_store()."
-                .into(),
-        );
+        return Err(Error::MissingDtlsConfig);
     }
 
     // Create a no-op store for the basic serve case (identity captured by user's resolver)
@@ -309,7 +307,7 @@ pub async fn serve_with_credential_store<O, S, C>(
     config: Config,
     router: CoapRouter<O, S>,
     credential_store: C,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), Error>
 where
     S: Debug + Clone + Send + Sync + 'static,
     O: Observer + Send + Sync + 'static,
@@ -364,9 +362,9 @@ pub async fn serve_with_client_management<O, S>(
 ) -> Result<
     (
         ClientManager,
-        impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+        impl std::future::Future<Output = Result<(), Error>>,
     ),
-    Box<dyn std::error::Error>,
+    Error,
 >
 where
     S: Debug + Clone + Send + Sync + 'static,
@@ -375,7 +373,7 @@ where
     let initial_clients = config
         .initial_clients
         .as_ref()
-        .ok_or("Client management not enabled. Use Config::with_client_management() to enable.")?;
+        .ok_or(Error::ClientManagementDisabled)?;
 
     let credential_store = MemoryCredentialStore::from_clients(initial_clients);
 
@@ -444,9 +442,9 @@ pub async fn serve_with_credential_store_and_management<O, S, C>(
 ) -> Result<
     (
         ClientManager,
-        impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+        impl std::future::Future<Output = Result<(), Error>>,
     ),
-    Box<dyn std::error::Error>,
+    Error,
 >
 where
     S: Debug + Clone + Send + Sync + 'static,

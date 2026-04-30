@@ -250,7 +250,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let credential_store = MemoryCredentialStore::new();
 
     // Start the CoAP server
-    serve_with_credential_store("0.0.0.0:5683".to_string(), config, router, credential_store).await
+    serve_with_credential_store("0.0.0.0:5683".to_string(), config, router, credential_store)
+        .await?;
+    Ok(())
 }
 
 // Helper function for random f32 generation (simplified)

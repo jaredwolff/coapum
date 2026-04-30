@@ -28,7 +28,9 @@ tracing = { workspace = true }
 route-recognizer = "0.3.1"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+thiserror = "2"
 tokio = { workspace = true, features = ["full"] }
+tokio-util = { version = "0.7" }
 tower = { version = "0.5.3", features = [
     "tokio",
     "tokio-stream",

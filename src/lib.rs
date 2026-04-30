@@ -1,6 +1,7 @@
 pub mod client;
 pub mod config;
 pub mod credential;
+mod error;
 pub mod extract;
 pub mod handler;
 pub mod helper;
@@ -8,6 +9,8 @@ pub mod observer;
 pub mod reliability;
 pub mod router;
 pub mod serve;
+
+pub use error::Error;
 
 #[cfg(test)]
 mod tests;
