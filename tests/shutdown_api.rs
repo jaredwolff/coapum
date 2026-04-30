@@ -272,6 +272,7 @@ async fn session_handle_id_and_psk_identity_are_stable() {
     let s = &sessions[0];
     assert_eq!(s.id().as_str(), "stable_id_42");
     assert_eq!(s.id().to_string(), "stable_id_42");
+    assert_eq!(s.psk_identity(), b"stable_id_42");
     let _ = s.peer_addr(); // just ensure it's accessible
 
     handle.shutdown_token().cancel();

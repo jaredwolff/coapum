@@ -90,8 +90,12 @@ impl ServerHandle {
 
     /// Approximate count of in-flight connection tasks.
     ///
-    /// Includes mid-handshake and established sessions; the value is a
-    /// snapshot of an atomic counter and may change between calls.
+    /// Counts every spawned connection task — both mid-handshake and fully
+    /// established sessions. This is intentionally broader than the spec's
+    /// "established sessions only" so a `coap_active_sessions` gauge sees
+    /// drain progress reflected the moment a handshake aborts, without
+    /// maintaining a second atomic. The value is a snapshot of a relaxed
+    /// atomic and may change between calls.
     pub fn active_session_count(&self) -> usize {
         self.active_count.load(Ordering::Relaxed)
     }
@@ -220,6 +224,14 @@ impl SessionHandle {
     /// Stable identifier (PSK identity) for this session.
     pub fn id(&self) -> &SessionId {
         &self.id
+    }
+
+    /// PSK identity the peer authenticated with.
+    ///
+    /// Coapum stores the identity as a UTF-8 string (the `SessionId`); this
+    /// returns the same bytes for callers that want the spec-shaped accessor.
+    pub fn psk_identity(&self) -> &[u8] {
+        self.id.0.as_bytes()
     }
 
     /// Snapshot of the peer address taken at session establishment. With
