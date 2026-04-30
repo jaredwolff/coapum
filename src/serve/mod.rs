@@ -100,7 +100,7 @@ where
     connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
     active_connections: Arc<AtomicUsize>,
     cancel_token: CancellationToken,
-    accept_done: Arc<Notify>,
+    accept_done: CancellationToken,
     cleanup_notify: Arc<Notify>,
 }
 
@@ -188,7 +188,7 @@ where
         Arc::new(Mutex::new(HashMap::new()));
     let active_connections = Arc::new(AtomicUsize::new(0));
     let cancel_token = CancellationToken::new();
-    let accept_done = Arc::new(Notify::new());
+    let accept_done = CancellationToken::new();
     let cleanup_notify = Arc::new(Notify::new());
 
     // Back-compat: relay legacy watch-based shutdown into the new token.
@@ -241,7 +241,7 @@ where
     let accept_done = state.accept_done.clone();
 
     // Loop body runs to completion or until cancellation; either way we
-    // notify accept_done so ServerHandle::drained can proceed.
+    // signal accept_done so ServerHandle::drained can proceed.
     let result = run_accept_loop_inner(
         &mut state,
         max_connections,
@@ -250,7 +250,7 @@ where
         cancel_token,
     )
     .await;
-    accept_done.notify_waiters();
+    accept_done.cancel();
     result
 }
 

@@ -15,8 +15,10 @@ use std::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
+use rand::RngExt;
 use tokio::{
     sync::{Mutex, Notify, mpsc},
     task::JoinHandle,
@@ -60,10 +62,13 @@ impl std::fmt::Display for SessionId {
 /// Dropping a `ServerHandle` cancels the accept loop and aborts the
 /// background task, so callers that want to await graceful drain must call
 /// [`join`](Self::join) before drop.
-#[allow(dead_code)] // accept_count is consumed by drained() in commit 7.
 pub struct ServerHandle {
     pub(super) shutdown: CancellationToken,
-    pub(super) accept_done: Arc<Notify>,
+    /// Cancelled when the accept loop exits. Using a token (vs Notify)
+    /// gives "fire-once, stays signaled" semantics so callers can reach
+    /// `drained()` after the loop has already finished without a missed
+    /// wakeup.
+    pub(super) accept_done: CancellationToken,
     pub(super) cleanup_notify: Arc<Notify>,
     pub(super) connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
     pub(super) active_count: Arc<AtomicUsize>,
@@ -118,6 +123,68 @@ impl ServerHandle {
                 connections: self.connections.clone(),
             })
             .collect()
+    }
+
+    /// Wait until the accept loop has stopped *and* all in-flight
+    /// connection tasks have completed cleanup.
+    ///
+    /// Cancel [`shutdown_token`](Self::shutdown_token) (or call
+    /// [`close_all_graceful`](Self::close_all_graceful)) first; otherwise
+    /// this call hangs while the server keeps accepting.
+    pub async fn drained(&self) {
+        self.accept_done.cancelled().await;
+        loop {
+            if self.active_count.load(Ordering::Relaxed) == 0 {
+                return;
+            }
+            // Double-check pattern: register interest, re-check the count,
+            // then await. The count is decremented before
+            // cleanup_notify.notify_waiters() in connection_task cleanup,
+            // so if we observe 0 here we are guaranteed not to miss the
+            // wakeup.
+            let notified = self.cleanup_notify.notified();
+            if self.active_count.load(Ordering::Relaxed) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Send a graceful close to every active session, dispatching each
+    /// at a uniformly-random delay in `[0, jitter)` to spread the
+    /// reconnect storm. Returns when every per-session `close_graceful`
+    /// has resolved.
+    ///
+    /// `jitter == Duration::ZERO` skips the random delay and dispatches
+    /// every close immediately.
+    pub async fn close_all_graceful(&self, jitter: Duration) {
+        let sessions = self.sessions().await;
+        if sessions.is_empty() {
+            return;
+        }
+        let jitter_us = jitter.as_micros();
+        let mut delays = Vec::with_capacity(sessions.len());
+        if jitter_us == 0 {
+            delays.resize(sessions.len(), Duration::ZERO);
+        } else {
+            // Cap jitter at u64::MAX micros (~584K years) to keep the
+            // RNG range type-safe.
+            let upper = u64::try_from(jitter_us).unwrap_or(u64::MAX);
+            let mut rng = rand::rng();
+            for _ in 0..sessions.len() {
+                delays.push(Duration::from_micros(rng.random_range(0..upper)));
+            }
+        }
+        let futs = sessions
+            .into_iter()
+            .zip(delays)
+            .map(|(s, delay)| async move {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                s.close_graceful().await;
+            });
+        futures::future::join_all(futs).await;
     }
 }
 
