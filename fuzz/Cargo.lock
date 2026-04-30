@@ -271,7 +271,9 @@ dependencies = [
  "route-recognizer",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
+ "tokio-util",
  "tower",
  "tracing",
 ]
@@ -403,8 +405,8 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.4.3"
-source = "git+https://github.com/circuitdojo/dimpl.git?branch=dtls-conn-id#f4d546cc73d0e7d389124ced87060751f26ff5a8"
+version = "0.6.0"
+source = "git+https://github.com/circuitdojo/dimpl.git?branch=dtls-conn-id#006873e6cbf05082d829130cc1a6c99e1e745b76"
 dependencies = [
  "aes",
  "arrayvec",

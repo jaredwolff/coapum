@@ -177,6 +177,14 @@ where
                     "dtls.connection_id_negotiated"
                 );
             }
+            Output::CloseNotify => {
+                tracing::info!(
+                    addr = %io.remote,
+                    identity = ?session.identity,
+                    "dtls.peer_close_notify"
+                );
+                return false;
+            }
             Output::Timeout(_) => break,
             _ => {} // PeerCert, KeyingMaterial — not used for PSK
         }
@@ -305,9 +313,18 @@ pub(super) async fn connection_task<O, S, C>(
                     ?mode,
                     "connection.terminating"
                 );
-                // Commit 4 fills in the close_notify emission for the
-                // Graceful arm; for now the two modes are equivalent.
-                let _ = mode;
+                if matches!(mode, DisconnectMode::Graceful) {
+                    if let Err(e) = io.dtls.close() {
+                        tracing::debug!(
+                            addr = %io.remote,
+                            error = %e,
+                            "dtls.close_notify.queue_failed"
+                        );
+                    } else {
+                        // Drain Alert record to the wire (best-effort).
+                        drain_packets(&mut io).await;
+                    }
+                }
                 break;
             }
 
