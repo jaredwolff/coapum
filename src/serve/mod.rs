@@ -192,12 +192,13 @@ where
     let cleanup_notify = Arc::new(Notify::new());
 
     // Back-compat: relay legacy watch-based shutdown into the new token.
+    // Both `Ok(())` (sender called .send) and `Err(_)` (all senders dropped)
+    // are treated as a shutdown signal, matching the legacy semantics.
     if let Some(mut watch_rx) = config.shutdown.clone() {
         let token = cancel_token.clone();
         tokio::spawn(async move {
-            if watch_rx.changed().await.is_ok() {
-                token.cancel();
-            }
+            let _ = watch_rx.changed().await;
+            token.cancel();
         });
     }
 
@@ -279,6 +280,8 @@ where
     let (cleanup_tx, mut cleanup_rx) = mpsc::channel::<(SocketAddr, Option<Vec<u8>>)>(64);
 
     let mut recv_buf = vec![0u8; buffer_size];
+    let cleanup_notify = state.cleanup_notify.clone();
+    let mut cancelled = false;
 
     loop {
         // Drain completed connections
@@ -302,12 +305,31 @@ where
             }
         }
 
+        // Once cancelled, exit only after every connection task has cleaned
+        // up. This keeps the dispatch loop alive so existing sessions
+        // continue to receive UDP packets after the accept-stop signal.
+        if cancelled && state.active_connections.load(Ordering::Relaxed) == 0 {
+            return Ok(());
+        }
+
+        // Register interest in cleanup notifications BEFORE the select so we
+        // don't miss a wakeup that fires between the check above and the await.
+        let cleanup_notified = cleanup_notify.notified();
+        tokio::pin!(cleanup_notified);
+
         tokio::select! {
-            // Cancellation: stop accepting new handshakes. Existing
-            // connection tasks are unaffected and continue to serve traffic.
-            _ = cancel_token.cancelled() => {
+            // Cancellation: stop accepting new handshakes (but keep
+            // dispatching packets to in-flight sessions).
+            _ = cancel_token.cancelled(), if !cancelled => {
                 tracing::info!("server.cancel_received");
-                return Ok(());
+                cancelled = true;
+                continue;
+            }
+
+            // Wake on connection cleanup so we can re-check the exit
+            // condition once we're in drain mode.
+            _ = &mut cleanup_notified, if cancelled => {
+                continue;
             }
 
             // Incoming UDP packet
@@ -348,6 +370,10 @@ where
                     if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(raw.to_vec()) {
                         tracing::trace!(addr = %remote, "dispatch.addr.backpressure");
                     }
+                } else if cancelled {
+                    // Drain mode: refuse new handshakes but keep serving
+                    // already-established sessions.
+                    tracing::trace!(addr = %remote, "connection.rejected.cancelled");
                 } else {
                     // New connection
                     if state.active_connections.load(Ordering::Relaxed) >= max_connections {
