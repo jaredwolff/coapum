@@ -5,10 +5,12 @@ mod error;
 pub mod extract;
 pub mod handler;
 pub mod helper;
+pub mod middleware;
 pub mod observer;
 pub mod reliability;
 pub mod router;
 pub mod serve;
+pub mod service;
 
 pub use error::Error;
 
@@ -31,11 +33,15 @@ pub use observer::{
     Observer, ObserverChannels, ObserverRequest, ObserverValue, PathValidationError, cbor_pointer,
     merge_cbor, path_to_cbor, validate_observer_path,
 };
+pub use router::layered::{
+    LayeredCoapRouter, LayeredCoapRouterNotificationOnly, LayeredCoapRouterRequestOnly,
+};
 pub use router::{
-    BlockTransferEvent, ClientManager, ClientManagerError, ClientMetadata, DeviceEvent,
-    NotificationTrigger, RouterBuilder, StateUpdateError, StateUpdateHandle,
+    BlockTransferEvent, ClientManager, ClientManagerError, ClientMetadata, CoapumRequest,
+    DeviceEvent, NotificationTrigger, RouterBuilder, StateUpdateError, StateUpdateHandle,
 };
 pub use serve::{ServerHandle, SessionHandle, SessionId, bind_and_spawn};
+pub use service::CoapService;
 
 // Re-export CoAP types
 pub use coap_lite::{

@@ -1,6 +1,4 @@
-use std::{fmt::Debug, net::SocketAddr};
-
-use tower::Service;
+use std::net::SocketAddr;
 
 use coap_lite::{
     CoapOption, CoapRequest, ContentFormat, MessageClass, MessageType, ObserveOption, Packet,
@@ -9,135 +7,127 @@ use coap_lite::{
 
 use super::connection::SessionState;
 use super::helpers::{DtlsIo, drain_packets, send_block_intercept_response, send_response};
+use super::router_handle::RouterHandle;
 use crate::{
     config::Config,
-    observer::{Observer, ObserverValue, validate_observer_path},
+    observer::{ObserverValue, validate_observer_path},
     reliability::DedupResult,
-    router::{BlockTransferEvent, CoapRouter, CoapumRequest, DeviceEvent},
+    router::{BlockTransferEvent, CoapumRequest, DeviceEvent},
 };
 
 /// Handle an observer notification: route, set RFC 7641 headers, and send.
-pub(super) async fn handle_notification<O, S>(
+pub(super) async fn handle_notification<H: RouterHandle>(
     value: ObserverValue,
-    router: &mut CoapRouter<O, S>,
+    router: &mut H,
     io: &mut DtlsIo,
     session: &mut SessionState,
-) where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
-{
+) {
     tracing::trace!("Got notification: {:?}", value);
 
     let notification_path = value.path.clone();
     let notification_value = value.value.clone();
     let req = value.to_request(io.remote);
 
-    match router.call(req).await {
-        Ok(mut resp) => {
-            if *resp.get_status() == ResponseType::BadRequest {
-                tracing::error!("Error: {:?}", resp.message);
-                return;
-            }
+    let mut resp = router.call_notification(req).await;
 
-            resp.message.payload =
-                if resp.message.get_content_format() == Some(ContentFormat::ApplicationCBOR) {
-                    let mut buf = Vec::new();
-                    ciborium::into_writer(&notification_value, &mut buf).ok();
-                    buf
-                } else {
-                    serde_json::to_vec(&notification_value).unwrap_or_default()
-                };
+    if *resp.get_status() == ResponseType::BadRequest {
+        tracing::error!("Error: {:?}", resp.message);
+        return;
+    }
 
-            // RFC 7252 §5.3.1: Echo the token from the original OBSERVE GET
-            if let Some(token) = session.obs.observer_tokens.get(&notification_path) {
-                resp.message.set_token(token.clone());
-            }
+    resp.message.payload =
+        if resp.message.get_content_format() == Some(ContentFormat::ApplicationCBOR) {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&notification_value, &mut buf).ok();
+            buf
+        } else {
+            serde_json::to_vec(&notification_value).unwrap_or_default()
+        };
 
-            // RFC 7641 §3.3: Set observe sequence number (24-bit per §3.4)
-            session.obs.sequence = session.obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
-            resp.message.set_observe_value(session.obs.sequence);
+    // RFC 7252 §5.3.1: Echo the token from the original OBSERVE GET
+    if let Some(token) = session.obs.observer_tokens.get(&notification_path) {
+        resp.message.set_token(token.clone());
+    }
 
-            // Assign unique message ID for RST tracking
-            let msg_id = session.obs.next_msg_id;
-            session.obs.next_msg_id = session.obs.next_msg_id.wrapping_add(1);
-            resp.message.header.message_id = msg_id;
+    // RFC 7641 §3.3: Set observe sequence number (24-bit per §3.4)
+    session.obs.sequence = session.obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
+    resp.message.set_observe_value(session.obs.sequence);
 
-            // RFC 7252 §4.2 / RFC 7641 §4.5: Use CON or NON based on route config
-            let confirmable = router.is_confirmable_notify(&notification_path);
-            if confirmable {
-                resp.message.header.set_type(MessageType::Confirmable);
-            } else {
-                resp.message.header.set_type(MessageType::NonConfirmable);
-            }
+    // Assign unique message ID for RST tracking
+    let msg_id = session.obs.next_msg_id;
+    session.obs.next_msg_id = session.obs.next_msg_id.wrapping_add(1);
+    resp.message.header.message_id = msg_id;
 
-            session
-                .obs
-                .notification_msg_ids
-                .insert(msg_id, notification_path.clone());
+    // RFC 7252 §4.2 / RFC 7641 §4.5: Use CON or NON based on route config
+    let confirmable = router.is_confirmable_notify(&notification_path);
+    if confirmable {
+        resp.message.header.set_type(MessageType::Confirmable);
+    } else {
+        resp.message.header.set_type(MessageType::NonConfirmable);
+    }
 
-            // Bound tracking map to prevent unbounded growth
-            if session.obs.notification_msg_ids.len() > 256 {
-                let cutoff = msg_id.wrapping_sub(128);
-                session
-                    .obs
-                    .notification_msg_ids
-                    .retain(|&id, _| id.wrapping_sub(cutoff) < 256);
-            }
+    session
+        .obs
+        .notification_msg_ids
+        .insert(msg_id, notification_path.clone());
 
-            tracing::trace!(
-                "Sending notification (seq={}, con={}) to: {}",
-                session.obs.sequence,
-                confirmable,
-                io.remote
-            );
+    // Bound tracking map to prevent unbounded growth
+    if session.obs.notification_msg_ids.len() > 256 {
+        let cutoff = msg_id.wrapping_sub(128);
+        session
+            .obs
+            .notification_msg_ids
+            .retain(|&id, _| id.wrapping_sub(cutoff) < 256);
+    }
 
-            // RFC 7959: Fragment large notification payloads using Block2
-            let mut block_req = CoapRequest::from_packet(resp.message.clone(), io.remote);
-            block_req.response = Some(resp);
-            let total_payload_bytes = block_req.response.as_ref().map(|r| r.message.payload.len());
-            if let Err(e) = session.block_handler.intercept_response(&mut block_req) {
-                tracing::error!("Block notification error: {}", e.message);
-            }
-            if let Some(ref resp) = block_req.response {
-                send_response(io, resp).await;
+    tracing::trace!(
+        "Sending notification (seq={}, con={}) to: {}",
+        session.obs.sequence,
+        confirmable,
+        io.remote
+    );
 
-                // Track for retransmission if CON
-                if confirmable && let Ok(bytes) = resp.message.to_bytes() {
-                    session.reliability.track_outgoing_con(msg_id, bytes);
-                }
+    // RFC 7959: Fragment large notification payloads using Block2
+    let mut block_req = CoapRequest::from_packet(resp.message.clone(), io.remote);
+    block_req.response = Some(resp);
+    let total_payload_bytes = block_req.response.as_ref().map(|r| r.message.payload.len());
+    if let Err(e) = session.block_handler.intercept_response(&mut block_req) {
+        tracing::error!("Block notification error: {}", e.message);
+    }
+    if let Some(ref resp) = block_req.response {
+        send_response(io, resp).await;
 
-                // Emit Block2 event for block 0 if notification was fragmented
-                if let Some(Ok(block_val)) = resp
-                    .message
-                    .get_first_option_as::<BlockValue>(CoapOption::Block2)
-                    && let Some(ref id) = session.identity
-                {
-                    router.emit_block_transfer_event(BlockTransferEvent::BlockSent {
-                        identity: id.clone(),
-                        path: notification_path.clone(),
-                        block_num: block_val.num,
-                        block_size: block_val.size(),
-                        total_bytes: total_payload_bytes,
-                        more: block_val.more,
-                    });
-                }
-            }
+        // Track for retransmission if CON
+        if confirmable && let Ok(bytes) = resp.message.to_bytes() {
+            session.reliability.track_outgoing_con(msg_id, bytes);
         }
-        Err(e) => tracing::error!("Error: {}", e),
+
+        // Emit Block2 event for block 0 if notification was fragmented
+        if let Some(Ok(block_val)) = resp
+            .message
+            .get_first_option_as::<BlockValue>(CoapOption::Block2)
+            && let Some(ref id) = session.identity
+        {
+            router.emit_block_transfer_event(BlockTransferEvent::BlockSent {
+                identity: id.clone(),
+                path: notification_path.clone(),
+                block_num: block_val.num,
+                block_size: block_val.size(),
+                total_bytes: total_payload_bytes,
+                more: block_val.more,
+            });
+        }
     }
 }
 
 /// Handle an incoming CoAP request: block-wise transfer, observe management, routing, and response.
-pub(super) async fn handle_request<O, S>(
+pub(super) async fn handle_request<H: RouterHandle>(
     packet: Packet,
     io: &mut DtlsIo,
     session: &mut SessionState,
-    router: &mut CoapRouter<O, S>,
+    router: &mut H,
     config: &Config,
-) where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
-{
+) {
     let identity = session
         .identity
         .as_deref()
@@ -363,72 +353,69 @@ pub(super) async fn handle_request<O, S>(
     };
 
     // Route the request
-    match router.call(request).await {
-        Ok(mut resp) => {
-            // RFC 7252 §5.3.1: Echo the request token in the response
-            resp.message.set_token(request_token.clone());
-            resp.message.header.message_id = msg_id;
+    let mut resp = router.call_request(request).await;
 
-            // RFC 7641 §3.1: Register observer only after handler succeeds
-            if let Some(ref normalized_path) = pending_observe
-                && !resp.get_status().is_error()
-            {
-                if let Err(e) = router
-                    .register_observer(identity, normalized_path, session.obs_tx.clone())
-                    .await
-                {
-                    tracing::error!(identity = %identity, path = %normalized_path, error = ?e, "observer.register.failed");
-                } else {
-                    tracing::info!(identity = %identity, path = %normalized_path, "observer.registered");
-                    // RFC 7252 §5.3.1: Store token for future notifications
-                    session
-                        .obs
-                        .observer_tokens
-                        .insert(normalized_path.clone(), request_token);
-                    session.obs.sequence = session.obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
-                    resp.message.set_observe_value(session.obs.sequence);
-                }
-            }
+    // RFC 7252 §5.3.1: Echo the request token in the response
+    resp.message.set_token(request_token.clone());
+    resp.message.header.message_id = msg_id;
 
-            // RFC 7959: Fragment large responses using Block2
-            let mut block_req = CoapRequest::from_packet(packet_for_block2, socket_addr);
-            block_req.response = Some(resp);
-            // Capture total payload size before fragmentation
-            let total_payload_bytes = block_req.response.as_ref().map(|r| r.message.payload.len());
-            if let Err(e) = session.block_handler.intercept_response(&mut block_req) {
-                tracing::error!("Block transfer response error: {}", e.message);
-            }
-
-            if let Some(ref mut resp) = block_req.response {
-                // RFC 7252 §5.2.1: Piggybacked ACK for Confirmable requests
-                if is_confirmable {
-                    resp.message.header.set_type(MessageType::Acknowledgement);
-                }
-
-                tracing::debug!("Got response: {:?}", resp.message);
-                send_response(io, resp).await;
-
-                // Cache serialized response for deduplication
-                if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
-                    session.reliability.record_response(msg_id, bytes);
-                }
-
-                // Emit Block2 event for block 0 if fragmentation occurred
-                if let Some(Ok(block_val)) = resp
-                    .message
-                    .get_first_option_as::<BlockValue>(CoapOption::Block2)
-                {
-                    router.emit_block_transfer_event(BlockTransferEvent::BlockSent {
-                        identity: identity.to_string(),
-                        path: path.clone(),
-                        block_num: block_val.num,
-                        block_size: block_val.size(),
-                        total_bytes: total_payload_bytes,
-                        more: block_val.more,
-                    });
-                }
-            }
+    // RFC 7641 §3.1: Register observer only after handler succeeds
+    if let Some(ref normalized_path) = pending_observe
+        && !resp.get_status().is_error()
+    {
+        if let Err(e) = router
+            .register_observer(identity, normalized_path, session.obs_tx.clone())
+            .await
+        {
+            tracing::error!(identity = %identity, path = %normalized_path, error = ?e, "observer.register.failed");
+        } else {
+            tracing::info!(identity = %identity, path = %normalized_path, "observer.registered");
+            // RFC 7252 §5.3.1: Store token for future notifications
+            session
+                .obs
+                .observer_tokens
+                .insert(normalized_path.clone(), request_token);
+            session.obs.sequence = session.obs.sequence.wrapping_add(1) & 0x00FF_FFFF;
+            resp.message.set_observe_value(session.obs.sequence);
         }
-        Err(e) => tracing::error!("Error: {}", e),
+    }
+
+    // RFC 7959: Fragment large responses using Block2
+    let mut block_req = CoapRequest::from_packet(packet_for_block2, socket_addr);
+    block_req.response = Some(resp);
+    // Capture total payload size before fragmentation
+    let total_payload_bytes = block_req.response.as_ref().map(|r| r.message.payload.len());
+    if let Err(e) = session.block_handler.intercept_response(&mut block_req) {
+        tracing::error!("Block transfer response error: {}", e.message);
+    }
+
+    if let Some(ref mut resp) = block_req.response {
+        // RFC 7252 §5.2.1: Piggybacked ACK for Confirmable requests
+        if is_confirmable {
+            resp.message.header.set_type(MessageType::Acknowledgement);
+        }
+
+        tracing::debug!("Got response: {:?}", resp.message);
+        send_response(io, resp).await;
+
+        // Cache serialized response for deduplication
+        if is_confirmable && let Ok(bytes) = resp.message.to_bytes() {
+            session.reliability.record_response(msg_id, bytes);
+        }
+
+        // Emit Block2 event for block 0 if fragmentation occurred
+        if let Some(Ok(block_val)) = resp
+            .message
+            .get_first_option_as::<BlockValue>(CoapOption::Block2)
+        {
+            router.emit_block_transfer_event(BlockTransferEvent::BlockSent {
+                identity: identity.to_string(),
+                path: path.clone(),
+                block_num: block_val.num,
+                block_size: block_val.size(),
+                total_bytes: total_payload_bytes,
+                more: block_val.more,
+            });
+        }
     }
 }

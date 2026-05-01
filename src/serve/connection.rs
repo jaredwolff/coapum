@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    fmt::Debug,
     net::SocketAddr,
     sync::{
         Arc,
@@ -23,13 +22,14 @@ use coap_lite::{BlockHandler, BlockHandlerConfig, Packet};
 
 use super::handlers::{handle_notification, handle_request};
 use super::helpers::{DtlsIo, drain_packets, extract_identity};
+use super::router_handle::RouterHandle;
 use super::{ConnectionInfo, DisconnectMode, ObserveState};
 use crate::{
     config::Config,
     credential::{CredentialStore, resolver::CapturingResolver},
-    observer::{Observer, ObserverValue},
+    observer::ObserverValue,
     reliability::{ReliabilityState, RetransmitAction, RetransmitParams},
-    router::{CoapRouter, DeviceEvent},
+    router::DeviceEvent,
 };
 
 /// Per-connection mutable state that evolves during the session lifetime.
@@ -101,19 +101,15 @@ pub(super) async fn manage_connection(
 /// Process DTLS outputs after handle_packet(), handling Connected and ApplicationData events.
 ///
 /// Returns `false` if the connection should be terminated.
-pub(super) async fn process_outputs<O, S>(
+pub(super) async fn process_outputs<H: RouterHandle>(
     io: &mut DtlsIo,
     session: &mut SessionState,
     resolver: &CapturingResolver<impl CredentialStore>,
-    router: &mut CoapRouter<O, S>,
+    router: &mut H,
     connections: &Mutex<HashMap<String, ConnectionInfo>>,
     disconnect_tx: Sender<DisconnectMode>,
     config: &Config,
-) -> bool
-where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
-{
+) -> bool {
     loop {
         match io.dtls.poll_output(&mut io.out_buf) {
             Output::Packet(p) => {
@@ -195,7 +191,7 @@ where
 /// Per-connection task. Each spawned task owns its own Dtls instance and
 /// its own `CapturingResolver`, so identity capture is race-free.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn connection_task<O, S, C>(
+pub(super) async fn connection_task<H: RouterHandle, C: CredentialStore>(
     remote: SocketAddr,
     mut packet_rx: mpsc::Receiver<Vec<u8>>,
     socket: Arc<UdpSocket>,
@@ -203,17 +199,13 @@ pub(super) async fn connection_task<O, S, C>(
     psk_identity_hint: Option<Vec<u8>>,
     cid: Option<Vec<u8>>,
     mut addr_rx: watch::Receiver<SocketAddr>,
-    mut router: CoapRouter<O, S>,
+    mut router: H,
     config: Config,
     connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
     conn_count: Arc<AtomicUsize>,
     cleanup_tx: mpsc::Sender<(SocketAddr, Option<Vec<u8>>)>,
     cleanup_notify: Arc<Notify>,
-) where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
-    C: CredentialStore,
-{
+) {
     // Build per-connection resolver + dimpl config so identity capture is race-free
     let resolver = Arc::new(CapturingResolver::new(credential_store));
     let mut builder = dimpl::Config::builder().with_psk_server(

@@ -23,6 +23,7 @@ use crate::router::wrapper::IntoCoapResponse;
 
 use self::wrapper::{RequestTypeWrapper, RouteHandler};
 
+pub mod layered;
 pub mod wrapper;
 
 pub type RouterError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -953,6 +954,70 @@ where
     /// Build the final router
     pub fn build(self) -> CoapRouter<O, S> {
         self.router
+    }
+
+    /// Apply a [`tower::Layer`] to both dispatch paths (request + notification).
+    ///
+    /// Returns a [`LayeredCoapRouter`] whose lifecycle operations (observer
+    /// registration, device events) delegate to the inner `CoapRouter`.
+    ///
+    /// [`LayeredCoapRouter`]: layered::LayeredCoapRouter
+    pub fn layer<L>(self, layer: L) -> layered::LayeredCoapRouter<L::Service, O, S>
+    where
+        L: tower::Layer<CoapRouter<O, S>>,
+        L::Service: crate::service::CoapService,
+    {
+        let inner = self.router;
+        let service = layer.layer(inner.clone());
+        layered::LayeredCoapRouter::new(service, inner)
+    }
+
+    /// Apply a [`tower::Layer`] only to the request-dispatch path.
+    ///
+    /// Observer notifications bypass the layer and are dispatched directly
+    /// through the inner [`CoapRouter`].
+    pub fn layer_request_only<L>(
+        self,
+        layer: L,
+    ) -> layered::LayeredCoapRouterRequestOnly<L::Service, O, S>
+    where
+        L: tower::Layer<CoapRouter<O, S>>,
+        L::Service: tower::Service<
+                CoapumRequest<SocketAddr>,
+                Response = coap_lite::CoapResponse,
+                Error = std::convert::Infallible,
+            > + Clone
+            + Send
+            + 'static,
+        <L::Service as tower::Service<CoapumRequest<SocketAddr>>>::Future: Send + 'static,
+    {
+        let inner = self.router;
+        let request_service = layer.layer(inner.clone());
+        layered::LayeredCoapRouterRequestOnly::new(request_service, inner)
+    }
+
+    /// Apply a [`tower::Layer`] only to the observer-notification path.
+    ///
+    /// Requests bypass the layer and are dispatched directly through the inner
+    /// [`CoapRouter`].
+    pub fn layer_notification_only<L>(
+        self,
+        layer: L,
+    ) -> layered::LayeredCoapRouterNotificationOnly<L::Service, O, S>
+    where
+        L: tower::Layer<CoapRouter<O, S>>,
+        L::Service: tower::Service<
+                ObserverRequest<SocketAddr>,
+                Response = coap_lite::CoapResponse,
+                Error = std::convert::Infallible,
+            > + Clone
+            + Send
+            + 'static,
+        <L::Service as tower::Service<ObserverRequest<SocketAddr>>>::Future: Send + 'static,
+    {
+        let inner = self.router;
+        let notification_service = layer.layer(inner.clone());
+        layered::LayeredCoapRouterNotificationOnly::new(notification_service, inner)
     }
 
     /// Create a notification trigger handle for external code to trigger observer notifications

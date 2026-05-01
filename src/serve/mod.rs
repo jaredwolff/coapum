@@ -3,15 +3,16 @@ mod connection;
 mod handle;
 mod handlers;
 mod helpers;
+pub(crate) mod router_handle;
 
 pub use client_mgmt::create_client_manager;
 pub use handle::{ServerHandle, SessionHandle, SessionId};
 pub(crate) use helpers::extract_identity;
 use helpers::{extract_cid, generate_cid};
+pub use router_handle::RouterHandle;
 
 use std::{
     collections::HashMap,
-    fmt::Debug,
     net::SocketAddr,
     sync::{
         Arc,
@@ -34,8 +35,7 @@ use crate::{
     Error,
     config::Config,
     credential::{CredentialStore, memory::MemoryCredentialStore},
-    observer::Observer,
-    router::{ClientManager, CoapRouter},
+    router::ClientManager,
 };
 
 /// How a connection should be torn down.
@@ -85,15 +85,14 @@ impl ObserveState {
 
 /// State threaded into the accept loop. Bundled to keep the spawn
 /// signature small; not part of the public API.
-struct AcceptLoopState<O, S, C>
+struct AcceptLoopState<H, C>
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
     C: CredentialStore,
 {
     socket: Arc<UdpSocket>,
     config: Config,
-    router: CoapRouter<O, S>,
+    router: H,
     credential_store: C,
     psk_identity_hint: Option<Vec<u8>>,
     disconnect_rx: Option<mpsc::Receiver<String>>,
@@ -112,17 +111,16 @@ where
 ///
 /// Each connection gets its own `CapturingResolver` wrapping the shared
 /// `credential_store`, so PSK identity capture is race-free under concurrency.
-pub async fn serve_basic<O, S, C>(
+pub async fn serve_basic<H, C>(
     addr: String,
     config: Config,
-    router: CoapRouter<O, S>,
+    router: H,
     credential_store: C,
     psk_identity_hint: Option<Vec<u8>>,
     disconnect_rx: Option<mpsc::Receiver<String>>,
 ) -> Result<(), Error>
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
     C: CredentialStore,
 {
     let handle = bind_and_spawn_internal(
@@ -148,15 +146,14 @@ where
 /// If `config.shutdown` is set, the watch channel is relayed into the
 /// handle's [`CancellationToken`](tokio_util::sync::CancellationToken) for
 /// back-compat with callers that haven't migrated yet.
-pub async fn bind_and_spawn<O, S, C>(
+pub async fn bind_and_spawn<H, C>(
     addr: String,
     config: Config,
-    router: CoapRouter<O, S>,
+    router: H,
     credential_store: C,
 ) -> Result<ServerHandle, Error>
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
     C: CredentialStore,
 {
     let hint = config.psk_identity_hint.clone();
@@ -167,17 +164,16 @@ where
 ///
 /// Distinct from the public [`bind_and_spawn`] only in that it threads the
 /// optional `disconnect_rx` (used by the client-management variants).
-async fn bind_and_spawn_internal<O, S, C>(
+async fn bind_and_spawn_internal<H, C>(
     addr: String,
     config: Config,
-    router: CoapRouter<O, S>,
+    router: H,
     credential_store: C,
     psk_identity_hint: Option<Vec<u8>>,
     disconnect_rx: Option<mpsc::Receiver<String>>,
 ) -> Result<ServerHandle, Error>
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
     C: CredentialStore,
 {
     let socket = Arc::new(UdpSocket::bind(&addr).await?);
@@ -229,10 +225,9 @@ where
     })
 }
 
-async fn run_accept_loop<O, S, C>(mut state: AcceptLoopState<O, S, C>) -> Result<(), Error>
+async fn run_accept_loop<H, C>(mut state: AcceptLoopState<H, C>) -> Result<(), Error>
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
     C: CredentialStore,
 {
     let max_connections = state.config.max_connections;
@@ -255,16 +250,15 @@ where
     result
 }
 
-async fn run_accept_loop_inner<O, S, C>(
-    state: &mut AcceptLoopState<O, S, C>,
+async fn run_accept_loop_inner<H, C>(
+    state: &mut AcceptLoopState<H, C>,
     max_connections: usize,
     cid_length: Option<usize>,
     buffer_size: usize,
     cancel_token: CancellationToken,
 ) -> Result<(), Error>
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
     C: CredentialStore,
 {
     // Dispatch table: SocketAddr → per-connection packet sender
@@ -452,14 +446,9 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub async fn serve<O, S>(
-    addr: String,
-    config: Config,
-    router: CoapRouter<O, S>,
-) -> Result<(), Error>
+pub async fn serve<H>(addr: String, config: Config, router: H) -> Result<(), Error>
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
 {
     if config.dimpl_cfg.is_none() {
         return Err(Error::MissingDtlsConfig);
@@ -497,15 +486,14 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub async fn serve_with_credential_store<O, S, C>(
+pub async fn serve_with_credential_store<H, C>(
     addr: String,
     config: Config,
-    router: CoapRouter<O, S>,
+    router: H,
     credential_store: C,
 ) -> Result<(), Error>
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
     C: CredentialStore,
 {
     let hint = config.psk_identity_hint.clone();
@@ -550,10 +538,10 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub async fn serve_with_client_management<O, S>(
+pub async fn serve_with_client_management<H>(
     addr: String,
     config: Config,
-    router: CoapRouter<O, S>,
+    router: H,
 ) -> Result<
     (
         ClientManager,
@@ -562,8 +550,7 @@ pub async fn serve_with_client_management<O, S>(
     Error,
 >
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
 {
     let initial_clients = config
         .initial_clients
@@ -629,10 +616,10 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub async fn serve_with_credential_store_and_management<O, S, C>(
+pub async fn serve_with_credential_store_and_management<H, C>(
     addr: String,
     config: Config,
-    router: CoapRouter<O, S>,
+    router: H,
     credential_store: C,
 ) -> Result<
     (
@@ -642,8 +629,7 @@ pub async fn serve_with_credential_store_and_management<O, S, C>(
     Error,
 >
 where
-    S: Debug + Clone + Send + Sync + 'static,
-    O: Observer + Send + Sync + 'static,
+    H: RouterHandle,
     C: CredentialStore,
 {
     let (cmd_sender, mut cmd_receiver) = mpsc::channel(config.client_command_buffer);
