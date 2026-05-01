@@ -45,8 +45,8 @@ pub use service::CoapService;
 
 // Re-export CoAP types
 pub use coap_lite::{
-    CoapRequest, CoapResponse, ContentFormat, MessageClass, MessageType, ObserveOption, Packet,
-    RequestType, ResponseType,
+    CoapOption, CoapRequest, CoapResponse, ContentFormat, MessageClass, MessageType, ObserveOption,
+    Packet, RequestType, ResponseType,
 };
 pub use dimpl as dtls;
 
