@@ -25,8 +25,8 @@ pub use credential::memory::MemoryCredentialStore;
 pub use credential::{ClientInfo, CredentialStore, PskEntry};
 pub use extract::state::FullRequest;
 pub use extract::{
-    Bytes, Cbor, FromRequest, Identity, IntoResponse, Json, ObserveFlag, Path, Raw, Source, State,
-    StatusCode,
+    Block2Request, BlockedRaw, Bytes, Cbor, FromRequest, Identity, IntoResponse, Json, ObserveFlag,
+    Path, Raw, Source, State, StatusCode,
 };
 pub use handler::{Handler, HandlerFn, into_handler};
 pub use observer::{
@@ -46,7 +46,7 @@ pub use service::CoapService;
 // Re-export CoAP types
 pub use coap_lite::{
     CoapOption, CoapRequest, CoapResponse, ContentFormat, MessageClass, MessageType, ObserveOption,
-    Packet, RequestType, ResponseType,
+    Packet, RequestType, ResponseType, block_handler::BlockValue,
 };
 pub use dimpl as dtls;
 

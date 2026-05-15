@@ -10,10 +10,12 @@ use tokio::sync::RwLock;
 
 use crate::router::CoapumRequest;
 
+pub mod block;
 pub mod path;
 pub mod payload;
 pub mod state;
 
+pub use block::{Block2Request, BlockedRaw};
 pub use path::{Path, extract_wildcard_param, extract_wildcard_path};
 pub use payload::{Bytes, Cbor, Json, Raw, SenML};
 pub use state::{Identity, ObserveFlag, Source, State};
