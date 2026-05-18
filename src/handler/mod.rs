@@ -117,215 +117,80 @@ where
     }
 }
 
-/// Implementation for handlers with two extractors
-#[async_trait]
-impl<F, Fut, Res, T1, T2, S> Handler<(T1, T2), S> for HandlerFn<F, S>
-where
-    F: Fn(T1, T2) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Res> + Send + 'static,
-    Res: IntoResponse + Send + 'static,
-    T1: FromRequest<S> + Send + 'static,
-    T2: FromRequest<S> + Send + 'static,
-    T1::Rejection: Send + 'static,
-    T2::Rejection: Send + 'static,
-    S: Send + Sync + 'static,
-{
-    type Future = std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>;
+/// Generate [`Handler`] impls for functions with 2–9 extractor parameters.
+///
+/// Each invocation expands to the full `impl` block, keeping the generated
+/// code identical to the hand-written versions while eliminating the
+/// copy-paste boilerplate.
+macro_rules! impl_handler_for_tuple {
+    // Match a comma-separated list of one or more type parameters.
+    ($($T:ident),+) => {
+        #[async_trait]
+        #[allow(non_snake_case)]
+        impl<F, Fut, Res, S, $($T),+> Handler<($($T,)+), S> for HandlerFn<F, S>
+        where
+            F: Fn($($T),+) -> Fut + Clone + Send + Sync + 'static,
+            Fut: Future<Output = Res> + Send + 'static,
+            Res: IntoResponse + Send + 'static,
+            $(
+                $T: FromRequest<S> + Send + 'static,
+                $T::Rejection: Send + 'static,
+            )+
+            S: Send + Sync + 'static,
+        {
+            type Future = std::pin::Pin<
+                Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>
+            >;
 
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future {
-        Box::pin(async move {
-            let state_guard = state.read().await;
+            fn call(
+                self,
+                req: CoapumRequest<SocketAddr>,
+                state: Arc<RwLock<S>>,
+            ) -> Self::Future {
+                Box::pin(async move {
+                    let state_guard = state.read().await;
 
-            let t1 = match T1::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
+                    $(
+                        let $T = match $T::from_request(&req, &*state_guard).await {
+                            Ok(val) => val,
+                            Err(rejection) => {
+                                return Ok(rejection.into_response().unwrap_or_else(|e| {
+                                    tracing::error!(
+                                        "Rejection response conversion failed: {}",
+                                        e
+                                    );
+                                    crate::extract::StatusCode::BadRequest
+                                        .into_response()
+                                        .unwrap()
+                                }));
+                            }
+                        };
+                    )+
+
+                    drop(state_guard);
+
+                    let result = (self.f)($($T),+).await;
+                    Ok(result.into_response().unwrap_or_else(|e| {
+                        tracing::error!("Response conversion failed: {}", e);
+                        crate::extract::StatusCode::InternalServerError
                             .into_response()
                             .unwrap()
-                    }));
-                }
-            };
-
-            let t2 = match T2::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
-                            .into_response()
-                            .unwrap()
-                    }));
-                }
-            };
-
-            drop(state_guard);
-
-            let result = (self.f)(t1, t2).await;
-            Ok(result.into_response().unwrap_or_else(|e| {
-                tracing::error!("Response conversion failed: {}", e);
-                crate::extract::StatusCode::InternalServerError
-                    .into_response()
-                    .unwrap()
-            }))
-        })
-    }
+                    }))
+                })
+            }
+        }
+    };
 }
 
-/// Implementation for handlers with three extractors
-#[async_trait]
-impl<F, Fut, Res, T1, T2, T3, S> Handler<(T1, T2, T3), S> for HandlerFn<F, S>
-where
-    F: Fn(T1, T2, T3) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Res> + Send + 'static,
-    Res: IntoResponse + Send + 'static,
-    T1: FromRequest<S> + Send + 'static,
-    T2: FromRequest<S> + Send + 'static,
-    T3: FromRequest<S> + Send + 'static,
-    T1::Rejection: Send + 'static,
-    T2::Rejection: Send + 'static,
-    T3::Rejection: Send + 'static,
-    S: Send + Sync + 'static,
-{
-    type Future = std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>;
-
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future {
-        Box::pin(async move {
-            let state_guard = state.read().await;
-
-            let t1 = match T1::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
-                            .into_response()
-                            .unwrap()
-                    }));
-                }
-            };
-
-            let t2 = match T2::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
-                            .into_response()
-                            .unwrap()
-                    }));
-                }
-            };
-
-            let t3 = match T3::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
-                            .into_response()
-                            .unwrap()
-                    }));
-                }
-            };
-
-            drop(state_guard);
-
-            let result = (self.f)(t1, t2, t3).await;
-            Ok(result.into_response().unwrap_or_else(|e| {
-                tracing::error!("Response conversion failed: {}", e);
-                crate::extract::StatusCode::InternalServerError
-                    .into_response()
-                    .unwrap()
-            }))
-        })
-    }
-}
-
-/// Implementation for handlers with four extractors
-#[async_trait]
-impl<F, Fut, Res, T1, T2, T3, T4, S> Handler<(T1, T2, T3, T4), S> for HandlerFn<F, S>
-where
-    F: Fn(T1, T2, T3, T4) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Res> + Send + 'static,
-    Res: IntoResponse + Send + 'static,
-    T1: FromRequest<S> + Send + 'static,
-    T2: FromRequest<S> + Send + 'static,
-    T3: FromRequest<S> + Send + 'static,
-    T4: FromRequest<S> + Send + 'static,
-    T1::Rejection: Send + 'static,
-    T2::Rejection: Send + 'static,
-    T3::Rejection: Send + 'static,
-    T4::Rejection: Send + 'static,
-    S: Send + Sync + 'static,
-{
-    type Future = std::pin::Pin<Box<dyn Future<Output = Result<CoapResponse, Infallible>> + Send>>;
-
-    fn call(self, req: CoapumRequest<SocketAddr>, state: Arc<RwLock<S>>) -> Self::Future {
-        Box::pin(async move {
-            let state_guard = state.read().await;
-
-            let t1 = match T1::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
-                            .into_response()
-                            .unwrap()
-                    }));
-                }
-            };
-
-            let t2 = match T2::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
-                            .into_response()
-                            .unwrap()
-                    }));
-                }
-            };
-
-            let t3 = match T3::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
-                            .into_response()
-                            .unwrap()
-                    }));
-                }
-            };
-
-            let t4 = match T4::from_request(&req, &*state_guard).await {
-                Ok(val) => val,
-                Err(rejection) => {
-                    return Ok(rejection.into_response().unwrap_or_else(|e| {
-                        tracing::error!("Rejection response conversion failed: {}", e);
-                        crate::extract::StatusCode::BadRequest
-                            .into_response()
-                            .unwrap()
-                    }));
-                }
-            };
-
-            drop(state_guard);
-
-            let result = (self.f)(t1, t2, t3, t4).await;
-            Ok(result.into_response().unwrap_or_else(|e| {
-                tracing::error!("Response conversion failed: {}", e);
-                crate::extract::StatusCode::InternalServerError
-                    .into_response()
-                    .unwrap()
-            }))
-        })
-    }
-}
+// 2–9 extractor parameters
+impl_handler_for_tuple!(T1, T2);
+impl_handler_for_tuple!(T1, T2, T3);
+impl_handler_for_tuple!(T1, T2, T3, T4);
+impl_handler_for_tuple!(T1, T2, T3, T4, T5);
+impl_handler_for_tuple!(T1, T2, T3, T4, T5, T6);
+impl_handler_for_tuple!(T1, T2, T3, T4, T5, T6, T7);
+impl_handler_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8);
+impl_handler_for_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
 
 /// Convert a function into a handler
 pub fn into_handler<F, T, S>(f: F) -> HandlerFn<F, S>
@@ -354,53 +219,28 @@ pub trait ErasedHandler<S>: Send + Sync + 'static {
 }
 
 /// Wrapper for storing handlers in type-erased form
-pub struct ErasedHandlerWrapper<H> {
+/// Generic wrapper that erases any handler implementing [`Handler<T, S>`].
+///
+/// This replaces the previous `ErasedHandlerWrapper` / `HandlerFnErasedWrapper`
+/// split that had a dead-code fallback returning `NotImplemented`.
+pub struct ErasedHandlerWrapper<H, T, S> {
     handler: H,
+    _phantom: std::marker::PhantomData<(T, S)>,
 }
 
-impl<H> ErasedHandlerWrapper<H> {
+impl<H, T, S> ErasedHandlerWrapper<H, T, S> {
     pub fn new(handler: H) -> Self {
-        Self { handler }
+        Self {
+            handler,
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
 #[async_trait]
-impl<H, S> ErasedHandler<S> for ErasedHandlerWrapper<H>
+impl<H, T, S> ErasedHandler<S> for ErasedHandlerWrapper<H, T, S>
 where
-    H: Send + Sync + Clone + 'static,
-    S: Send + Sync + 'static,
-{
-    async fn call_erased(
-        &self,
-        _req: CoapumRequest<SocketAddr>,
-        _state: Arc<RwLock<S>>,
-    ) -> Result<CoapResponse, Infallible> {
-        // This is a fallback implementation that returns a default response
-        // The actual handler calling will be done by the specific implementations
-        let pkt = coap_lite::Packet::new();
-        let mut response = crate::CoapResponse::new(&pkt).unwrap();
-        response.set_status(coap_lite::ResponseType::NotImplemented);
-        Ok(response)
-    }
-
-    fn clone_erased(&self) -> Box<dyn ErasedHandler<S>> {
-        Box::new(ErasedHandlerWrapper {
-            handler: self.handler.clone(),
-        })
-    }
-}
-
-// Specialized wrapper for HandlerFn types
-pub struct HandlerFnErasedWrapper<F, T, S> {
-    handler_fn: HandlerFn<F, S>,
-    _phantom: std::marker::PhantomData<T>,
-}
-
-#[async_trait]
-impl<F, T, S> ErasedHandler<S> for HandlerFnErasedWrapper<F, T, S>
-where
-    HandlerFn<F, S>: Handler<T, S>,
-    F: Clone + Send + Sync + 'static,
+    H: Handler<T, S> + Clone + Send + Sync + 'static,
     T: Send + Sync + 'static,
     S: Send + Sync + 'static,
 {
@@ -409,29 +249,30 @@ where
         req: CoapumRequest<SocketAddr>,
         state: Arc<RwLock<S>>,
     ) -> Result<CoapResponse, Infallible> {
-        self.handler_fn.clone().call(req, state).await
+        self.handler.clone().call(req, state).await
     }
 
     fn clone_erased(&self) -> Box<dyn ErasedHandler<S>> {
-        Box::new(HandlerFnErasedWrapper {
-            handler_fn: self.handler_fn.clone(),
+        Box::new(ErasedHandlerWrapper {
+            handler: self.handler.clone(),
             _phantom: std::marker::PhantomData,
         })
     }
 }
 
-impl<H> Clone for ErasedHandlerWrapper<H>
+impl<H, T, S> Clone for ErasedHandlerWrapper<H, T, S>
 where
     H: Clone,
 {
     fn clone(&self) -> Self {
         Self {
             handler: self.handler.clone(),
+            _phantom: std::marker::PhantomData,
         }
     }
 }
 
-/// Convert a HandlerFn into an erased handler for storage in the router
+/// Convert a [`HandlerFn`] into a type-erased handler for storage in the router.
 pub fn into_erased_handler<F, T, S>(handler: HandlerFn<F, S>) -> Box<dyn ErasedHandler<S>>
 where
     HandlerFn<F, S>: Handler<T, S>,
@@ -439,10 +280,7 @@ where
     T: Send + Sync + 'static,
     S: Send + Sync + 'static,
 {
-    Box::new(HandlerFnErasedWrapper {
-        handler_fn: handler,
-        _phantom: std::marker::PhantomData,
-    })
+    Box::new(ErasedHandlerWrapper::new(handler))
 }
 
 #[cfg(test)]

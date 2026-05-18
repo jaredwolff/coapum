@@ -7,6 +7,7 @@ pub(crate) mod router_handle;
 
 pub use client_mgmt::create_client_manager;
 pub use handle::{ServerHandle, SessionHandle, SessionId};
+#[allow(unused_imports)]
 pub(crate) use helpers::extract_identity;
 use helpers::{extract_cid, generate_cid};
 pub use router_handle::RouterHandle;
