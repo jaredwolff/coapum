@@ -1261,6 +1261,7 @@ where
 mod tests {
     use super::*;
     use crate::extract::{Identity, StatusCode};
+    use crate::observer::NoopObserver;
 
     #[derive(Clone, Debug)]
     struct TestState {
@@ -1277,7 +1278,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_observer() {
         let state = TestState { counter: 0 };
-        let mut router = CoapRouter::new(state, ());
+        let mut router = CoapRouter::new(state, NoopObserver);
 
         let (sender, _receiver) = tokio::sync::mpsc::channel(10);
         let sender = Arc::new(sender);
@@ -1291,7 +1292,7 @@ mod tests {
     #[tokio::test]
     async fn test_unregister_observer() {
         let state = TestState { counter: 0 };
-        let mut router = CoapRouter::new(state, ());
+        let mut router = CoapRouter::new(state, NoopObserver);
 
         let result = router
             .unregister_observer("device123", "/temperature")
@@ -1302,7 +1303,7 @@ mod tests {
     #[tokio::test]
     async fn test_backend_write_and_read() {
         let state = TestState { counter: 0 };
-        let mut router = CoapRouter::new(state, ());
+        let mut router = CoapRouter::new(state, NoopObserver);
 
         let payload = Value::Map(vec![(
             Value::Text("value".into()),
@@ -1317,7 +1318,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_and_lookup() {
         let state = TestState { counter: 0 };
-        let mut router = CoapRouter::new(state, ());
+        let mut router = CoapRouter::new(state, NoopObserver);
 
         // Create a simple handler for testing
         let handler = RouteHandler {
@@ -1343,7 +1344,7 @@ mod tests {
     #[tokio::test]
     async fn test_lookup_not_found() {
         let state = TestState { counter: 0 };
-        let router: CoapRouter<(), TestState> = CoapRouter::new(state, ());
+        let router: CoapRouter<NoopObserver, TestState> = CoapRouter::new(state, NoopObserver);
 
         let packet = Packet::new();
         let raw = CoapRequest::from_packet(packet, "127.0.0.1:5683".parse().unwrap());
@@ -1357,7 +1358,7 @@ mod tests {
     #[tokio::test]
     async fn test_lookup_method_not_allowed() {
         let state = TestState { counter: 0 };
-        let mut router = CoapRouter::new(state, ());
+        let mut router = CoapRouter::new(state, NoopObserver);
 
         let handler = RouteHandler {
             handler: into_erased_handler(into_handler(|| async { StatusCode::Valid })),
@@ -1382,7 +1383,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_and_lookup_observer_handler() {
         let state = TestState { counter: 0 };
-        let mut router = CoapRouter::new(state, ());
+        let mut router = CoapRouter::new(state, NoopObserver);
 
         // Create a handler with observer support
         let handler = RouteHandler {
@@ -1407,7 +1408,7 @@ mod tests {
         }
 
         let state = TestState { counter: 0 };
-        let _router = RouterBuilder::new(state, ())
+        let _router = RouterBuilder::new(state, NoopObserver)
             .get("/test", test_handler)
             .post("/test", test_handler)
             .build();
@@ -1423,7 +1424,7 @@ mod tests {
         }
 
         let state = TestState { counter: 0 };
-        let _router = RouterBuilder::new(state, ())
+        let _router = RouterBuilder::new(state, NoopObserver)
             .get("/user", identity_handler)
             .build();
 
@@ -1441,7 +1442,7 @@ mod tests {
         }
 
         let state = TestState { counter: 0 };
-        let _router = RouterBuilder::new(state, ())
+        let _router = RouterBuilder::new(state, NoopObserver)
             .observe("/observable", get_handler, notify_handler)
             .build();
 
@@ -1455,7 +1456,7 @@ mod tests {
         }
 
         let state = TestState { counter: 0 };
-        let _router = CoapRouter::builder(state, ())
+        let _router = CoapRouter::builder(state, NoopObserver)
             .get("/test", test_handler)
             .build();
 
@@ -1472,7 +1473,7 @@ mod tests {
         }
 
         let state = TestState { counter: 0 };
-        let router = RouterBuilder::new(state, ())
+        let router = RouterBuilder::new(state, NoopObserver)
             .get("/no_observe", get_handler)
             .observe("/with_observe", get_handler, notify_handler)
             .build();

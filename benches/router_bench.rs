@@ -1,7 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use coapum::{
-    Raw,
+    NoopObserver, Raw,
     router::{CoapumRequest, RouterBuilder},
     {CoapRequest, Packet},
 };
@@ -22,7 +22,9 @@ async fn test() -> Raw {
 
 fn router_benchmark(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let router = RouterBuilder::new((), ()).get("test", test).build();
+    let router = RouterBuilder::new((), NoopObserver)
+        .get("test", test)
+        .build();
 
     c.bench_function("coap_router", |b| {
         b.iter(|| {

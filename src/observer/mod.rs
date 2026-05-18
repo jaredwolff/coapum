@@ -105,8 +105,15 @@ pub trait Observer: Clone + Debug + Send + Sync + 'static {
     }
 }
 
+/// An observer that does nothing.
+///
+/// Use this when you don't need observe functionality. It is a zero-size type,
+/// so it has no runtime cost.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoopObserver;
+
 #[async_trait]
-impl Observer for () {
+impl Observer for NoopObserver {
     type Error = ();
 
     async fn register(

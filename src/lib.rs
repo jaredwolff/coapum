@@ -30,8 +30,8 @@ pub use extract::{
 };
 pub use handler::{Handler, HandlerFn, into_handler};
 pub use observer::{
-    Observer, ObserverChannels, ObserverRequest, ObserverValue, PathValidationError, cbor_pointer,
-    merge_cbor, path_to_cbor, validate_observer_path,
+    NoopObserver, Observer, ObserverChannels, ObserverRequest, ObserverValue, PathValidationError,
+    cbor_pointer, merge_cbor, path_to_cbor, validate_observer_path,
 };
 pub use router::layered::{
     LayeredCoapRouter, LayeredCoapRouterNotificationOnly, LayeredCoapRouterRequestOnly,
