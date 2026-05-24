@@ -4,7 +4,9 @@
 //! that allows for more ergonomic registration of handlers with automatic parameter extraction.
 
 use ciborium::value::Value;
-use coap_lite::{CoapRequest, CoapResponse, ObserveOption, Packet, RequestType, ResponseType};
+use coap_lite::{
+    CoapOption, CoapRequest, CoapResponse, ObserveOption, Packet, RequestType, ResponseType,
+};
 use route_recognizer::Router;
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -119,6 +121,23 @@ where
         payload: &Value,
     ) -> Result<(), O::Error> {
         self.observer.write_replace(device_id, path, payload).await
+    }
+
+    /// Like [`trigger_notification_replace`] but attaches extra CoAP options
+    /// (e.g. ETag) to the outgoing notification packet.
+    ///
+    /// The options are forwarded through the observer channel and applied to
+    /// the response packet by `handle_notification` in the serve layer.
+    pub async fn trigger_notification_replace_with_options(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+        options: Vec<(CoapOption, Vec<u8>)>,
+    ) -> Result<(), O::Error> {
+        self.observer
+            .write_replace_with_options(device_id, path, payload, options)
+            .await
     }
 
     /// Trigger an ephemeral notification that always fires, even if the

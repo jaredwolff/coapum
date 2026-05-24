@@ -2,6 +2,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use ciborium::value::Value;
+use coap_lite::CoapOption;
 use tokio::sync::{RwLock, mpsc::Sender};
 
 pub mod memory;
@@ -14,6 +15,9 @@ pub mod sled;
 pub struct ObserverValue {
     pub value: Value,
     pub path: String,
+    /// Extra CoAP options to attach to the outgoing notification packet.
+    /// For example, an ETag option computed from the current shadow version.
+    pub options: Vec<(CoapOption, Vec<u8>)>,
 }
 
 /// A struct representing an observer request.
@@ -22,6 +26,8 @@ pub struct ObserverRequest<E> {
     pub value: Value,
     pub path: String,
     pub source: E,
+    /// Extra CoAP options forwarded from the originating [`ObserverValue`].
+    pub options: Vec<(CoapOption, Vec<u8>)>,
 }
 
 impl ObserverValue {
@@ -31,6 +37,7 @@ impl ObserverValue {
             value: self.value,
             path: self.path,
             source,
+            options: self.options,
         }
     }
 }
@@ -91,6 +98,22 @@ pub trait Observer: Clone + Debug + Send + Sync + 'static {
     /// Default returns 0 (no limit enforcement).
     async fn observer_count(&self, _device_id: &str) -> usize {
         0
+    }
+
+    /// Writes a value to a path, fully replacing any existing value, and
+    /// attaches extra CoAP options to the outgoing notification.
+    ///
+    /// Backends that support option forwarding (e.g. [`memory::MemObserver`])
+    /// should override this method. The default implementation strips the
+    /// options and falls back to [`write_replace`].
+    async fn write_replace_with_options(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+        _options: Vec<(CoapOption, Vec<u8>)>,
+    ) -> Result<(), Self::Error> {
+        self.write_replace(device_id, path, payload).await
     }
 
     /// Send a notification to observers without persisting or diffing.
@@ -475,6 +498,7 @@ impl ObserverChannels {
             let notification = ObserverValue {
                 path: path.to_string(),
                 value: payload.clone(),
+                options: vec![],
             };
 
             match tokio::time::timeout(self.notification_timeout, sender.send(notification)).await {
@@ -542,6 +566,72 @@ impl ObserverChannels {
                 let notification = ObserverValue {
                     path: obs_path.clone(),
                     value: notification_value,
+                    options: vec![],
+                };
+
+                match tokio::time::timeout(self.notification_timeout, sender.send(notification))
+                    .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            "Failed to send observer notification for device {} path {}: {}",
+                            device_id,
+                            obs_path,
+                            e
+                        );
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            "Notification timeout for device {} path {} ({}ms)",
+                            device_id,
+                            obs_path,
+                            self.notification_timeout.as_millis()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Like [`notify`](ObserverChannels::notify) but stamps extra CoAP options
+    /// onto each sent [`ObserverValue`].
+    ///
+    /// Options are attached to the `ObserverValue` and forwarded into the
+    /// outgoing notification packet by `handle_notification` in the serve
+    /// layer. Only paths whose value actually changed receive the notification.
+    pub async fn notify_with_options(
+        &self,
+        device_id: &str,
+        current_value: &Value,
+        new_value: &Value,
+        options: Vec<(CoapOption, Vec<u8>)>,
+    ) {
+        let channels = self.channels.read().await;
+
+        let device_channels = match channels.get(device_id) {
+            Some(dc) => dc,
+            None => {
+                tracing::debug!("No observers found for device '{}'", device_id);
+                return;
+            }
+        };
+
+        for (obs_path, sender) in device_channels.iter() {
+            let pointer = normalize_pointer(obs_path);
+            let current_at_path = cbor_pointer(current_value, &pointer);
+            let incoming_at_path = cbor_pointer(new_value, &pointer);
+
+            if current_at_path != incoming_at_path {
+                let notification_value: Value = match incoming_at_path {
+                    Some(value) => value.clone(),
+                    None => Value::Null,
+                };
+
+                let notification = ObserverValue {
+                    path: obs_path.clone(),
+                    value: notification_value,
+                    options: options.clone(),
                 };
 
                 match tokio::time::timeout(self.notification_timeout, sender.send(notification))

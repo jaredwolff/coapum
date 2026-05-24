@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use ciborium::value::Value;
 use tokio::sync::mpsc::Sender;
 
+use coap_lite::CoapOption;
+
 use super::{Observer, ObserverChannels, ObserverValue};
 
 /// A memory-based observer that stores data in a HashMap.
@@ -174,6 +176,25 @@ impl Observer for MemObserver {
         self.channels.device_observer_count(device_id).await
     }
 
+    async fn write_replace_with_options(
+        &mut self,
+        device_id: &str,
+        path: &str,
+        payload: &Value,
+        options: Vec<(CoapOption, Vec<u8>)>,
+    ) -> Result<(), Self::Error> {
+        let new_value = super::path_to_cbor(path, payload);
+        let current_value = self.db.get(device_id).cloned().unwrap_or(Value::Null);
+
+        self.channels
+            .notify_with_options(device_id, &current_value, &new_value, options)
+            .await;
+
+        self.db.insert(device_id.to_string(), new_value);
+
+        Ok(())
+    }
+
     async fn notify(
         &mut self,
         device_id: &str,
@@ -311,6 +332,34 @@ mod tests {
 
         observer.unregister_all().await.unwrap();
         assert!(observer.channels.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_write_replace_with_options_forwards_options() {
+        let mut observer = MemObserver::new();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ObserverValue>(10);
+
+        observer.register("dev1", "/c", Arc::new(tx)).await.unwrap();
+
+        let payload = cbor_map(&[
+            ("version", Value::Integer(7.into())),
+            ("delta", Value::Map(vec![])),
+        ]);
+        let etag_bytes = 7u32.to_be_bytes().to_vec();
+        let options = vec![(CoapOption::ETag, etag_bytes.clone())];
+
+        observer
+            .write_replace_with_options("dev1", "/c", &payload, options)
+            .await
+            .unwrap();
+
+        let notification = rx.recv().await.expect("notification received");
+        assert_eq!(notification.path, "/c");
+        assert_eq!(notification.options.len(), 1);
+        let (opt, val) = &notification.options[0];
+        assert_eq!(*opt, CoapOption::ETag);
+        assert_eq!(*val, etag_bytes);
     }
 
     #[tokio::test]

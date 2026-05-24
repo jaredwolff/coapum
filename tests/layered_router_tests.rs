@@ -36,6 +36,7 @@ fn observer_req(path: &str) -> ObserverRequest<SocketAddr> {
         value: Value::Text("x".into()),
         path: path.to_string(),
         source: test_addr(),
+        options: vec![],
     }
 }
 

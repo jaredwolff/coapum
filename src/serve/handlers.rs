@@ -26,6 +26,7 @@ pub(super) async fn handle_notification<H: RouterHandle>(
 
     let notification_path = value.path.clone();
     let notification_value = value.value.clone();
+    let notification_options = value.options.clone();
     let req = value.to_request(io.remote);
 
     let mut resp = router.call_notification(req).await;
@@ -33,6 +34,11 @@ pub(super) async fn handle_notification<H: RouterHandle>(
     if *resp.get_status() == ResponseType::BadRequest {
         tracing::error!("Error: {:?}", resp.message);
         return;
+    }
+
+    // Apply caller-supplied CoAP options (e.g. ETag from shadow version).
+    for (opt, val) in notification_options {
+        resp.message.add_option(opt, val);
     }
 
     resp.message.payload =
