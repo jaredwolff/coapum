@@ -48,11 +48,6 @@ pub struct Config {
     /// Default: 1000.
     pub max_connections: usize,
 
-    /// Timeout in milliseconds for sending observer notifications.
-    /// Prevents slow clients from blocking notifications to other observers.
-    /// Default: 1000ms.
-    pub notification_timeout_ms: u64,
-
     /// Minimum interval between reconnection attempts from the same identity.
     /// Rapid reconnections within this window are rate-limited.
     /// Default: 5 seconds.
@@ -208,11 +203,6 @@ impl Config {
         self.max_connections = max;
     }
 
-    /// Set the notification send timeout in milliseconds.
-    pub fn set_notification_timeout_ms(&mut self, timeout_ms: u64) {
-        self.notification_timeout_ms = timeout_ms;
-    }
-
     /// Set the minimum interval between reconnection attempts.
     pub fn set_min_reconnect_interval(&mut self, interval: Duration) {
         self.min_reconnect_interval = interval;
@@ -301,7 +291,6 @@ impl Default for Config {
             block_cache_expiry: Duration::from_secs(120),
             max_observers_per_device: 100,
             max_connections: 1000,
-            notification_timeout_ms: 1000,
             min_reconnect_interval: Duration::from_secs(5),
             max_reconnect_attempts: 10,
             max_session_lifetime: None,

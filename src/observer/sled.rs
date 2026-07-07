@@ -22,6 +22,18 @@ impl SledObserver {
             channels: ObserverChannels::new(),
         }
     }
+
+    /// Creates a new instance with a custom notification send timeout.
+    ///
+    /// The timeout bounds how long a slow observer client can block
+    /// notification delivery to other observers (default: 1 second).
+    pub fn with_notification_timeout(path: &str, timeout: std::time::Duration) -> Self {
+        Self {
+            db: sled::open(path).unwrap(),
+            channel: None,
+            channels: ObserverChannels::with_timeout(timeout),
+        }
+    }
 }
 
 #[derive(Debug)]

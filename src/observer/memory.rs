@@ -24,6 +24,17 @@ impl MemObserver {
             channels: ObserverChannels::new(),
         }
     }
+
+    /// Creates a new instance with a custom notification send timeout.
+    ///
+    /// The timeout bounds how long a slow observer client can block
+    /// notification delivery to other observers (default: 1 second).
+    pub fn with_notification_timeout(timeout: std::time::Duration) -> Self {
+        Self {
+            db: HashMap::new(),
+            channels: ObserverChannels::with_timeout(timeout),
+        }
+    }
 }
 
 impl Default for MemObserver {

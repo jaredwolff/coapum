@@ -38,6 +38,19 @@ impl RedbObserver {
             channels: ObserverChannels::new(),
         })
     }
+
+    /// Creates a new instance with a custom notification send timeout.
+    ///
+    /// The timeout bounds how long a slow observer client can block
+    /// notification delivery to other observers (default: 1 second).
+    pub fn with_notification_timeout(
+        path: &str,
+        timeout: std::time::Duration,
+    ) -> Result<Self, RedbObserverError> {
+        let mut observer = Self::new(path)?;
+        observer.channels = ObserverChannels::with_timeout(timeout);
+        Ok(observer)
+    }
 }
 
 #[derive(Debug)]
