@@ -76,7 +76,11 @@ pub(super) async fn manage_connection(
             return false;
         }
 
-        let _ = old_conn.sender.send(DisconnectMode::Hard).await;
+        // try_send keeps this non-blocking while the connections lock is
+        // held (the old task's cleanup also takes this lock, so awaiting a
+        // send into its full capacity-1 channel could deadlock). If the
+        // channel is full, a disconnect is already pending.
+        let _ = old_conn.sender.try_send(DisconnectMode::Hard);
     }
 
     let conn_info = ConnectionInfo {
@@ -392,7 +396,20 @@ pub(super) async fn connection_task<H: RouterHandle, C: CredentialStore>(
             device_id: id.clone(),
             addr: io.remote,
         });
-        connections.lock().await.remove(id);
+        // Only remove the connections entry if it still belongs to this
+        // task. On reconnect, manage_connection has already replaced the
+        // entry with the new connection's info; removing it here would make
+        // the live session invisible to ServerHandle::sessions and
+        // disconnect_client.
+        {
+            let mut guard = connections.lock().await;
+            if guard
+                .get(id)
+                .is_some_and(|info| info.sender.same_channel(&disconnect_tx))
+            {
+                guard.remove(id);
+            }
+        }
         let _ = router.unregister_device_if_owned(id, &session.obs_tx).await;
         tracing::info!(identity = %id, addr = %io.remote, "connection.terminated");
     }

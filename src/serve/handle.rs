@@ -2,11 +2,9 @@
 //! and graceful drain.
 //!
 //! `ServerHandle` is returned by [`bind_and_spawn`](super::bind_and_spawn) and
-//! is the primary surface lion-server (and other downstream callers) use to
-//! coordinate shutdown.
-//!
-//! [`SessionHandle`](super::SessionHandle) and the per-session graceful close
-//! are added on top of this scaffolding in subsequent commits.
+//! is the primary surface downstream callers use to coordinate shutdown.
+//! [`SessionHandle`](super::SessionHandle) provides per-session graceful close
+//! on top of it.
 
 use std::{
     collections::HashMap,
@@ -56,8 +54,8 @@ impl std::fmt::Display for SessionId {
 /// Returned by [`bind_and_spawn`](super::bind_and_spawn). Cancelling
 /// [`shutdown_token`](Self::shutdown_token) stops the accept loop without
 /// disturbing established sessions; existing connection tasks continue to
-/// serve traffic until they idle out, are closed individually via the
-/// per-session API (commit 6), or drop with the handle.
+/// serve traffic until they idle out, are closed individually via
+/// [`SessionHandle::close_graceful`], or drop with the handle.
 ///
 /// Dropping a `ServerHandle` cancels the accept loop and aborts the
 /// background task, so callers that want to await graceful drain must call

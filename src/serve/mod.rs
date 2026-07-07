@@ -141,8 +141,7 @@ where
 ///
 /// The handle's cancellation token only stops new handshakes from being
 /// accepted; existing sessions continue serving traffic. To drain them, use
-/// the per-session API on [`SessionHandle`] (commit 6) or
-/// [`ServerHandle::close_all_graceful`] (commit 7).
+/// [`SessionHandle::close_graceful`] or [`ServerHandle::close_all_graceful`].
 ///
 /// If `config.shutdown` is set, the watch channel is relayed into the
 /// handle's [`CancellationToken`](tokio_util::sync::CancellationToken) for
@@ -289,12 +288,14 @@ where
             }
         }
 
-        // Drain disconnect commands
+        // Drain disconnect commands. try_send keeps this non-blocking while
+        // the connections lock is held: if the capacity-1 channel is full, a
+        // disconnect is already pending for that session.
         if let Some(ref mut rx) = state.disconnect_rx {
             while let Ok(identity) = rx.try_recv() {
                 let cons = state.connections.lock().await;
                 if let Some(info) = cons.get(&identity) {
-                    let _ = info.sender.send(DisconnectMode::Hard).await;
+                    let _ = info.sender.try_send(DisconnectMode::Hard);
                     tracing::info!(identity = %identity, "client.disconnected");
                 }
             }
@@ -329,7 +330,26 @@ where
 
             // Incoming UDP packet
             result = state.socket.recv_from(&mut recv_buf) => {
-                let (n, remote) = result.map_err(Error::Bind)?;
+                let (n, remote) = match result {
+                    Ok(v) => v,
+                    // On Linux a UDP socket surfaces ICMP errors (e.g. port
+                    // unreachable after sending to a dead peer) as recv
+                    // errors. These concern one peer, not the socket — a
+                    // fatal exit here would let any vanished client take
+                    // down the whole accept loop.
+                    Err(e) if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::HostUnreachable
+                            | std::io::ErrorKind::NetworkUnreachable
+                    ) => {
+                        tracing::debug!(error = %e, "udp.recv_transient_error");
+                        continue;
+                    }
+                    Err(e) => return Err(Error::Recv(e)),
+                };
                 let raw = &recv_buf[..n];
 
                 // CID dispatch: route by Connection ID when available (RFC 9146)

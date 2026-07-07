@@ -3,6 +3,7 @@ use crate::config::ConfigError;
 #[derive(Debug)]
 pub enum Error {
     Bind(std::io::Error),
+    Recv(std::io::Error),
     Join(tokio::task::JoinError),
     Config(ConfigError),
     MissingDtlsConfig,
@@ -13,6 +14,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Bind(e) => write!(f, "failed to bind UDP socket: {}", e),
+            Error::Recv(e) => write!(f, "fatal UDP receive error: {}", e),
             Error::Join(e) => write!(f, "server task panicked or was cancelled: {}", e),
             Error::Config(e) => write!(f, "invalid configuration: {}", e),
             Error::MissingDtlsConfig => f.write_str(
@@ -29,6 +31,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Bind(e) => Some(e),
+            Error::Recv(e) => Some(e),
             Error::Join(e) => Some(e),
             Error::Config(e) => Some(e),
             Error::MissingDtlsConfig | Error::ClientManagementDisabled => None,
